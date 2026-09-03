@@ -41,8 +41,11 @@ describe('equipmentRack (large sample)', () => {
     }
     const completed = new Set(equipmentRack.steps.map((s) => s.id));
     const diags = runDiagnostics({ assembly: equipmentRack, placements, completedStepIds: completed });
-    const fitErrors = diags.filter((d) => d.severity === 'error' && d.code.startsWith('FIT'));
-    expect(fitErrors).toHaveLength(0);
+    const errors = diags.filter((d) => d.severity === 'error');
+    // Nothing should error at nominal — no fit, no interference, no keep-out.
+    expect(errors.map((d) => `${d.code}: ${d.message}`)).toEqual([]);
+    expect(diags.some((d) => d.code === 'INTERFERENCE')).toBe(false);
+    expect(diags.some((d) => d.code === 'KEEP_OUT')).toBe(false);
   });
 
   it('snapping a moving part onto its mate seats it in tolerance', () => {

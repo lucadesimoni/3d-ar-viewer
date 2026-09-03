@@ -11,7 +11,8 @@
     "preview": "vite preview --host",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "screenshots": "node scripts/screenshots.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^9.24.0",
@@ -29,6 +30,7 @@
     "@types/three": "^0.185.4",
     "@vitejs/plugin-react": "^6.1.1",
     "jsdom": "^30.0.1",
+    "playwright": "^1.62.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"

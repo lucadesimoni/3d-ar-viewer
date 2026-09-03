@@ -231,11 +231,12 @@ function buildRack(): AssemblyDef {
     // Equipment module slides in on the rail pair.
     const modId = `module-${lvl}`;
     const modH = 0.1;
+    const modD = D - 0.2; // leave a rear gap for the cable channel keep-out
     b.addPart({
       id: modId,
       name: `Equipment module ${lvl}`,
       sku: 'RK-200',
-      mesh: { type: 'box', size: [W - 0.1, modH, D - 0.12] },
+      mesh: { type: 'box', size: [W - 0.1, modH, modD] },
       material: { color: '#c9a227', metalness: 0.4, roughness: 0.5 },
       targetPose: { position: [0, y + 0.03, 0], rotation: I },
       approach: [0, 0, -1],
@@ -246,11 +247,12 @@ function buildRack(): AssemblyDef {
     b.joint(modId, `rail-${lvl}-R`, [W / 2 - 0.04, y + 0.02, 0], [1, 0, 0], { type: 'slide', depth: mm(10) });
 
     // Four cage bolts securing the module to the rails.
+    const boltZ = modD / 2 - 0.04; // keep the fasteners on the (shorter) module
     const boltCorners: [number, number][] = [
-      [-W / 2 + 0.05, -D / 2 + 0.08],
-      [W / 2 - 0.05, -D / 2 + 0.08],
-      [-W / 2 + 0.05, D / 2 - 0.08],
-      [W / 2 - 0.05, D / 2 - 0.08],
+      [-W / 2 + 0.05, -boltZ],
+      [W / 2 - 0.05, -boltZ],
+      [-W / 2 + 0.05, boltZ],
+      [W / 2 - 0.05, boltZ],
     ];
     boltCorners.forEach(([bx, bz], k) => {
       const boltId = `bolt-${lvl}-${k}`;
@@ -277,11 +279,13 @@ function buildRack(): AssemblyDef {
   }
 
   // ----- Enclosure panels (installed last) -----
+  const sideX = W / 2 + 0.04; // clear of the uprights' outer faces
+  const faceZ = D / 2 + 0.04;
   const panels: { id: string; name: string; size: Vec3; pos: Vec3; approach: Vec3 }[] = [
-    { id: 'panel-left', name: 'Side panel LEFT', size: [0.01, POST_H - 0.1, D - 0.02], pos: [-W / 2 - 0.005, POST_H / 2 + 0.03, 0], approach: [-1, 0, 0] },
-    { id: 'panel-right', name: 'Side panel RIGHT', size: [0.01, POST_H - 0.1, D - 0.02], pos: [W / 2 + 0.005, POST_H / 2 + 0.03, 0], approach: [1, 0, 0] },
-    { id: 'panel-rear', name: 'Rear panel', size: [W - 0.02, POST_H - 0.1, 0.01], pos: [0, POST_H / 2 + 0.03, D / 2 + 0.005], approach: [0, 0, 1] },
-    { id: 'panel-door', name: 'Front door', size: [W - 0.02, POST_H - 0.1, 0.01], pos: [0, POST_H / 2 + 0.03, -D / 2 - 0.005], approach: [0, 0, -1] },
+    { id: 'panel-left', name: 'Side panel LEFT', size: [0.01, POST_H - 0.1, D - 0.02], pos: [-sideX, POST_H / 2 + 0.03, 0], approach: [-1, 0, 0] },
+    { id: 'panel-right', name: 'Side panel RIGHT', size: [0.01, POST_H - 0.1, D - 0.02], pos: [sideX, POST_H / 2 + 0.03, 0], approach: [1, 0, 0] },
+    { id: 'panel-rear', name: 'Rear panel', size: [W - 0.02, POST_H - 0.1, 0.01], pos: [0, POST_H / 2 + 0.03, faceZ], approach: [0, 0, 1] },
+    { id: 'panel-door', name: 'Front door', size: [W - 0.02, POST_H - 0.1, 0.01], pos: [0, POST_H / 2 + 0.03, -faceZ], approach: [0, 0, -1] },
   ];
   for (const p of panels) {
     b.addPart({
@@ -414,10 +418,13 @@ function buildRack(): AssemblyDef {
         role: 'occluder',
       },
       {
+        // Central rear channel: sits between the side rails (in X) and behind the
+        // shorter modules (in Z), so nominal parts clear it — it only lights up
+        // when something is fitted too deep or too wide.
         id: 'cable-channel',
         name: 'Rear cable channel',
-        mesh: { type: 'box', size: [W - 0.05, POST_H - 0.1, 0.06] },
-        pose: { position: [0, POST_H / 2, D / 2 - 0.02], rotation: I },
+        mesh: { type: 'box', size: [0.3, POST_H - 0.1, 0.05] },
+        pose: { position: [0, POST_H / 2, D / 2 - 0.05], rotation: I },
         role: 'keepOut',
       },
     ],
