@@ -5,7 +5,7 @@ import { buildSequenceView, suggestNextStep, type SequenceView } from '../engine
 import { clonePose } from '../engine/math';
 import type { Timeline } from '../engine/animation';
 import type { AssemblyDef, PlacementState, Pose } from '../engine/types';
-import { gearbox } from '../data/gearbox';
+import { gearbox } from '../data';
 
 export type ViewMode = 'guide' | 'explore' | 'explode' | 'animate';
 

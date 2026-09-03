@@ -192,3 +192,11 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   .mode-switch { flex-wrap: wrap; }
   .viewport-overlay { max-width: 62vw; }
 }
+
+/* Assembly picker */
+.assembly-picker {
+  font: inherit; font-weight: 640; color: var(--text);
+  background: rgba(255,255,255,0.05); border: 1px solid var(--edge);
+  border-radius: 9px; padding: 6px 10px; max-width: 240px;
+}
+.assembly-picker:hover { background: rgba(255,255,255,0.09); }

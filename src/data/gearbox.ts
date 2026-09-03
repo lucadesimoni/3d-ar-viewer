@@ -254,5 +254,3 @@ export const gearbox: AssemblyDef = {
     },
   ],
 };
-
-export const ASSEMBLIES: AssemblyDef[] = [gearbox];
