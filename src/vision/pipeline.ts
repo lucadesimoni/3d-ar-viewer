@@ -21,6 +21,7 @@ import {
   normalizeIllumination,
   type Point2,
 } from './opencv';
+import { DetectionTracker, ClassificationVoter, type Track } from './tracking';
 import {
   VisionModel,
   type Classification,
@@ -38,6 +39,10 @@ export interface PipelineConfig {
   sharpnessThreshold?: number;
   /** Flatten lighting before inference. On by default. */
   normalizeLighting?: boolean;
+  /** Temporal smoothing of detections/classification. On by default. */
+  temporal?: boolean;
+  /** Use soft-NMS instead of hard NMS in detection. */
+  softNms?: boolean;
 }
 
 export interface FrameResult {
@@ -46,7 +51,11 @@ export interface FrameResult {
   accepted: boolean;
   sharpness: number;
   detections: Detection[];
+  /** Temporally-smoothed, confirmed detections — the signal to drive UI from. */
+  tracks: Track[];
   classification?: Classification[];
+  /** Majority-voted class over a rolling window, when temporal is on. */
+  votedClass?: { classId: number; label: string; confidence: number };
   segmentation?: Segmentation;
   /** Whole-frame inference wall time, ms. */
   latencyMs: number;
@@ -74,6 +83,8 @@ export class RecognitionPipeline {
   private segmenter: VisionModel | undefined;
   private busy = false;
   private openCvReady = false;
+  private readonly tracker = new DetectionTracker();
+  private readonly voter = new ClassificationVoter();
 
   constructor(private readonly config: PipelineConfig = {}) {}
 
@@ -132,7 +143,7 @@ export class RecognitionPipeline {
     try {
       const sharp = measureSharpness(image, this.config.sharpnessThreshold ?? 90);
       if (!sharp.sharp) {
-        return { ts, accepted: false, sharpness: sharp.variance, detections: [], latencyMs: performance.now() - start };
+        return { ts, accepted: false, sharpness: sharp.variance, detections: [], tracks: this.tracker.confirmed(), latencyMs: performance.now() - start };
       }
 
       let frame = opts.roi ? crop(image, opts.roi.x, opts.roi.y, opts.roi.w, opts.roi.h) : image;
@@ -141,25 +152,41 @@ export class RecognitionPipeline {
       }
 
       const [detections, classification, segmentation] = await Promise.all([
-        this.detector?.ready ? this.detector.detect(frame) : Promise.resolve<Detection[]>([]),
+        this.detector?.ready ? this.detector.detect(frame, 0.35, 0.45, { soft: this.config.softNms }) : Promise.resolve<Detection[]>([]),
         this.classifier?.ready ? this.classifier.classify(frame) : Promise.resolve<Classification[] | undefined>(undefined),
         opts.runSegmentation && this.segmenter?.ready
           ? this.segmenter.segment(frame)
           : Promise.resolve<Segmentation | undefined>(undefined),
       ]);
 
+      const temporal = this.config.temporal ?? true;
+      const tracks = temporal ? this.tracker.update(detections) : detections.map(detToTrack);
+      let votedClass: FrameResult['votedClass'];
+      if (temporal && classification && classification[0]) {
+        this.voter.push(classification[0].classId, classification[0].label, classification[0].score);
+        votedClass = this.voter.vote();
+      }
+
       return {
         ts,
         accepted: true,
         sharpness: sharp.variance,
         detections,
+        tracks,
         classification: classification ?? undefined,
+        votedClass,
         segmentation: segmentation ?? undefined,
         latencyMs: performance.now() - start,
       };
     } finally {
       this.busy = false;
     }
+  }
+
+  /** Clear temporal history — call when the active step or the workpiece changes. */
+  resetTemporal(): void {
+    this.tracker.reset();
+    this.voter.reset();
   }
 
   dispose(): void {
@@ -218,4 +245,9 @@ export function markerCorners(det: Detection, frameW: number, frameH: number): [
     { x: x + w, y: y + h },
     { x, y: y + h },
   ];
+}
+
+/** Wrap a raw detection as a (single-frame) track when temporal fusion is off. */
+function detToTrack(d: Detection, i: number): Track {
+  return { id: i, label: d.label, classId: d.classId, box: d.box, score: d.score, hits: 1, misses: 0, age: 1, confirmed: true };
 }

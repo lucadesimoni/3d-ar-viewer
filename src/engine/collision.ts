@@ -1,5 +1,6 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { poseMatrix, q4, v3 } from './math';
+import { overlappingPairs } from './spatialHash';
 import type { MeshSpec, Pose } from './types';
 
 /** Oriented bounding box: centre, half-extents, and a rotation, all in world. */
@@ -93,28 +94,19 @@ export function obbPenetration(a: Obb, b: Obb): number {
 
 export const obbIntersects = (a: Obb, b: Obb): boolean => obbPenetration(a, b) > 0;
 
-/** Cheap AABB broadphase so the O(n²) SAT pass only runs on plausible pairs. */
-export function aabbRadius(o: Obb): number {
-  const axes = basisOf(o.rotation);
-  return (
-    Math.abs(axes[0].x) * o.halfExtents.x +
-    Math.abs(axes[1].x) * o.halfExtents.y +
-    Math.abs(axes[2].x) * o.halfExtents.z +
-    o.halfExtents.length()
-  );
-}
-
+/**
+ * Broadphase over oriented boxes, backed by a uniform-grid spatial hash so the
+ * expensive SAT pass only sees spatially-adjacent pairs. Result is identical to
+ * a brute-force sweep (bounding-sphere overlap), but the cost is near-linear in
+ * the part count instead of quadratic — which is what keeps the per-placement
+ * diagnostics responsive on a large assembly.
+ */
 export function broadphasePairs<T extends { obb: Obb }>(items: T[]): [T, T][] {
-  const pairs: [T, T][] = [];
-  for (let i = 0; i < items.length; i++) {
-    for (let j = i + 1; j < items.length; j++) {
-      const a = items[i];
-      const b = items[j];
-      const reach = a.obb.halfExtents.length() + b.obb.halfExtents.length();
-      if (a.obb.center.distanceTo(b.obb.center) <= reach) pairs.push([a, b]);
-    }
-  }
-  return pairs;
+  return overlappingPairs(
+    items,
+    (it) => it.obb.center,
+    (it) => it.obb.halfExtents.length(),
+  );
 }
 
 /** Does a world-space point fall inside the box? Used for keep-out volumes. */

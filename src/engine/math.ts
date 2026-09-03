@@ -53,7 +53,20 @@ export const M_TO_MM = 1000;
  * A degenerate `up` (parallel to the axis) is replaced rather than throwing —
  * imported CAD data is routinely sloppy here.
  */
+const connectorFrameCache = new WeakMap<Connector, Pose>();
+
 export function connectorLocalFrame(c: Connector): Pose {
+  // A connector's local frame is a pure function of its immutable fields, yet it
+  // is queried twice per mate on every diagnostics run. Memoising by connector
+  // identity removes that repeated matrix work on large assemblies.
+  const cached = connectorFrameCache.get(c);
+  if (cached) return cached;
+  const frame = computeConnectorLocalFrame(c);
+  connectorFrameCache.set(c, frame);
+  return frame;
+}
+
+function computeConnectorLocalFrame(c: Connector): Pose {
   const axis = v3(c.axis).normalize();
   let up = v3(c.up);
   if (up.lengthSq() < 1e-12 || Math.abs(up.clone().normalize().dot(axis)) > 0.999) {

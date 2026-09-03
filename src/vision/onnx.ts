@@ -15,6 +15,7 @@
  */
 
 import type { InferenceSession, Tensor } from 'onnxruntime-web';
+import { bilinearResize, letterbox, unletterboxBox, type LetterboxResult } from './preprocess';
 
 export type ExecutionProvider = 'webgpu' | 'wasm';
 
@@ -137,11 +138,18 @@ export class VisionModel {
     }
   }
 
-  /** Letterbox + normalize a frame into the model's input tensor. */
-  private makeInputTensor(image: ImageData): Tensor {
+  /** Aspect-correct preprocessing into the model's input tensor. */
+  private makeInputTensor(image: ImageData, useLetterbox: boolean): { tensor: Tensor; lb?: LetterboxResult } {
     if (!this.ort) throw new Error('ORT not loaded');
     const size = this.config.inputSize;
-    const resized = resizeTo(image, size, size);
+    let lb: LetterboxResult | undefined;
+    let resized: ImageData;
+    if (useLetterbox) {
+      lb = letterbox(image, size);
+      resized = lb.image;
+    } else {
+      resized = bilinearResize(image, size, size);
+    }
     const mean = this.config.mean ?? [0, 0, 0];
     const std = this.config.std ?? [1, 1, 1];
     const layout = this.config.layout ?? 'nchw';
@@ -165,14 +173,15 @@ export class VisionModel {
       }
     }
     const dims = layout === 'nchw' ? [1, 3, size, size] : [1, size, size, 3];
-    return new this.ort.Tensor('float32', data, dims);
+    return { tensor: new this.ort.Tensor('float32', data, dims), lb };
   }
 
-  private async run(image: ImageData): Promise<Record<string, Tensor>> {
+  private async run(image: ImageData, useLetterbox = false): Promise<{ out: Record<string, Tensor>; lb?: LetterboxResult }> {
     if (!this.session || !this.ort) throw new Error('Model not loaded');
-    const input = this.makeInputTensor(image);
+    const { tensor, lb } = this.makeInputTensor(image, useLetterbox);
     const name = this.config.inputName ?? this.session.inputNames[0];
-    return this.session.run({ [name]: input }) as unknown as Promise<Record<string, Tensor>>;
+    const out = (await this.session.run({ [name]: tensor })) as unknown as Record<string, Tensor>;
+    return { out, lb };
   }
 
   private label(classId: number): string {
@@ -181,7 +190,7 @@ export class VisionModel {
 
   /** Classification: argmax + softmax over the single output vector. */
   async classify(image: ImageData, topK = 3): Promise<Classification[]> {
-    const out = await this.run(image);
+    const { out } = await this.run(image, false);
     const logits = firstTensor(out);
     if (!logits) return [];
     const scores = softmax(Array.from(logits.data as Float32Array));
@@ -196,8 +205,13 @@ export class VisionModel {
    * objectness score, then per-class scores — with class-wise NMS. Boxes come
    * back normalised to the input square.
    */
-  async detect(image: ImageData, scoreThreshold = 0.35, iouThreshold = 0.45): Promise<Detection[]> {
-    const out = await this.run(image);
+  async detect(
+    image: ImageData,
+    scoreThreshold = 0.35,
+    iouThreshold = 0.45,
+    opts: { soft?: boolean } = {},
+  ): Promise<Detection[]> {
+    const { out, lb } = await this.run(image, true);
     const t = firstTensor(out);
     if (!t) return [];
     const dims = t.dims;
@@ -226,19 +240,19 @@ export class VisionModel {
       const cy = data[off + 1] / size;
       const w = data[off + 2] / size;
       const h = data[off + 3] / size;
-      raw.push({
-        label: this.label(bestId),
-        classId: bestId,
-        score,
-        box: { x: cx - w / 2, y: cy - h / 2, w, h },
-      });
+      // Box is normalised in the letterboxed square; map it back to the frame.
+      const boxInSquare = { x: cx - w / 2, y: cy - h / 2, w, h };
+      const box = lb ? unletterboxBox(boxInSquare, lb) : boxInSquare;
+      raw.push({ label: this.label(bestId), classId: bestId, score, box });
     }
-    return nonMaxSuppression(raw, iouThreshold);
+    return opts.soft
+      ? softNonMaxSuppression(raw, iouThreshold, scoreThreshold)
+      : nonMaxSuppression(raw, iouThreshold);
   }
 
   /** Segmentation: argmax over a `[1, C, H, W]` output into a per-pixel mask. */
   async segment(image: ImageData): Promise<Segmentation | undefined> {
-    const out = await this.run(image);
+    const { out } = await this.run(image, false);
     const t = firstTensor(out);
     if (!t) return undefined;
     const [, classes, h, w] = t.dims as number[];
@@ -296,6 +310,39 @@ export function nonMaxSuppression(dets: Detection[], iouThreshold: number): Dete
   for (const d of byScore) {
     if (kept.some((k) => k.classId === d.classId && iou(k.box, d.box) > iouThreshold)) continue;
     kept.push(d);
+  }
+  return kept;
+}
+
+/**
+ * Soft non-max suppression (Gaussian).
+ *
+ * Hard NMS deletes any overlapping box outright, which drops a genuine second
+ * part that happens to sit close to a stronger one — common in a dense assembly
+ * where neighbouring components overlap in the camera view. Soft-NMS instead
+ * *decays* an overlapping box's score by a Gaussian of the overlap, keeping it
+ * if it still clears the threshold. That recovers real detections hard NMS would
+ * have thrown away.
+ */
+export function softNonMaxSuppression(
+  dets: Detection[],
+  iouThreshold: number,
+  scoreThreshold: number,
+  sigma = 0.5,
+): Detection[] {
+  const pool = dets.map((d) => ({ ...d }));
+  const kept: Detection[] = [];
+  while (pool.length > 0) {
+    let m = 0;
+    for (let i = 1; i < pool.length; i++) if (pool[i].score > pool[m].score) m = i;
+    const best = pool.splice(m, 1)[0];
+    kept.push(best);
+    for (const d of pool) {
+      if (d.classId !== best.classId) continue;
+      const ov = iou(best.box, d.box);
+      if (ov > iouThreshold) d.score *= Math.exp(-(ov * ov) / sigma);
+    }
+    for (let i = pool.length - 1; i >= 0; i--) if (pool[i].score < scoreThreshold) pool.splice(i, 1);
   }
   return kept;
 }

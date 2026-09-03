@@ -28,6 +28,13 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
   const assembly = useStore((s) => s.assembly);
   const setArMode = useStore((s) => s.setArMode);
 
+  // Recognition is temporally smoothed; a step change means a different expected
+  // part, so clear the tracker/voter history rather than carrying stale votes.
+  const activeStepId = useStore((s) => s.activeStepId);
+  useEffect(() => {
+    pipelineRef.current?.resetTemporal();
+  }, [activeStepId]);
+
   useEffect(() => {
     let alive = true;
     detectCapabilities().then((caps) => {

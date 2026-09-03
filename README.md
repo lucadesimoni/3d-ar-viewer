@@ -75,6 +75,33 @@ This keeps first paint fast on a cold connection while ~10 MB of WASM streams in
 behind it. The status bar shows honest capability badges (HTTPS, WebGL2, WebXR,
 Camera, OpenCV, ONNX).
 
+## Performance & recognition
+
+**Snapping / diagnostics performance.** The diagnostics engine re-runs on every
+placement, so its hot paths are optimised for large assemblies:
+
+- Interference broadphase is backed by a **uniform-grid spatial hash**
+  (`src/engine/spatialHash.ts`), replacing the O(n²) pairwise sweep with a
+  near-linear one — proven equivalent to brute force in tests. This is what keeps
+  the 108-part rack responsive as parts are placed.
+- Connector local frames are **memoised** by connector identity, removing the
+  repeated matrix work they incurred (twice per mate, every diagnostics run).
+
+**Object recognition accuracy & stability.** The vision pipeline does more than
+run a model per frame:
+
+- **Aspect-correct preprocessing** (`src/vision/preprocess.ts`): bilinear
+  resampling and **letterboxing** instead of a nearest-neighbour squash, with
+  detection boxes un-mapped back to the original frame. Squashing aspect ratio is
+  one of the biggest silent accuracy killers for a detector; this fixes it.
+- **Temporal fusion** (`src/vision/tracking.ts`): a SORT-style `DetectionTracker`
+  associates detections across frames (IoU + EMA, hit/miss lifecycle) so boxes
+  stop flickering and only *confirmed* parts drive the UI; a `ClassificationVoter`
+  takes a rolling majority vote — important for the handed left/right pair, where
+  a single frame flips. Temporal history resets on step change.
+- **Soft-NMS** recovers a real overlapping part that hard NMS would delete —
+  common in a dense assembly.
+
 ## Device support
 
 | Device | Mode | How |
