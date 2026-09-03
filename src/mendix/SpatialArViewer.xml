@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<widget id="anthropic.spatialar.SpatialArViewer"
+        pluginWidget="true" needsEntityContext="true" offlineCapable="true"
+        supportedPlatform="Web"
+        xmlns="http://www.mendix.com/widget/1.0/"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.mendix.com/widget/1.0/ ../node_modules/mendix/custom_widget.xsd">
+  <name>Spatial AR Viewer</name>
+  <description>Spatial recognition and AR overlay for guided assembly on iPad and iPhone.</description>
+  <icon/>
+  <properties>
+    <propertyGroup caption="Assembly">
+      <property key="assemblyJson" type="expression" required="false">
+        <caption>Assembly definition (JSON)</caption>
+        <description>A JSON AssemblyDef describing parts, steps, mates and background geometry. Leave empty to use the bundled sample.</description>
+        <returnType type="String"/>
+      </property>
+    </propertyGroup>
+    <propertyGroup caption="Recognition models">
+      <property key="detectorModelUrl" type="expression" required="false">
+        <caption>Detector model URL</caption>
+        <description>URL of an ONNX object-detection model (YOLO-style output).</description>
+        <returnType type="String"/>
+      </property>
+      <property key="classifierModelUrl" type="expression" required="false">
+        <caption>Classifier model URL</caption>
+        <description>URL of an ONNX classification model for part verification.</description>
+        <returnType type="String"/>
+      </property>
+    </propertyGroup>
+    <propertyGroup caption="Events">
+      <property key="onComplete" type="action" required="false">
+        <caption>On assembly complete</caption>
+        <description>Runs when every step has been signed off.</description>
+      </property>
+    </propertyGroup>
+  </properties>
+</widget>

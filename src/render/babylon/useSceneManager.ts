@@ -1,0 +1,71 @@
+import { useEffect, useRef, useState } from 'react';
+import { SceneManager, type SceneRenderState } from './SceneManager';
+import { useStore } from '../../state/store';
+import type { AssemblyDef } from '../../engine/types';
+
+/**
+ * Bridge between the Zustand store and the imperative `SceneManager`.
+ *
+ * The manager is created once for the lifetime of the canvas; store changes are
+ * pushed into it via `update`, and a light rAF loop drives the time-based
+ * effects (error pulse, animation scrub) that have no store event to hang off.
+ * React never renders a 3D frame — it only hands the manager fresh state.
+ */
+export function useSceneManager(
+  canvasRef: React.RefObject<HTMLCanvasElement | null>,
+  opts: { transparent?: boolean; grid?: boolean } = {},
+): { manager: SceneManager | undefined } {
+  const [manager, setManager] = useState<SceneManager>();
+  const managerRef = useRef<SceneManager | undefined>(undefined);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    const assembly: AssemblyDef = useStore.getState().assembly;
+    const m = new SceneManager(canvasRef.current, assembly, { transparent: opts.transparent });
+    if (opts.grid) m.addGroundGrid();
+    m.frameCamera();
+    managerRef.current = m;
+    setManager(m);
+
+    let raf = 0;
+    const loop = (): void => {
+      m.tick();
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      m.dispose();
+      managerRef.current = undefined as SceneManager | undefined;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasRef]);
+
+  // Push store state into the manager whenever the relevant slices change.
+  useEffect(() => {
+    const push = (): void => {
+      const m = managerRef.current;
+      if (!m) return;
+      const s = useStore.getState();
+      const step = s.assembly.steps.find((st) => st.id === s.activeStepId);
+      const state: SceneRenderState = {
+        placements: s.placements,
+        severityByPart: s.severityByPart,
+        selectedPartId: s.selectedPartId,
+        activePartIds: new Set(step?.partIds ?? []),
+        explodeFactor: s.explodeFactor,
+        timeline: s.viewMode === 'animate' ? s.animationTimeline : undefined,
+        timelineT: s.animationT,
+        showBackground: true,
+        showGhosts: s.viewMode === 'guide' || s.viewMode === 'explore',
+      };
+      m.update(state);
+      m.setAnchor(s.anchor);
+    };
+    push();
+    return useStore.subscribe(push);
+  }, [manager]);
+
+  return { manager };
+}

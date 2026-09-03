@@ -1,0 +1,38 @@
+import { describe, expect, it } from 'vitest';
+import { Vector3 } from 'three';
+import { obbContains, obbFor, obbIntersects, obbPenetration } from './collision';
+import type { MeshSpec, Pose } from './types';
+
+const box: MeshSpec = { type: 'box', size: [0.1, 0.1, 0.1] };
+const at = (x: number, y: number, z: number): Pose => ({ position: [x, y, z], rotation: [0, 0, 0, 1] });
+
+describe('obbPenetration', () => {
+  it('reports zero when boxes are clearly apart', () => {
+    expect(obbPenetration(obbFor(box, at(0, 0, 0)), obbFor(box, at(1, 0, 0)))).toBe(0);
+  });
+
+  it('reports overlap depth for interpenetrating boxes', () => {
+    // Two 100 mm boxes 60 mm apart overlap by 40 mm on X.
+    const d = obbPenetration(obbFor(box, at(0, 0, 0)), obbFor(box, at(0.06, 0, 0)));
+    expect(d).toBeCloseTo(0.04, 3);
+  });
+
+  it('finds a separating axis for a rotated box that clears', () => {
+    const rot: Pose = { position: [0.14, 0, 0], rotation: [0, 0, Math.SQRT1_2, Math.SQRT1_2] };
+    expect(obbIntersects(obbFor(box, at(0, 0, 0)), obbFor(box, rot))).toBe(false);
+  });
+
+  it('is symmetric', () => {
+    const a = obbFor(box, at(0, 0, 0));
+    const b = obbFor(box, at(0.05, 0.02, 0));
+    expect(obbPenetration(a, b)).toBeCloseTo(obbPenetration(b, a), 6);
+  });
+});
+
+describe('obbContains', () => {
+  it('tests a point against an oriented box', () => {
+    const o = obbFor(box, at(0, 0, 0));
+    expect(obbContains(o, new Vector3(0, 0, 0))).toBe(true);
+    expect(obbContains(o, new Vector3(0.2, 0, 0))).toBe(false);
+  });
+});

@@ -1,0 +1,35 @@
+{
+  "name": "spatial-ar-assembly",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Spatial recognition + AR overlay workspace for guided assembly on iPad and iPhone.",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@babylonjs/core": "^9.24.0",
+    "onnxruntime-web": "^1.29.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "three": "^0.185.1",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@types/three": "^0.185.4",
+    "@vitejs/plugin-react": "^6.1.1",
+    "jsdom": "^30.0.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  }
+}
