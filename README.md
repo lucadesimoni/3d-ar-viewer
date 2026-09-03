@@ -60,9 +60,11 @@ join the *same spatial session* rather than watching a shaky screen-share.
 - **`src/components/`** — the React shell and HUD.
 - **`src/state/`** — a Zustand store that derives diagnostics and the sequence
   view on every change.
-- **`src/mendix/`** — a **Mendix pluggable-widget** wrapper (`SpatialArViewer`)
-  plus its `.xml` manifest, so the whole experience can be dropped onto a Mendix
-  page and bound to the domain model.
+- **`src/mendix/`** — a **Mendix pluggable-widget compatibility shim**
+  (`SpatialArViewer`) plus its `.xml` manifest. This only *prepares*
+  compatibility: it is structurally typed to compile without the Mendix SDK, is
+  not imported by the standalone app, and is left out of the bundle. Full widget
+  packaging (SDK types, build tooling, MPK output) is intended for later.
 
 ### Everything degrades gracefully
 

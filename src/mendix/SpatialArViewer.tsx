@@ -4,7 +4,13 @@ import { useStore } from '../state/store';
 import type { AssemblyDef } from '../engine/types';
 
 /**
- * Mendix pluggable-widget entry point.
+ * Mendix pluggable-widget entry point — COMPATIBILITY SHIM ONLY.
+ *
+ * This exists so the app is ready to be embedded as a Mendix pluggable widget;
+ * it is deliberately NOT a finished widget build. It is structurally typed so it
+ * compiles without the Mendix SDK, is not imported by the standalone app, and is
+ * excluded from the production bundle. The full widget packaging (SDK types,
+ * build tooling, editorConfig/preview, MPK output) is to be done later.
  *
  * Mendix pluggable widgets are plain React components that receive their
  * configured properties as props. This wrapper adapts the standalone app into
