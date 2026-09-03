@@ -22,7 +22,9 @@ export function meshHalfExtents(mesh: MeshSpec): Vector3 {
     case 'sphere':
       return new Vector3(mesh.radius, mesh.radius, mesh.radius);
     case 'url':
-      // Unknown until the glTF loads; the scene feeds measured extents back in.
+      // Prefer the author's collision bounds; otherwise a small conservative box
+      // until the renderer measures the loaded glTF and feeds real extents back.
+      if (mesh.bounds) return new Vector3(mesh.bounds[0] / 2, mesh.bounds[1] / 2, mesh.bounds[2] / 2);
       return new Vector3(0.05, 0.05, 0.05).multiplyScalar(mesh.scale ?? 1);
   }
 }

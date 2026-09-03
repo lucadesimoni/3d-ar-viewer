@@ -16,6 +16,7 @@ import type { Material } from '@babylonjs/core/Materials/material';
 import type { AssemblyDef, PartDef, PlacementState, Pose } from '../../engine/types';
 import type { Severity } from '../../engine/diagnostics';
 import { assemblyCentroid, explodePose, pulseScale, sampleTimeline, type Timeline } from '../../engine/animation';
+import { loadPartModel } from './gltf';
 import {
   DIAGNOSTIC_COLORS,
   applyPose,
@@ -40,7 +41,10 @@ export interface SceneRenderState {
 
 interface PartVisual {
   root: TransformNode;
+  /** Primitive placeholder; hidden once an external model loads. */
   mesh: Mesh;
+  /** Meshes from a loaded glTF/GLB, when the part references one. */
+  loadedMeshes?: AbstractMesh[];
   solidMat: Material;
   overlayMat: Material;
   outline: boolean;
@@ -111,7 +115,24 @@ export class SceneManager {
       const overlayMat = makeOverlayMaterial(this.scene, DIAGNOSTIC_COLORS.ghost, 0.28, `ghost-${part.id}`);
       mesh.material = overlayMat;
       applyPose(root, part.targetPose);
-      this.parts.set(part.id, { root, mesh, solidMat, overlayMat, outline: false });
+      const visual: PartVisual = { root, mesh, solidMat, overlayMat, outline: false };
+      this.parts.set(part.id, visual);
+
+      // Real geometry (glTF/GLB) loads asynchronously; the primitive above holds
+      // the pose slot until it arrives, and remains as a fallback if it fails.
+      if (part.mesh.type === 'url') {
+        void loadPartModel(this.scene, part.mesh.url, root, {
+          scale: part.mesh.scale,
+          draco: part.mesh.draco,
+        }).then((model) => {
+          if (!model) return; // load failed — keep the placeholder primitive
+          visual.mesh.isVisible = false;
+          visual.loadedMeshes = model.meshes;
+          // Name the loaded meshes so tap-to-select resolves back to this part.
+          for (const m of model.meshes) m.name = `mesh-${part.id}`;
+          if (this.state) this.update(this.state);
+        });
+      }
     }
   }
 
@@ -201,31 +222,48 @@ export class SceneManager {
     const isActive = state.activePartIds.has(partId);
     const isSelected = state.selectedPartId === partId;
 
+    const loaded = visual.loadedMeshes;
     if (status === 'ghost') {
-      visual.mesh.material = visual.overlayMat;
-      visual.mesh.isVisible = state.showGhosts || isActive;
-      this.tintOverlay(visual, isActive ? DIAGNOSTIC_COLORS.active : DIAGNOSTIC_COLORS.ghost, isActive ? 0.42 : 0.22);
-    } else {
-      // Placed: show the solid part, tinted by its worst diagnostic.
-      visual.mesh.isVisible = true;
-      if (severity) {
-        this.tintOverlay(visual, DIAGNOSTIC_COLORS[severity], 0.55);
-        visual.mesh.material = visual.overlayMat;
+      const visible = state.showGhosts || isActive;
+      if (loaded) {
+        for (const m of loaded) { m.isVisible = visible; m.visibility = isActive ? 0.6 : 0.35; }
       } else {
-        visual.mesh.material = visual.solidMat;
+        visual.mesh.material = visual.overlayMat;
+        visual.mesh.isVisible = visible;
+        this.tintOverlay(visual, isActive ? DIAGNOSTIC_COLORS.active : DIAGNOSTIC_COLORS.ghost, isActive ? 0.42 : 0.22);
+      }
+    } else {
+      // Placed: show the real geometry; tint by the worst diagnostic.
+      if (loaded) {
+        for (const m of loaded) { m.isVisible = true; m.visibility = 1; }
+        // A loaded model keeps its own PBR materials; status is shown by the
+        // outline + pulse below rather than by recolouring baked textures.
+      } else {
+        visual.mesh.isVisible = true;
+        if (severity) {
+          this.tintOverlay(visual, DIAGNOSTIC_COLORS[severity], 0.55);
+          visual.mesh.material = visual.overlayMat;
+        } else {
+          visual.mesh.material = visual.solidMat;
+        }
       }
     }
 
     // Selected or erroring parts get an outline and a subtle attention pulse.
     const wantOutline = isSelected || severity === 'error';
+    const outlineColor = Color3.FromHexString(isSelected ? '#ffffff' : DIAGNOSTIC_COLORS.error);
+    const outlineTargets: (Mesh | AbstractMesh)[] = loaded ?? [visual.mesh];
     if (wantOutline !== visual.outline) {
-      visual.mesh.renderOutline = wantOutline;
-      visual.mesh.outlineColor = Color3.FromHexString(isSelected ? '#ffffff' : DIAGNOSTIC_COLORS.error);
-      visual.mesh.outlineWidth = 0.004;
+      for (const m of outlineTargets) {
+        m.renderOutline = wantOutline;
+        m.outlineColor = outlineColor;
+        m.outlineWidth = 0.004;
+      }
       visual.outline = wantOutline;
     }
+    // Pulse the part root so both primitive and loaded geometry breathe together.
     const pulse = severity === 'error' ? pulseScale(performance.now() - this.startMs) : 1;
-    visual.mesh.scaling.setAll(pulse);
+    visual.root.scaling.setAll(pulse);
 
     for (const m of this.background) m.setEnabled(state.showBackground);
   }

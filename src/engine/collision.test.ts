@@ -36,3 +36,19 @@ describe('obbContains', () => {
     expect(obbContains(o, new Vector3(0.2, 0, 0))).toBe(false);
   });
 });
+
+describe('meshHalfExtents for url models', () => {
+  it('uses author-provided bounds for a glTF/GLB part', () => {
+    const spec = { type: 'url' as const, url: 'part.glb', bounds: [0.2, 0.1, 0.3] as [number, number, number] };
+    const o = obbFor(spec, at(0, 0, 0));
+    expect(o.halfExtents.x).toBeCloseTo(0.1, 6);
+    expect(o.halfExtents.y).toBeCloseTo(0.05, 6);
+    expect(o.halfExtents.z).toBeCloseTo(0.15, 6);
+  });
+
+  it('falls back to a conservative box when no bounds are given', () => {
+    const spec = { type: 'url' as const, url: 'part.glb', scale: 2 };
+    const o = obbFor(spec, at(0, 0, 0));
+    expect(o.halfExtents.x).toBeGreaterThan(0);
+  });
+});

@@ -60,7 +60,13 @@ export type MeshSpec =
   | { type: 'sphere'; radius: number }
   | { type: 'tube'; radius: number; height: number; wall: number }
   | { type: 'plate'; size: Vec3; holeRadius?: number }
-  | { type: 'url'; url: string; scale?: number };
+  /**
+   * An external 3D model (glTF 2.0 / GLB — the right runtime format for web AR).
+   * `bounds` is the full size in metres used for collision/occlusion when the
+   * mesh has not been measured yet; without it the engine falls back to a small
+   * conservative box until the renderer reports the loaded extents.
+   */
+  | { type: 'url'; url: string; scale?: number; bounds?: Vec3; draco?: boolean };
 
 export interface MaterialSpec {
   color: string;
@@ -175,6 +181,12 @@ export interface AssemblyDef {
   marker?: { id: string; sizeM: number; poseInAssembly: Pose };
   /** Named datum points used by the 3-point manual registration flow. */
   datums?: { id: string; label: string; position: Vec3 }[];
+  /**
+   * USDZ model for the iOS AR Quick Look fallback. iOS Safari has no WebXR, and
+   * Quick Look wants USDZ (not glTF), so a deployment supplies a pre-converted
+   * USDZ of the whole assembly here to enable the system AR viewer on iPhone.
+   */
+  quickLookUrl?: string;
 }
 
 /** Runtime placement of a part as the operator has actually positioned it. */

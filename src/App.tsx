@@ -8,6 +8,7 @@ import { RegistrationPanel } from './components/RegistrationPanel';
 import { InspectorPanel } from './components/InspectorPanel';
 import { CollabPanel } from './components/CollabPanel';
 import { useArController } from './components/useArController';
+import { QuickLookButton } from './components/QuickLookButton';
 
 type Drawer = 'register' | 'collab' | undefined;
 
@@ -25,6 +26,7 @@ export function App(): JSX.Element {
     <div className={`app ${arActive ? 'ar' : ''}`}>
       <video ref={videoRef} className="passthrough" playsInline muted />
       <StatusBar capabilities={capabilities} pipeline={pipelineStatus} onEnterAr={enterAr} arActive={arActive} />
+      <QuickLookButton capabilities={capabilities} />
 
       <div className="stage">
         <StepGuide />
