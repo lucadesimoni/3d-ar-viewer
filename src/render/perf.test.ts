@@ -48,3 +48,31 @@ describe('applyPerfOverrides', () => {
     expect(p.targetFps).toBe(30);
   });
 });
+
+import { describeGpu, gpuLabel } from './perf';
+
+describe('describeGpu', () => {
+  it('reports WebGL2 as GPU-accelerated', () => {
+    const g = describeGpu('apple m2', true, true, false);
+    expect(g.backend).toBe('webgl2');
+    expect(g.accelerated).toBe(true);
+    expect(g.mlProvider).toBe('wasm');
+  });
+  it('reports WebGPU availability and picks it for ML', () => {
+    const g = describeGpu('apple m2', true, true, true);
+    expect(g.webgpu).toBe(true);
+    expect(g.mlProvider).toBe('webgpu');
+    expect(gpuLabel(g)).toMatch(/WebGPU/);
+  });
+  it('flags a software rasteriser as NOT accelerated', () => {
+    const g = describeGpu('google swiftshader', true, true, false);
+    expect(g.backend).toBe('software');
+    expect(g.accelerated).toBe(false);
+    expect(gpuLabel(g)).toMatch(/Software/);
+  });
+  it('handles no-GL devices', () => {
+    const g = describeGpu('', false, false, false);
+    expect(g.backend).toBe('none');
+    expect(g.accelerated).toBe(false);
+  });
+});

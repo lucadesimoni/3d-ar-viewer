@@ -123,3 +123,87 @@ export function applyPerfOverrides(profile: PerfProfile, search: string): PerfPr
 export function detectPerfProfile(search = typeof window !== 'undefined' ? window.location.search : ''): PerfProfile {
   return applyPerfOverrides(profileForTier(classifyTier(readDeviceSignals())), search);
 }
+
+
+// ---------------------------------------------------------------------------
+// GPU acceleration status — transparent per device.
+// ---------------------------------------------------------------------------
+
+export type RenderBackend = 'webgpu' | 'webgl2' | 'webgl1' | 'software' | 'none';
+
+export interface GpuInfo {
+  /** Rendering backend actually in use for the 3D scene. */
+  backend: RenderBackend;
+  /** True when the scene is GPU-accelerated (not a software rasteriser). */
+  accelerated: boolean;
+  /** WebGPU present — enables the fastest ML (ONNX Runtime) execution provider. */
+  webgpu: boolean;
+  /** Best ML execution provider available: GPU (webgpu) or CPU (wasm). */
+  mlProvider: 'webgpu' | 'wasm';
+  /** Unmasked renderer string (lowercased), for diagnostics. */
+  renderer: string;
+}
+
+const SOFTWARE_RE = /swiftshader|llvmpipe|software|basic render|microsoft basic/i;
+
+/**
+ * Classify GPU acceleration from raw capability flags. Pure, so it is unit
+ * tested. A WebGL context backed by a software rasteriser (SwiftShader on a
+ * headless/blocked device) is reported as `software` — accelerated=false — even
+ * though a GL context exists, because that is the honest answer.
+ */
+export function describeGpu(
+  renderer: string,
+  hasWebgl2: boolean,
+  hasWebgl1: boolean,
+  hasWebgpu: boolean,
+): GpuInfo {
+  const software = SOFTWARE_RE.test(renderer);
+  let backend: RenderBackend;
+  if (software) backend = 'software';
+  else if (hasWebgl2) backend = 'webgl2';
+  else if (hasWebgl1) backend = 'webgl1';
+  else backend = 'none';
+  return {
+    backend,
+    accelerated: backend === 'webgl2' || backend === 'webgl1' || (backend === 'none' && hasWebgpu),
+    webgpu: hasWebgpu,
+    mlProvider: hasWebgpu ? 'webgpu' : 'wasm',
+    renderer,
+  };
+}
+
+/** Probe the current device's GPU acceleration status. */
+export function detectGpu(): GpuInfo {
+  let hasWebgl2 = false;
+  let hasWebgl1 = false;
+  let renderer = '';
+  if (typeof document !== 'undefined') {
+    try {
+      const c = document.createElement('canvas');
+      const gl2 = c.getContext('webgl2');
+      hasWebgl2 = gl2 !== null;
+      const gl = gl2 ?? c.getContext('webgl');
+      hasWebgl1 = gl !== null;
+      if (gl) {
+        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+        if (dbg) renderer = String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) ?? '').toLowerCase();
+      }
+    } catch {
+      /* blocked */
+    }
+  }
+  const hasWebgpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
+  return describeGpu(renderer, hasWebgl2, hasWebgl1, hasWebgpu);
+}
+
+/** Short human label, e.g. "WebGL2 (GPU)" or "Software". */
+export function gpuLabel(info: GpuInfo): string {
+  switch (info.backend) {
+    case 'webgl2': return info.webgpu ? 'WebGL2 + WebGPU' : 'WebGL2 (GPU)';
+    case 'webgl1': return 'WebGL1 (GPU)';
+    case 'software': return 'Software (no GPU)';
+    case 'webgpu': return 'WebGPU';
+    default: return 'No GPU';
+  }
+}

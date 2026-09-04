@@ -3,6 +3,7 @@ import { detectCapabilities, type Capabilities } from '../engine/tracking/capabi
 import { CameraTracker } from '../engine/tracking/cameraTracker';
 import { MarkerTracker } from '../engine/tracking/markerTracking';
 import { RecognitionPipeline, type PipelineStatus } from '../vision/pipeline';
+import { envModelConfig } from '../vision/defaultModels';
 import { classifyRecognition, type LabelInfo } from '../vision/verdict';
 import { detectPerfProfile } from '../render/perf';
 import { toImageData } from '../vision/opencv';
@@ -46,7 +47,9 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     });
     // Boot the recognition pipeline in the background; no models are bundled, so
     // this only wires up OpenCV unless a deployment supplies model URLs.
-    const pipeline = new RecognitionPipeline({ normalizeLighting: true });
+    // Models come from VITE_* env vars (see .env.example); with none set the
+    // pipeline runs geometry-only and recognition stays quiet.
+    const pipeline = new RecognitionPipeline(envModelConfig());
     pipelineRef.current = pipeline;
     pipeline.init().then((s) => alive && setPipelineStatus(s));
     return () => { alive = false; };

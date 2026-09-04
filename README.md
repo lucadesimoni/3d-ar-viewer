@@ -205,10 +205,29 @@ key.pem`, or put the server behind a TLS-terminating proxy / tunnel.
 
 ### Plugging in recognition models
 
-No model weights are bundled — the app ships small. Supply ONNX model URLs (via
-the Mendix widget props, or by constructing `RecognitionPipeline` with a
-`PipelineConfig`) to enable detection / classification / segmentation. ONNX
-Runtime Web auto-selects WebGPU where available and falls back to threaded WASM.
+No model weights are bundled — the app ships small and runs fully geometry-only
+until you supply a model. The **best public starting point for industrial AR** is
+**Ultralytics YOLO (YOLO11 / YOLOv8)** exported to ONNX: real-time, WebGPU-
+accelerated in ONNX Runtime Web, and the pipeline's decoder already handles its
+output (`src/vision/defaultModels.ts`, COCO-80 labels bundled; both YOLOv5 and
+YOLOv8/YOLO11 output formats are decoded, auto-detected).
+
+It recognises **generic** objects, not your specific parts. For real part
+recognition, fine-tune on a few hundred labelled images and name the classes
+after your part IDs (so the on-part discrepancy overlay maps 1:1), export to
+ONNX, host it, and set `VITE_DETECTOR_MODEL_URL` (see `.env.example`). A stock
+model can be mapped to parts for a demo via `remapLabels`.
+
+### GPU acceleration — per device
+
+- **Rendering** is GPU-accelerated on every device with a GPU, via **WebGL2**
+  (Babylon, `powerPreference: high-performance`); WebGL1 and finally a software
+  rasteriser are the fallbacks. The status bar shows the live backend
+  (`GPU · WebGL2 (GPU)` / `Software (no GPU)` …) from `detectGpu()`.
+- **ML inference** uses the **WebGPU** execution provider where available (fast),
+  falling back to multi-threaded **WASM** (CPU) — so recognition runs everywhere,
+  just faster where WebGPU exists (modern Android/desktop, and iOS/iPadOS with
+  Safari 26+).
 
 ## Sample assemblies
 

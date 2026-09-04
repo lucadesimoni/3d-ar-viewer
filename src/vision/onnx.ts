@@ -31,6 +31,12 @@ export interface ModelConfig {
   std?: [number, number, number];
   /** Class names indexed by the model's output order. */
   labels?: string[];
+  /**
+   * Detection output format. 'yolov5' has an objectness column ([1, N, 5+C]);
+   * 'yolov8' (also YOLO11) is transposed and has none ([1, 4+C, N]). 'auto'
+   * infers from the output dims — the transposed axis is the shorter one.
+   */
+  format?: 'yolov5' | 'yolov8' | 'auto';
 }
 
 export interface Detection {
@@ -215,32 +221,46 @@ export class VisionModel {
     const t = firstTensor(out);
     if (!t) return [];
     const dims = t.dims;
-    const rows = dims[1] ?? 0;
-    const stride = dims[2] ?? 0;
-    if (rows === 0 || stride < 6) return [];
+    if (dims.length < 3) return [];
+    const a = dims[1] ?? 0;
+    const b = dims[2] ?? 0;
+    if (a === 0 || b === 0) return [];
     const data = t.data as Float32Array;
     const size = this.config.inputSize;
 
+    // Resolve the output format. YOLOv8/YOLO11 emit [1, 4+C, N] (attrs on the
+    // shorter axis, no objectness); YOLOv5 emits [1, N, 5+C] with objectness.
+    let format = this.config.format ?? 'auto';
+    if (format === 'auto') format = a < b ? 'yolov8' : 'yolov5';
+    const v8 = format === 'yolov8';
+    const numBoxes = v8 ? b : a;
+    const attrs = v8 ? a : b;
+    const numClasses = v8 ? attrs - 4 : attrs - 5;
+    if (numClasses <= 0) return [];
+
+    // Reading one attribute of box i: v8 is channel-major (stride numBoxes),
+    // v5 is box-major (stride attrs).
+    const at = v8
+      ? (attr: number, i: number) => data[attr * numBoxes + i]
+      : (attr: number, i: number) => data[i * attrs + attr];
+
     const raw: Detection[] = [];
-    for (let i = 0; i < rows; i++) {
-      const off = i * stride;
-      const obj = data[off + 4];
-      if (obj < scoreThreshold) continue;
+    for (let i = 0; i < numBoxes; i++) {
+      const obj = v8 ? 1 : at(4, i);
+      if (!v8 && obj < scoreThreshold) continue;
+      const classBase = v8 ? 4 : 5;
       let bestId = 0;
       let bestScore = 0;
-      for (let c = 5; c < stride; c++) {
-        if (data[off + c] > bestScore) {
-          bestScore = data[off + c];
-          bestId = c - 5;
-        }
+      for (let c = 0; c < numClasses; c++) {
+        const sc = at(classBase + c, i);
+        if (sc > bestScore) { bestScore = sc; bestId = c; }
       }
       const score = obj * bestScore;
       if (score < scoreThreshold) continue;
-      const cx = data[off] / size;
-      const cy = data[off + 1] / size;
-      const w = data[off + 2] / size;
-      const h = data[off + 3] / size;
-      // Box is normalised in the letterboxed square; map it back to the frame.
+      const cx = at(0, i) / size;
+      const cy = at(1, i) / size;
+      const w = at(2, i) / size;
+      const h = at(3, i) / size;
       const boxInSquare = { x: cx - w / 2, y: cy - h / 2, w, h };
       const box = lb ? unletterboxBox(boxInSquare, lb) : boxInSquare;
       raw.push({ label: this.label(bestId), classId: bestId, score, box });

@@ -1,6 +1,8 @@
 import { MODE_LABELS, type Capabilities } from '../engine/tracking/capabilities';
 import type { PipelineStatus } from '../vision/pipeline';
 import { useStore } from '../state/store';
+import { detectGpu, gpuLabel } from '../render/perf';
+import { useMemo } from 'react';
 
 interface Props {
   capabilities: Capabilities | undefined;
@@ -12,6 +14,7 @@ interface Props {
 /** Top bar: identity, the AR-entry button, and honest capability badges. */
 export function StatusBar({ capabilities, pipeline, onEnterAr, arActive }: Props): JSX.Element {
   const anchorQuality = useStore((s) => s.anchorQuality);
+  const gpu = useMemo(() => detectGpu(), []);
 
   return (
     <header className="status-bar">
@@ -26,6 +29,7 @@ export function StatusBar({ capabilities, pipeline, onEnterAr, arActive }: Props
       <div className="badges">
         <Badge on={capabilities?.secureContext} label="HTTPS" />
         <Badge on={capabilities?.webgl2} label="WebGL2" />
+        <span className={`badge ${gpu.accelerated ? 'on' : 'off'}`} title={`Renderer: ${gpu.renderer || 'unknown'} · ML: ${gpu.mlProvider}`}>GPU · {gpuLabel(gpu)}</span>
         <Badge on={capabilities?.immersiveAr} label="WebXR" />
         <Badge on={capabilities?.camera} label="Camera" />
         <Badge on={pipeline?.openCv} label="OpenCV" />
