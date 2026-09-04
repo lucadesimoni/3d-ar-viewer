@@ -14,5 +14,7 @@ ENV NODE_ENV=production PORT=8080 HOST=0.0.0.0
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node -e "fetch('http://localhost:'+(process.env.PORT||8080)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 # For AR on a device, terminate TLS at a proxy or pass --https with mounted certs.
 CMD ["node", "server/serve.mjs"]

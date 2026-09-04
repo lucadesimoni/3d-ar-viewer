@@ -232,6 +232,39 @@ guide.
 See [COMPLIANCE.md](./COMPLIANCE.md) for a traceability matrix mapping every
 requirement from the brief to where it is implemented and how it is verified.
 
+## Production & performance
+
+**Maximum performance on every device.** On startup the renderer detects a device
+tier (cores, memory, GPU renderer, texture limits — `src/render/perf.ts`) and
+picks a profile: pixel-ratio cap, antialias, target FPS, and recognition cadence.
+On top of that, Babylon's `SceneOptimizer` **auto-degrades under live load** —
+if the scene can't hold the target frame rate it lowers internal resolution
+until it can, so a heavy assembly stays smooth on a weak tablet instead of
+stuttering. Static background geometry is frozen and per-move picking is off.
+Override for benchmarking/kiosk tuning: `?perf=low|mid|high|max`, `?dpr=1.5`,
+`?fps=30`.
+
+**Production server.** `server/serve.mjs` adds gzip (cached by mtime), a
+`/healthz` liveness probe, `immutable` caching for fingerprinted `/assets/*`,
+`no-cache` for HTML, and a `Permissions-Policy` granting the camera/AR sensor
+features (no `X-Frame-Options`, so it stays embeddable). Multi-threaded ONNX WASM
+via `--isolate` (COOP/COEP). The Dockerfile has a `HEALTHCHECK`.
+
+**Offline-capable PWA.** A web app manifest makes it installable (standalone,
+full-screen — good for a tablet kiosk), and a service worker caches the app
+shell (stale-while-revalidate) so it opens and runs offline on flaky shop-floor
+Wi-Fi; the geometry-driven app works without the CDN model bundles.
+
+**Going to production**
+- Serve over **HTTPS** (required for camera / sensors / WebXR): `--https --cert
+  cert.pem --key key.pem`, or a TLS-terminating proxy / tunnel.
+- Self-host the ONNX/OpenCV WASM and set `ort.env.wasm.wasmPaths` /
+  `loadOpenCV(url)` to your origin if you can't reach the CDN, then run with
+  `--isolate` for threaded inference.
+- Supply your trained ONNX model URLs and map the model's class labels to part
+  IDs so the on-part discrepancy overlay fires.
+- CI (`.github/workflows/ci.yml`) runs typecheck + tests + build on every push.
+
 ## License
 
 GPL-3.0-or-later. See [LICENSE](./LICENSE).

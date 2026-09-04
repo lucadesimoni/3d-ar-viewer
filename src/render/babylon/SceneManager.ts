@@ -17,6 +17,8 @@ import type { AssemblyDef, PartDef, PlacementState, Pose } from '../../engine/ty
 import type { Severity } from '../../engine/diagnostics';
 import { assemblyCentroid, explodePose, pulseScale, sampleTimeline, type Timeline } from '../../engine/animation';
 import { loadPartModel } from './gltf';
+import { SceneOptimizer, SceneOptimizerOptions } from '@babylonjs/core/Misc/sceneOptimizer';
+import { detectPerfProfile, type PerfProfile } from '../perf';
 import { STATUS_COLORS, type RecognitionStatus } from '../../vision/verdict';
 import {
   DIAGNOSTIC_COLORS,
@@ -71,14 +73,31 @@ export class SceneManager {
   private centroid: ReturnType<typeof assemblyCentroid>;
   private state: SceneRenderState | undefined;
   private startMs = performance.now();
+  private optimizer: SceneOptimizer | undefined;
+  readonly perf: PerfProfile;
 
   constructor(
     canvas: HTMLCanvasElement,
     private assembly: AssemblyDef,
     opts: { transparent?: boolean } = {},
   ) {
-    this.engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true, antialias: true });
+    // Pick a device performance profile before creating the engine, so antialias
+    // and pixel-ratio are set correctly from the start rather than reconfigured.
+    this.perf = detectPerfProfile();
+    this.engine = new Engine(canvas, this.perf.antialias, {
+      preserveDrawingBuffer: true,
+      stencil: true,
+      antialias: this.perf.antialias,
+      powerPreference: 'high-performance',
+      adaptToDeviceRatio: true,
+    });
+    // Cap render resolution to the profile's pixel-ratio ceiling — the single
+    // biggest lever on fill-rate-bound tablets.
+    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    this.engine.setHardwareScalingLevel(Math.max(1, dpr / this.perf.maxPixelRatio));
     this.scene = new Scene(this.engine);
+    // We only pick on explicit taps, so skip per-move picking entirely.
+    this.scene.skipPointerMovePicking = true;
     // Transparent clear for AR passthrough; opaque slate for the desktop preview.
     this.scene.clearColor = opts.transparent
       ? new Color4(0, 0, 0, 0)
@@ -101,6 +120,8 @@ export class SceneManager {
 
     this.buildParts();
     this.buildBackground();
+    this.freezeStatic();
+    this.startAdaptiveOptimizer();
 
     this.engine.runRenderLoop(() => this.scene.render());
     window.addEventListener('resize', this.onResize);
@@ -170,6 +191,7 @@ export class SceneManager {
     this.centroid = assemblyCentroid(assembly);
     this.buildParts();
     this.buildBackground();
+    this.freezeStatic();
   }
 
   /** Place the whole assembly at a world anchor pose (AR registration). */
@@ -339,7 +361,31 @@ export class SceneManager {
     return m ? m[1] : undefined;
   }
 
+  /**
+   * Runtime auto-degrade: if the scene can't hold the target frame rate, Babylon
+   * lowers internal resolution (and other cheap settings) until it can — so a
+   * heavy assembly on a weak device stays smooth instead of stuttering.
+   */
+  private startAdaptiveOptimizer(): void {
+    if (!this.perf.adaptive) return;
+    const options = SceneOptimizerOptions.ModerateDegradationAllowed(this.perf.targetFps);
+    options.targetFrameRate = this.perf.targetFps;
+    this.optimizer = new SceneOptimizer(this.scene, options);
+    this.optimizer.start();
+  }
+
+  /** Background geometry never moves — freeze its matrices and materials. */
+  private freezeStatic(): void {
+    for (const m of this.background) {
+      m.freezeWorldMatrix();
+      m.material?.freeze();
+      m.isPickable = false;
+    }
+  }
+
   dispose(): void {
+    this.optimizer?.stop();
+    this.optimizer?.dispose?.();
     window.removeEventListener('resize', this.onResize);
     this.engine.stopRenderLoop();
     this.scene.dispose();

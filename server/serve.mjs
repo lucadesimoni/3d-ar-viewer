@@ -16,6 +16,7 @@
 import { createServer as createHttp } from 'node:http';
 import { createServer as createHttps } from 'node:https';
 import { readFile, stat } from 'node:fs/promises';
+import { gzipSync } from 'node:zlib';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,12 +33,16 @@ const PORT = Number(opt('port', process.env.PORT ?? 8080));
 const HOST = opt('host', process.env.HOST ?? '0.0.0.0');
 const ISOLATE = flag('isolate');
 
+const COMPRESSIBLE = /^(text\/|application\/(javascript|json|wasm)|image\/svg)/;
+const gzipCache = new Map(); // path -> { mtimeMs, body }
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.wasm': 'application/wasm',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
@@ -71,20 +76,33 @@ async function resolveFile(urlPath) {
 }
 
 async function handler(req, res) {
+  const urlPath = (req.url ?? '/').split('?')[0];
+
+  // Liveness/readiness probe for orchestrators and load balancers.
+  if (urlPath === '/healthz' || urlPath === '/livez') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
+    return;
+  }
+
+  const isHashedAsset = urlPath.startsWith('/assets/'); // Vite fingerprints every asset here
   const headers = {
     'X-Content-Type-Options': 'nosniff',
-    'Cache-Control': req.url === '/' ? 'no-cache' : 'public, max-age=3600',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    // Grant the sensor/AR features the app needs, to itself (a host iframe still
+    // has to pass them through its own allow attribute). No X-Frame-Options, so
+    // the app stays embeddable.
+    'Permissions-Policy': 'camera=(self), xr-spatial-tracking=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self)',
+    // Vite fingerprints assets, so they are safe to cache forever; HTML is not.
+    'Cache-Control': isHashedAsset ? 'public, max-age=31536000, immutable' : 'no-cache',
   };
-  // Cross-origin isolation unlocks multi-threaded WASM (faster ONNX), but
-  // COEP can block cross-origin CDN assets — opt-in only.
   if (ISOLATE) {
     headers['Cross-Origin-Opener-Policy'] = 'same-origin';
     headers['Cross-Origin-Embedder-Policy'] = 'require-corp';
   }
 
-  let file = await resolveFile(req.url ?? '/');
-  // SPA fallback: unknown non-asset paths serve index.html.
-  if (!file && !extname(req.url ?? '')) file = await resolveFile('/index.html');
+  let file = await resolveFile(urlPath);
+  if (!file && !extname(urlPath)) file = await resolveFile('/index.html'); // SPA fallback
   if (!file) {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('404 Not Found');
@@ -92,8 +110,25 @@ async function handler(req, res) {
   }
 
   try {
-    const body = await readFile(file);
-    headers['Content-Type'] = MIME[extname(file).toLowerCase()] ?? 'application/octet-stream';
+    const info = await stat(file);
+    let body = await readFile(file);
+    const type = MIME[extname(file).toLowerCase()] ?? 'application/octet-stream';
+    headers['Content-Type'] = type;
+
+    // Gzip compressible responses when the client accepts it, cached by mtime.
+    const acceptsGzip = /\bgzip\b/.test(req.headers['accept-encoding'] ?? '');
+    if (acceptsGzip && COMPRESSIBLE.test(type) && body.length > 512) {
+      const cached = gzipCache.get(file);
+      let gz;
+      if (cached && cached.mtimeMs === info.mtimeMs) gz = cached.body;
+      else {
+        gz = gzipSync(body);
+        gzipCache.set(file, { mtimeMs: info.mtimeMs, body: gz });
+      }
+      body = gz;
+      headers['Content-Encoding'] = 'gzip';
+      headers['Vary'] = 'Accept-Encoding';
+    }
     res.writeHead(200, headers);
     res.end(body);
   } catch {

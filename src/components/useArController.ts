@@ -4,6 +4,7 @@ import { CameraTracker } from '../engine/tracking/cameraTracker';
 import { MarkerTracker } from '../engine/tracking/markerTracking';
 import { RecognitionPipeline, type PipelineStatus } from '../vision/pipeline';
 import { classifyRecognition, type LabelInfo } from '../vision/verdict';
+import { detectPerfProfile } from '../render/perf';
 import { toImageData } from '../vision/opencv';
 import { alignToMarker } from '../engine/alignment';
 import { useStore } from '../state/store';
@@ -102,7 +103,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
         const st = useStore.getState();
         const info = labelInfoFor(st);
         useStore.getState().setRecognition(classifyRecognition(result.tracks, info, result.ts));
-      }, 500);
+      }, detectPerfProfile().recognitionIntervalMs);
     }
   }, [arActive, capabilities, assembly, setAnchor, stop, videoRef]);
 

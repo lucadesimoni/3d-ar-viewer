@@ -1,0 +1,14 @@
+{
+  "name": "Spatial Assembly AR",
+  "short_name": "Assembly AR",
+  "description": "Spatial recognition and AR overlay for guided assembly on iPad and iPhone.",
+  "start_url": "/?ui=full",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0f14",
+  "theme_color": "#0b0f14",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

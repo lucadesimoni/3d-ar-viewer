@@ -14,3 +14,11 @@ if (root) createRoot(root).render(<StrictMode><App config={config} /></StrictMod
 
 // Expose the store for demo/e2e driving (harmless; read-only handle).
 (window as unknown as { spatialStore?: typeof useStore }).spatialStore = useStore;
+
+// Register the offline app-shell service worker in production (secure contexts
+// only; skipped in dev and where unsupported).
+if ('serviceWorker' in navigator && window.isSecureContext && !import.meta.env.DEV) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+  });
+}
