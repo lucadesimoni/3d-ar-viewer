@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Spatial Assembly AR — Embed Demo</title>
+<style>
+  :root {
+    --bg:#0b0f14; --panel:#111821; --edge:rgba(148,163,184,.18); --text:#e6edf5;
+    --muted:#93a2b5; --accent:#22d3ee; --radius:12px;
+    color-scheme: dark;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+  .wrap { display:grid; grid-template-columns:320px 1fr; height:100%; }
+  .controls { border-right:1px solid var(--edge); padding:18px; overflow-y:auto; background:var(--panel); }
+  .stage { display:flex; flex-direction:column; min-width:0; }
+  h1 { font-size:16px; margin:0 0 2px; }
+  .sub { color:var(--muted); font-size:12px; margin:0 0 16px; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+       margin:18px 0 8px; border-top:1px solid var(--edge); padding-top:14px; }
+  h2:first-of-type { border-top:none; padding-top:0; }
+  label { display:flex; justify-content:space-between; align-items:center; gap:10px;
+    font-size:13px; padding:5px 0; }
+  select, input[type=color] { background:rgba(255,255,255,.05); color:var(--text);
+    border:1px solid var(--edge); border-radius:8px; padding:5px 8px; font:inherit; }
+  input[type=color] { width:44px; height:30px; padding:2px; }
+  .presets { display:flex; flex-wrap:wrap; gap:6px; }
+  .presets button { flex:1 1 45%; background:rgba(255,255,255,.04); color:var(--text);
+    border:1px solid var(--edge); border-radius:9px; padding:8px; cursor:pointer; font:inherit; }
+  .presets button.active { background:var(--accent); color:#04141a; border-color:transparent; font-weight:650; }
+  .sizes { display:flex; flex-wrap:wrap; gap:6px; }
+  .sizes button { background:rgba(255,255,255,.04); color:var(--text); border:1px solid var(--edge);
+    border-radius:8px; padding:6px 9px; cursor:pointer; font:inherit; font-size:12px; }
+  .sizes button.active { border-color:var(--accent); color:var(--accent); }
+  .topbar { display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid var(--edge);
+    background:var(--panel); }
+  .url { flex:1; min-width:0; font-family:ui-monospace,Menlo,monospace; font-size:12px;
+    background:rgba(0,0,0,.3); border:1px solid var(--edge); border-radius:8px; padding:7px 10px;
+    color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .topbar button { background:var(--accent); color:#04141a; border:none; border-radius:8px;
+    padding:7px 12px; font-weight:650; cursor:pointer; }
+  .frame-area { flex:1; display:flex; align-items:center; justify-content:center; padding:20px; overflow:auto; }
+  .frame-box { border:1px solid var(--edge); border-radius:var(--radius); overflow:hidden;
+    box-shadow:0 12px 40px rgba(0,0,0,.5); background:#000; max-width:100%; max-height:100%; }
+  iframe { display:block; width:100%; height:100%; border:0; }
+  .hint { font-size:11.5px; color:var(--muted); margin-top:10px; }
+  code { background:rgba(255,255,255,.08); padding:1px 5px; border-radius:5px; font-size:.85em; }
+  @media (max-width:760px){ .wrap{ grid-template-columns:1fr; } .controls{ max-height:44vh; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <aside class="controls">
+    <h1>Spatial Assembly AR</h1>
+    <p class="sub">Embed demo — the same build, reshaped live via config.</p>
+
+    <h2>Preset</h2>
+    <div class="presets" id="presets">
+      <button data-preset="full" class="active">Full</button>
+      <button data-preset="compact">Compact</button>
+      <button data-preset="minimal">Minimal</button>
+      <button data-preset="viewer">Viewer</button>
+    </div>
+
+    <h2>Look</h2>
+    <label>Embedded <select id="embedded"><option value="">Auto</option><option value="1">On</option><option value="0">Off</option></select></label>
+    <label>Density <select id="density"><option value="">Auto</option><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
+    <label>Accent
+      <span style="display:flex;gap:8px;align-items:center">
+        <input type="checkbox" id="accentOn" />
+        <input type="color" id="accent" value="#22d3ee" />
+      </span>
+    </label>
+
+    <h2>Panels (Auto = preset default)</h2>
+    <div id="panels"></div>
+
+    <h2>Frame size</h2>
+    <div class="sizes" id="sizes">
+      <button data-w="1024" data-h="768" class="active">iPad 1024×768</button>
+      <button data-w="834" data-h="1112">iPad portrait</button>
+      <button data-w="390" data-h="844">iPhone 390×844</button>
+      <button data-w="1280" data-h="800">Desktop</button>
+      <button data-w="0" data-h="0">Fluid</button>
+    </div>
+
+    <p class="hint">On a real host, add <code>allow="camera;xr-spatial-tracking"</code> to the iframe and serve over HTTPS for AR.</p>
+  </aside>
+
+  <main class="stage">
+    <div class="topbar">
+      <div class="url" id="url"></div>
+      <button id="copy">Copy URL</button>
+      <button id="open">Open ↗</button>
+    </div>
+    <div class="frame-area">
+      <div class="frame-box" id="frameBox" style="width:1024px;height:768px">
+        <iframe id="frame" allow="camera;xr-spatial-tracking;accelerometer;gyroscope;magnetometer" title="Spatial Assembly AR"></iframe>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+  var state = { preset:'full', embedded:'', density:'', accentOn:false, accent:'#22d3ee', panels:{}, w:1024, h:768 };
+  var PANELS = ['header','steps','diagnostics','modebar','inspector','drawers','picker','recognition','banner'];
+
+  // Build tri-state panel selects.
+  var panelsEl = document.getElementById('panels');
+  PANELS.forEach(function(name){
+    var l = document.createElement('label');
+    l.innerHTML = name.charAt(0).toUpperCase()+name.slice(1) +
+      ' <select data-panel="'+name+'"><option value="">Auto</option><option value="1">On</option><option value="0">Off</option></select>';
+    panelsEl.appendChild(l);
+  });
+
+  function buildUrl(){
+    var p = new URLSearchParams();
+    p.set('ui', state.preset);
+    if (state.embedded !== '') p.set('embedded', state.embedded);
+    if (state.density) p.set('density', state.density);
+    if (state.accentOn) p.set('accent', state.accent);
+    PANELS.forEach(function(name){
+      var v = state.panels[name];
+      if (v === '1' || v === '0') p.set(name, v);
+    });
+    return '/?' + p.toString();
+  }
+
+  function apply(){
+    var url = buildUrl();
+    var frame = document.getElementById('frame');
+    if (frame.getAttribute('src') !== url) frame.setAttribute('src', url);
+    document.getElementById('url').textContent = location.origin + url;
+    var box = document.getElementById('frameBox');
+    if (state.w === 0){ box.style.width='100%'; box.style.height='100%'; }
+    else { box.style.width=state.w+'px'; box.style.height=state.h+'px'; }
+  }
+
+  document.getElementById('presets').addEventListener('click', function(e){
+    var b = e.target.closest('button'); if(!b) return;
+    state.preset = b.dataset.preset;
+    [].forEach.call(this.children, function(c){ c.classList.toggle('active', c===b); });
+    apply();
+  });
+  document.getElementById('sizes').addEventListener('click', function(e){
+    var b = e.target.closest('button'); if(!b) return;
+    state.w = +b.dataset.w; state.h = +b.dataset.h;
+    [].forEach.call(this.children, function(c){ c.classList.toggle('active', c===b); });
+    apply();
+  });
+  document.getElementById('embedded').addEventListener('change', function(){ state.embedded=this.value; apply(); });
+  document.getElementById('density').addEventListener('change', function(){ state.density=this.value; apply(); });
+  document.getElementById('accentOn').addEventListener('change', function(){ state.accentOn=this.checked; apply(); });
+  document.getElementById('accent').addEventListener('input', function(){ state.accent=this.value; if(state.accentOn) apply(); });
+  panelsEl.addEventListener('change', function(e){
+    var s = e.target.closest('select'); if(!s) return;
+    state.panels[s.dataset.panel] = s.value; apply();
+  });
+  document.getElementById('copy').addEventListener('click', function(){
+    navigator.clipboard && navigator.clipboard.writeText(location.origin + buildUrl());
+    this.textContent = 'Copied'; var b=this; setTimeout(function(){ b.textContent='Copy URL'; }, 1200);
+  });
+  document.getElementById('open').addEventListener('click', function(){ window.open(buildUrl(), '_blank'); });
+
+  apply();
+</script>
+</body>
+</html>

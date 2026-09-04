@@ -147,6 +147,11 @@ with the on-part recognition tint only). See `src/ui/config.ts`.
         style="width:100%;height:600px;border:0" allow="camera;xr-spatial-tracking"></iframe>
 ```
 
+A live **embed demo** ships with the build at **`/embed-demo.html`** — it hosts
+the app in an iframe with switches for every preset, panel, density and accent,
+and shows the URL to copy. Run `npm start` (or `npm run serve`) and open
+`http://localhost:8080/embed-demo.html`.
+
 ## Versioning & BOM
 
 Every part carries a **clean revision** (`revision`, plus optional
