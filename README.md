@@ -220,10 +220,13 @@ model can be mapped to parts for a demo via `remapLabels`.
 
 ### GPU acceleration — per device
 
-- **Rendering** is GPU-accelerated on every device with a GPU, via **WebGL2**
-  (Babylon, `powerPreference: high-performance`); WebGL1 and finally a software
-  rasteriser are the fallbacks. The status bar shows the live backend
-  (`GPU · WebGL2 (GPU)` / `Software (no GPU)` …) from `detectGpu()`.
+- **Rendering** uses **WebGPU** where the device supports it (Safari 26+, modern
+  Chrome/Edge/Android) for lower CPU overhead, and falls back automatically to
+  **WebGL2** — then WebGL1, then a software rasteriser — so it is GPU-accelerated
+  on every device with a GPU (`src/render/babylon/engineFactory.ts`,
+  `powerPreference: high-performance`). The status bar shows the *live* backend
+  (`GPU · WebGPU` / `WebGL2 (GPU)` / `Software (no GPU)` …). Force the WebGL path
+  with `?gpu=webgl`.
 - **ML inference** uses the **WebGPU** execution provider where available (fast),
   falling back to multi-threaded **WASM** (CPU) — so recognition runs everywhere,
   just faster where WebGPU exists (modern Android/desktop, and iOS/iPadOS with

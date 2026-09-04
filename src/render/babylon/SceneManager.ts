@@ -1,6 +1,7 @@
 import '@babylonjs/core/Materials/standardMaterial';
 import '@babylonjs/core/Rendering/edgesRenderer';
 import { Engine } from '@babylonjs/core/Engines/engine';
+import type { AbstractEngine } from '@babylonjs/core/Engines/abstractEngine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
@@ -19,6 +20,7 @@ import { assemblyCentroid, explodePose, pulseScale, sampleTimeline, type Timelin
 import { loadPartModel } from './gltf';
 import { SceneOptimizer, SceneOptimizerOptions } from '@babylonjs/core/Misc/sceneOptimizer';
 import { detectPerfProfile, type PerfProfile } from '../perf';
+import { createBestEngine, type RenderBackendKind } from './engineFactory';
 import { STATUS_COLORS, type RecognitionStatus } from '../../vision/verdict';
 import {
   DIAGNOSTIC_COLORS,
@@ -63,7 +65,8 @@ interface PartVisual {
  * per-frame hot path — the 60 fps render loop never triggers a reconcile.
  */
 export class SceneManager {
-  readonly engine: Engine;
+  readonly engine: AbstractEngine;
+  readonly renderBackend: RenderBackendKind;
   readonly scene: Scene;
   camera: ArcRotateCamera;
   readonly assemblyRoot: TransformNode;
@@ -80,17 +83,25 @@ export class SceneManager {
     canvas: HTMLCanvasElement,
     private assembly: AssemblyDef,
     opts: { transparent?: boolean } = {},
+    injected?: { engine: AbstractEngine; kind: RenderBackendKind; perf: PerfProfile },
   ) {
     // Pick a device performance profile before creating the engine, so antialias
-    // and pixel-ratio are set correctly from the start rather than reconfigured.
-    this.perf = detectPerfProfile();
-    this.engine = new Engine(canvas, this.perf.antialias, {
-      preserveDrawingBuffer: true,
-      stencil: true,
-      antialias: this.perf.antialias,
-      powerPreference: 'high-performance',
-      adaptToDeviceRatio: true,
-    });
+    // and pixel-ratio are set correctly from the start. `create()` supplies a
+    // WebGPU engine when available; the direct constructor path is WebGL.
+    this.perf = injected?.perf ?? detectPerfProfile();
+    if (injected) {
+      this.engine = injected.engine;
+      this.renderBackend = injected.kind;
+    } else {
+      this.engine = new Engine(canvas, this.perf.antialias, {
+        preserveDrawingBuffer: true,
+        stencil: true,
+        antialias: this.perf.antialias,
+        powerPreference: 'high-performance',
+        adaptToDeviceRatio: true,
+      });
+      this.renderBackend = 'webgl';
+    }
     // Cap render resolution to the profile's pixel-ratio ceiling — the single
     // biggest lever on fill-rate-bound tablets.
     const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
@@ -125,6 +136,22 @@ export class SceneManager {
 
     this.engine.runRenderLoop(() => this.scene.render());
     window.addEventListener('resize', this.onResize);
+  }
+
+  /**
+   * Preferred entry point: creates the best engine for the device (WebGPU with a
+   * WebGL2 fallback) and returns a ready manager. Engine creation is async
+   * because WebGPU initialises asynchronously.
+   */
+  static async create(
+    canvas: HTMLCanvasElement,
+    assembly: AssemblyDef,
+    opts: { transparent?: boolean } = {},
+  ): Promise<SceneManager> {
+    const perf = detectPerfProfile();
+    const search = typeof window !== 'undefined' ? window.location.search : '';
+    const { engine, kind } = await createBestEngine(canvas, { antialias: perf.antialias }, search);
+    return new SceneManager(canvas, assembly, opts, { engine, kind, perf });
   }
 
   private onResize = (): void => this.engine.resize();

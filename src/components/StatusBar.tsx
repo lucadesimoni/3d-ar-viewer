@@ -2,7 +2,8 @@ import { MODE_LABELS, type Capabilities } from '../engine/tracking/capabilities'
 import type { PipelineStatus } from '../vision/pipeline';
 import { useStore } from '../state/store';
 import { detectGpu, gpuLabel } from '../render/perf';
-import { useMemo } from 'react';
+import { getActiveRenderBackend } from '../render/babylon/managerRegistry';
+import { useEffect, useMemo, useState } from 'react';
 
 interface Props {
   capabilities: Capabilities | undefined;
@@ -15,6 +16,12 @@ interface Props {
 export function StatusBar({ capabilities, pipeline, onEnterAr, arActive }: Props): JSX.Element {
   const anchorQuality = useStore((s) => s.anchorQuality);
   const gpu = useMemo(() => detectGpu(), []);
+  // The active engine is created asynchronously; reflect WebGPU once it is live.
+  const [backend, setBackend] = useState<'webgpu' | 'webgl' | undefined>(undefined);
+  useEffect(() => {
+    const id = setInterval(() => setBackend(getActiveRenderBackend()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <header className="status-bar">
@@ -29,7 +36,7 @@ export function StatusBar({ capabilities, pipeline, onEnterAr, arActive }: Props
       <div className="badges">
         <Badge on={capabilities?.secureContext} label="HTTPS" />
         <Badge on={capabilities?.webgl2} label="WebGL2" />
-        <span className={`badge ${gpu.accelerated ? 'on' : 'off'}`} title={`Renderer: ${gpu.renderer || 'unknown'} · ML: ${gpu.mlProvider}`}>GPU · {gpuLabel(gpu)}</span>
+        <span className={`badge ${gpu.accelerated ? 'on' : 'off'}`} title={`Renderer: ${gpu.renderer || 'unknown'} · ML: ${gpu.mlProvider}`}>GPU · {backend === 'webgpu' ? 'WebGPU' : gpuLabel(gpu)}</span>
         <Badge on={capabilities?.immersiveAr} label="WebXR" />
         <Badge on={capabilities?.camera} label="Camera" />
         <Badge on={pipeline?.openCv} label="OpenCV" />

@@ -23,23 +23,30 @@ export function useSceneManager(
   useEffect(() => {
     if (!canvasRef.current) return;
     const assembly: AssemblyDef = useStore.getState().assembly;
-    const m = new SceneManager(canvasRef.current, assembly, { transparent: opts.transparent });
-    if (opts.grid) m.addGroundGrid();
-    m.frameCamera();
-    managerRef.current = m;
-    setActiveManager(m);
-    setManager(m);
-
+    let disposed = false;
     let raf = 0;
-    const loop = (): void => {
-      m.tick();
+
+    // Engine creation is async (WebGPU with a WebGL2 fallback), so build the
+    // manager in a promise and guard against unmount before it resolves.
+    void SceneManager.create(canvasRef.current, assembly, { transparent: opts.transparent }).then((m) => {
+      if (disposed) { m.dispose(); return; }
+      if (opts.grid) m.addGroundGrid();
+      m.frameCamera();
+      managerRef.current = m;
+      setActiveManager(m);
+      setManager(m);
+      const loop = (): void => {
+        m.tick();
+        raf = requestAnimationFrame(loop);
+      };
       raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
+    });
 
     return () => {
+      disposed = true;
       cancelAnimationFrame(raf);
-      m.dispose();
+      managerRef.current?.dispose();
+      setActiveManager(undefined);
       managerRef.current = undefined as SceneManager | undefined;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
