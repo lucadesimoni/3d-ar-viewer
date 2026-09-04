@@ -7,9 +7,10 @@ import { mateTargetFrame, solveSnapPose } from '../engine/snapping';
 import type { PlacementState } from '../engine/types';
 
 describe('equipmentRack (large sample)', () => {
-  it('is genuinely large', () => {
-    expect(equipmentRack.parts.length).toBeGreaterThan(100);
-    expect(equipmentRack.steps.length).toBeGreaterThan(40);
+  it('is genuinely large, with the exact size the docs claim', () => {
+    // Pinned so the README's "108 parts, 46-step" claim cannot silently drift.
+    expect(equipmentRack.parts.length).toBe(108);
+    expect(equipmentRack.steps.length).toBe(46);
   });
 
   it('has a valid, acyclic build graph with every part covered', () => {
