@@ -123,6 +123,19 @@ iOS Safari has **no WebXR**, so the camera-passthrough path is a first-class
 citizen, not an afterthought — including 6-DoF marker pose recovery
 (planar homography) so the overlay re-registers automatically.
 
+## Versioning & BOM
+
+Every part carries a **clean revision** (`revision`, plus optional
+`revisionDate` / `supersedes`) — aerospace letter revisions (A < B < … < AA) or
+dotted numeric, ordered and compared by `src/engine/versioning.ts`. From that:
+
+- a **Bill of Materials** (one line per part number *and* revision, quantities
+  and mass rolled up), shown in-app under the **BOM** tab;
+- an assembly **content fingerprint** — a stable build id derived from every
+  part's revision, so an as-built record traces to exactly the versions fitted;
+- a **wrong-revision** relation (`revisionRelation`) that distinguishes a
+  superseded (older) part from a newer one — the dangerous shop-floor case.
+
 ## Running
 
 ```bash
@@ -134,10 +147,32 @@ npm run dev -- --https   # or tunnel the port behind a trusted cert
 ```
 
 ```bash
-npm test            # 51 unit tests across the engine + vision
+npm test            # unit tests across engine + vision + versioning
 npm run typecheck
 npm run build       # production bundle
 ```
+
+### Run the packaged app
+
+The build is served by a **zero-dependency Node server** — no framework, no
+extra install — so a built copy runs anywhere Node 20+ runs:
+
+```bash
+npm start                      # build, then serve on http://0.0.0.0:8080
+npm run serve                  # serve an existing ./dist
+PORT=3000 npm run serve
+node server/serve.mjs --isolate   # COOP/COEP headers for multi-threaded ONNX WASM
+```
+
+Or as a container:
+
+```bash
+docker build -t spatial-ar .
+docker run -p 8080:8080 spatial-ar
+```
+
+AR on a device needs a secure context — pass `--https --cert cert.pem --key
+key.pem`, or put the server behind a TLS-terminating proxy / tunnel.
 
 ### Plugging in recognition models
 

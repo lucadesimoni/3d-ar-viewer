@@ -12,7 +12,9 @@
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "start": "npm run build && node server/serve.mjs",
+    "serve": "node server/serve.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^9.24.0",
@@ -34,5 +36,18 @@
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"
+  },
+  "bin": {
+    "spatial-ar-viewer": "server/serve.mjs"
+  },
+  "files": [
+    "dist",
+    "server",
+    "README.md",
+    "COMPLIANCE.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
   }
 }

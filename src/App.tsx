@@ -10,8 +10,9 @@ import { CollabPanel } from './components/CollabPanel';
 import { useArController } from './components/useArController';
 import { QuickLookButton } from './components/QuickLookButton';
 import { RecognitionOverlay } from './components/RecognitionOverlay';
+import { BomPanel } from './components/BomPanel';
 
-type Drawer = 'register' | 'collab' | undefined;
+type Drawer = 'register' | 'collab' | 'bom' | undefined;
 
 /**
  * Application shell. Lays out the persistent panels around the 3D viewer and
@@ -39,9 +40,11 @@ export function App(): JSX.Element {
             <div className="drawer-tabs">
               <button className={drawer === 'register' ? 'active' : ''} onClick={() => setDrawer(drawer === 'register' ? undefined : 'register')}>Register</button>
               <button className={drawer === 'collab' ? 'active' : ''} onClick={() => setDrawer(drawer === 'collab' ? undefined : 'collab')}>Collaborate</button>
+              <button className={drawer === 'bom' ? 'active' : ''} onClick={() => setDrawer(drawer === 'bom' ? undefined : 'bom')}>BOM</button>
             </div>
             {drawer === 'register' && <div className="drawer"><RegistrationPanel /></div>}
             {drawer === 'collab' && <div className="drawer"><CollabPanel /></div>}
+            {drawer === 'bom' && <div className="drawer"><BomPanel /></div>}
           </div>
         </main>
         <DiagnosticsPanel />

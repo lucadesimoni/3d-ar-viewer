@@ -233,3 +233,13 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 }
 .reco-dot { width: 9px; height: 9px; border-radius: 50%; animation: reco-pulse 1.4s ease-in-out infinite; }
 @keyframes reco-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* ---------- Bill of materials ---------- */
+.bom-scroll { max-height: 40vh; overflow-y: auto; margin: 8px 0; }
+.bom-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.bom-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 6px; position: sticky; top: 0; background: var(--panel-solid); }
+.bom-table td { padding: 5px 6px; border-top: 1px solid var(--edge); }
+.bom-table td.mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+.bom-table td.rev { text-align: center; color: var(--accent); font-weight: 650; }
+.bom-table td.num, .bom-table th.num { text-align: right; }
+.bom-total { font-size: 12px; color: var(--muted); margin-top: 6px; }

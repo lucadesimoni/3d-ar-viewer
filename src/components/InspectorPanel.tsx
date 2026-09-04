@@ -1,5 +1,6 @@
 import { useStore } from '../state/store';
 import { M_TO_MM } from '../engine/math';
+import { partRevision } from '../engine/versioning';
 
 /** Detail card for the selected part: identity, spec, and its live diagnostics. */
 export function InspectorPanel(): JSX.Element | null {
@@ -24,6 +25,7 @@ export function InspectorPanel(): JSX.Element | null {
       </header>
       <dl className="spec">
         {part.sku && (<><dt>Part no.</dt><dd>{part.sku}</dd></>)}
+        <dt>Revision</dt><dd>Rev {partRevision(part)}{part.supersedes ? ` (was ${part.supersedes})` : ''}</dd>
         <dt>Status</dt><dd className={`status-${placement?.status ?? 'ghost'}`}>{placement?.status ?? 'not placed'}</dd>
         {part.massKg !== undefined && (<><dt>Mass</dt><dd>{(part.massKg * 1000).toFixed(0)} g</dd></>)}
         {part.torqueSpecNm ? (<><dt>Torque</dt><dd>{part.torqueSpecNm} Nm</dd></>) : null}

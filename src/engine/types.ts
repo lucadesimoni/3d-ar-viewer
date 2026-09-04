@@ -90,6 +90,18 @@ export interface PartDef {
   massKg?: number;
   torqueSpecNm?: number;
   /**
+   * Part revision — first-class versioning for every part. Accepts aerospace
+   * letter revisions ("A", "B", "AA") or dotted numeric ("1", "1.2.3"); the
+   * versioning module orders and compares them. Pairs with `sku` to identify an
+   * exact part at an exact revision, which is what a BOM and a wrong-revision
+   * check need.
+   */
+  revision?: string;
+  /** ISO date the revision was released, for the BOM. */
+  revisionDate?: string;
+  /** Revision this one supersedes, for a human-readable change trail. */
+  supersedes?: string;
+  /**
    * Handed variants. Two parts sharing a `mirrorGroup` are geometrically similar
    * and are the classic source of left/right swap errors, so the diagnostics
    * engine checks for them explicitly.
