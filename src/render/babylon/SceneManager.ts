@@ -6,7 +6,7 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
-import { Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Matrix, Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
@@ -17,6 +17,7 @@ import type { AssemblyDef, PartDef, PlacementState, Pose } from '../../engine/ty
 import type { Severity } from '../../engine/diagnostics';
 import { assemblyCentroid, explodePose, pulseScale, sampleTimeline, type Timeline } from '../../engine/animation';
 import { loadPartModel } from './gltf';
+import { STATUS_COLORS, type RecognitionStatus } from '../../vision/verdict';
 import {
   DIAGNOSTIC_COLORS,
   applyPose,
@@ -37,6 +38,8 @@ export interface SceneRenderState {
   timelineT?: number;
   showBackground: boolean;
   showGhosts: boolean;
+  /** Per-part camera-recognition status, driving a localised discrepancy tint. */
+  recognitionByPart?: Map<string, RecognitionStatus>;
 }
 
 interface PartVisual {
@@ -221,16 +224,20 @@ export class SceneManager {
     const severity = state.severityByPart.get(partId);
     const isActive = state.activePartIds.has(partId);
     const isSelected = state.selectedPartId === partId;
+    const reco = state.recognitionByPart?.get(partId);
 
     const loaded = visual.loadedMeshes;
     if (status === 'ghost') {
-      const visible = state.showGhosts || isActive;
+      // A recognised part is shown even when ghosts are hidden, so the colour
+      // lands on that part's area rather than nowhere.
+      const visible = state.showGhosts || isActive || reco !== undefined;
       if (loaded) {
-        for (const m of loaded) { m.isVisible = visible; m.visibility = isActive ? 0.6 : 0.35; }
+        for (const m of loaded) { m.isVisible = visible; m.visibility = reco ? 0.75 : isActive ? 0.6 : 0.35; }
       } else {
         visual.mesh.material = visual.overlayMat;
         visual.mesh.isVisible = visible;
-        this.tintOverlay(visual, isActive ? DIAGNOSTIC_COLORS.active : DIAGNOSTIC_COLORS.ghost, isActive ? 0.42 : 0.22);
+        if (reco) this.tintOverlay(visual, STATUS_COLORS[reco], 0.4);
+        else this.tintOverlay(visual, isActive ? DIAGNOSTIC_COLORS.active : DIAGNOSTIC_COLORS.ghost, isActive ? 0.42 : 0.22);
       }
     } else {
       // Placed: show the real geometry; tint by the worst diagnostic.
@@ -249,20 +256,21 @@ export class SceneManager {
       }
     }
 
-    // Selected or erroring parts get an outline and a subtle attention pulse.
-    const wantOutline = isSelected || severity === 'error';
-    const outlineColor = Color3.FromHexString(isSelected ? '#ffffff' : DIAGNOSTIC_COLORS.error);
+    // A recognised part's outline (localised to that part) uses the discrepancy
+    // colour and takes precedence; otherwise selection/error styling applies.
+    const wantOutline = reco !== undefined || isSelected || severity === 'error';
+    const outlineHex = reco ? STATUS_COLORS[reco] : isSelected ? '#ffffff' : DIAGNOSTIC_COLORS.error;
     const outlineTargets: (Mesh | AbstractMesh)[] = loaded ?? [visual.mesh];
-    if (wantOutline !== visual.outline) {
-      for (const m of outlineTargets) {
-        m.renderOutline = wantOutline;
-        m.outlineColor = outlineColor;
-        m.outlineWidth = 0.004;
+    for (const m of outlineTargets) {
+      m.renderOutline = wantOutline;
+      if (wantOutline) {
+        m.outlineColor = Color3.FromHexString(outlineHex);
+        m.outlineWidth = reco ? 0.008 : 0.004;
       }
-      visual.outline = wantOutline;
     }
-    // Pulse the part root so both primitive and loaded geometry breathe together.
-    const pulse = severity === 'error' ? pulseScale(performance.now() - this.startMs) : 1;
+    visual.outline = wantOutline;
+    // Pulse the part root so a recognised or erroring part breathes for attention.
+    const pulse = reco !== undefined || severity === 'error' ? pulseScale(performance.now() - this.startMs) : 1;
     visual.root.scaling.setAll(pulse);
 
     for (const m of this.background) m.setEnabled(state.showBackground);
@@ -282,7 +290,7 @@ export class SceneManager {
 
   /** Advance time-based effects (pulse, animation scrub) without a store change. */
   tick(): void {
-    if (this.state && (this.state.timeline || this.hasError())) this.update(this.state);
+    if (this.state && (this.state.timeline || this.hasError() || (this.state.recognitionByPart?.size ?? 0) > 0)) this.update(this.state);
   }
 
   private hasError(): boolean {
@@ -302,6 +310,26 @@ export class SceneManager {
     mat.wireframe = true;
     grid.material = mat;
     grid.position.y = -0.001;
+  }
+
+  /**
+   * Project a part's centre to normalised screen coordinates (0..1), so a small
+   * on-part label can be pinned to it. `onScreen` is false when the part is
+   * behind the camera or off-frame.
+   */
+  projectPart(partId: string): { x: number; y: number; onScreen: boolean } | undefined {
+    const visual = this.parts.get(partId);
+    if (!visual) return undefined;
+    const world = visual.root.getAbsolutePosition();
+    const w = this.engine.getRenderWidth();
+    const h = this.engine.getRenderHeight();
+    const p = Vector3.Project(
+      world,
+      Matrix.Identity(),
+      this.scene.getTransformMatrix(),
+      this.camera.viewport.toGlobal(w, h),
+    );
+    return { x: p.x / w, y: p.y / h, onScreen: p.z > 0 && p.z < 1 && p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h };
   }
 
   pickPartAt(x: number, y: number): string | undefined {

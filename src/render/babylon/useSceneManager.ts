@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { SceneManager, type SceneRenderState } from './SceneManager';
+import { setActiveManager } from './managerRegistry';
+import type { RecognitionStatus } from '../../vision/verdict';
 import { useStore } from '../../state/store';
 import type { AssemblyDef } from '../../engine/types';
 
@@ -25,6 +27,7 @@ export function useSceneManager(
     if (opts.grid) m.addGroundGrid();
     m.frameCamera();
     managerRef.current = m;
+    setActiveManager(m);
     setManager(m);
 
     let raf = 0;
@@ -49,6 +52,11 @@ export function useSceneManager(
       if (!m) return;
       const s = useStore.getState();
       const step = s.assembly.steps.find((st) => st.id === s.activeStepId);
+      const partIds = new Set(s.assembly.parts.map((p) => p.id));
+      const recognitionByPart = new Map<string, RecognitionStatus>();
+      for (const o of s.recognition?.objects ?? []) {
+        if (partIds.has(o.label)) recognitionByPart.set(o.label, o.status);
+      }
       const state: SceneRenderState = {
         placements: s.placements,
         severityByPart: s.severityByPart,
@@ -59,6 +67,7 @@ export function useSceneManager(
         timelineT: s.animationT,
         showBackground: true,
         showGhosts: s.viewMode === 'guide' || s.viewMode === 'explore',
+        recognitionByPart,
       };
       m.update(state);
       m.setAnchor(s.anchor);

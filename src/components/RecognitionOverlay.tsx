@@ -1,65 +1,69 @@
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../state/store';
+import { getActiveManager } from '../render/babylon/managerRegistry';
 import { STATUS_COLORS, VERDICT_COLORS } from '../vision/verdict';
 
 /**
- * Colour-coded discrepancy overlay for recognised objects.
+ * Colour-coded discrepancy shown *on the affected part*.
  *
- * Draws a box around every confirmed detection in the camera frame, coloured by
- * whether it is the part the current step expects (green), a different known
- * part — a wrong pick (red), or something unrecognised (amber). A banner sums it
- * up in words. This is the "recognised → coloured discrepancy" surface: the
- * operator sees, live, whether what they are holding is right.
- *
- * Boxes are normalised (0..1) in the camera frame and drawn in an SVG that
- * stretches over the viewport, so they track the passthrough behind the canvas.
+ * The 3D overlay is registered to the real workpiece, so tinting the affected
+ * virtual part (done in the SceneManager) tints the real part's area. This
+ * component adds the small labels that ride on top of each affected part: it
+ * projects the part's position to screen space every frame and pins a compact
+ * tag there — no free-floating boxes over unrelated regions of the frame. Only
+ * recognised objects that map to a known assembly part get a marker; anything
+ * unrecognised is left to the verdict banner alone.
  */
+
+interface Tag {
+  id: number;
+  label: string;
+  status: keyof typeof STATUS_COLORS;
+  score: number;
+  x: number;
+  y: number;
+}
+
 export function RecognitionOverlay(): JSX.Element | null {
   const recognition = useStore((s) => s.recognition);
-  if (!recognition || recognition.objects.length === 0) {
-    return recognition ? <VerdictBanner /> : null;
-  }
+  const assembly = useStore((s) => s.assembly);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const rafRef = useRef(0);
+
+  // Project each affected part to screen space every frame so the tag tracks it.
+  useEffect(() => {
+    if (!recognition) { setTags([]); return; }
+    const partIds = new Set(assembly.parts.map((p) => p.id));
+    const onFrame = (): void => {
+      const manager = getActiveManager();
+      const next: Tag[] = [];
+      if (manager) {
+        for (const o of recognition.objects) {
+          if (!partIds.has(o.label)) continue; // only on known assembly parts
+          const p = manager.projectPart(o.label);
+          if (!p || !p.onScreen) continue;
+          next.push({ id: o.id, label: o.name ?? o.label, status: o.status, score: o.score, x: p.x, y: p.y });
+        }
+      }
+      setTags(next);
+      rafRef.current = requestAnimationFrame(onFrame);
+    };
+    rafRef.current = requestAnimationFrame(onFrame);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [recognition, assembly]);
+
+  if (!recognition) return null;
 
   return (
     <>
-      <svg className="recognition-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
-        {recognition.objects.map((o) => {
-          const color = STATUS_COLORS[o.status];
-          const x = o.box.x * 100;
-          const y = o.box.y * 100;
-          const w = o.box.w * 100;
-          const h = o.box.h * 100;
-          return (
-            <g key={o.id}>
-              <rect
-                x={x} y={y} width={w} height={h}
-                fill={color} fillOpacity={0.12}
-                stroke={color} strokeWidth={0.5}
-                rx={1}
-              />
-              {/* Corner ticks read as a "recognised" reticle, not just a box. */}
-              <path
-                d={`M${x},${y + 4} V${y} H${x + 4} M${x + w - 4},${y} H${x + w} V${y + 4} M${x + w},${y + h - 4} V${y + h} H${x + w - 4} M${x + 4},${y + h} H${x} V${y + h - 4}`}
-                fill="none" stroke={color} strokeWidth={0.9}
-              />
-            </g>
-          );
-        })}
-      </svg>
-      {/* Labels in a non-scaled layer so text stays crisp regardless of aspect. */}
-      <div className="recognition-labels">
-        {recognition.objects.map((o) => (
+      <div className="recognition-tags">
+        {tags.map((t) => (
           <span
-            key={o.id}
-            className={`reco-tag ${o.status}`}
-            style={{
-              left: `${(o.box.x + o.box.w / 2) * 100}%`,
-              top: `${o.box.y * 100}%`,
-              borderColor: STATUS_COLORS[o.status],
-              color: STATUS_COLORS[o.status],
-            }}
+            key={t.id}
+            className={`reco-pin ${t.status}`}
+            style={{ left: `${t.x * 100}%`, top: `${t.y * 100}%`, borderColor: STATUS_COLORS[t.status], color: STATUS_COLORS[t.status] }}
           >
-            {o.status === 'match' ? '✓' : o.status === 'mismatch' ? '✕' : '?'}{' '}
-            {o.name ?? o.label} · {Math.round(o.score * 100)}%
+            {t.status === 'match' ? '✓' : t.status === 'mismatch' ? '✕' : '?'} {t.label} · {Math.round(t.score * 100)}%
           </span>
         ))}
       </div>
