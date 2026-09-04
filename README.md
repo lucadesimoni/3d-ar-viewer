@@ -101,6 +101,11 @@ run a model per frame:
   a single frame flips. Temporal history resets on step change.
 - **Soft-NMS** recovers a real overlapping part that hard NMS would delete —
   common in a dense assembly.
+- **Colour-coded discrepancy overlay** (`src/components/RecognitionOverlay.tsx`,
+  `src/vision/verdict.ts`): a recognised object is boxed live over the camera —
+  **green** if it is the part the current step expects, **red** if it is a
+  different known part (a wrong pick caught before it is even seated), **amber**
+  if unrecognised — with a verdict banner summarising it in words.
 
 ## Device support
 

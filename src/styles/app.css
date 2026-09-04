@@ -210,3 +210,25 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   border-radius: 999px; padding: 7px 14px;
 }
 .quicklook img { width: 14px; height: 14px; }
+
+/* ---------- Recognition discrepancy overlay ---------- */
+.recognition-svg {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 2;
+}
+.recognition-labels { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+.reco-tag {
+  position: absolute; transform: translate(-50%, -120%);
+  font-size: 11px; font-weight: 650; white-space: nowrap;
+  background: rgba(9, 13, 18, 0.82); border: 1px solid; border-radius: 7px;
+  padding: 2px 7px; backdrop-filter: blur(4px);
+}
+.recognition-banner {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  z-index: 4; display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 650; white-space: nowrap;
+  background: rgba(9, 13, 18, 0.88); border: 1.5px solid; border-radius: 999px;
+  padding: 8px 16px; backdrop-filter: blur(8px); box-shadow: var(--shadow);
+}
+.reco-dot { width: 9px; height: 9px; border-radius: 50%; animation: reco-pulse 1.4s ease-in-out infinite; }
+@keyframes reco-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }

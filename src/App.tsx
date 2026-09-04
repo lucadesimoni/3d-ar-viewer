@@ -9,6 +9,7 @@ import { InspectorPanel } from './components/InspectorPanel';
 import { CollabPanel } from './components/CollabPanel';
 import { useArController } from './components/useArController';
 import { QuickLookButton } from './components/QuickLookButton';
+import { RecognitionOverlay } from './components/RecognitionOverlay';
 
 type Drawer = 'register' | 'collab' | undefined;
 
@@ -32,6 +33,7 @@ export function App(): JSX.Element {
         <StepGuide />
         <main className="viewport">
           <Viewer transparent={arActive} />
+          <RecognitionOverlay />
           <div className="viewport-overlay">
             <InspectorPanel />
             <div className="drawer-tabs">

@@ -4,6 +4,7 @@ import { runDiagnostics, severityByPart, type Diagnostic, type Severity } from '
 import { buildSequenceView, suggestNextStep, type SequenceView } from '../engine/sequencer';
 import { clonePose } from '../engine/math';
 import type { Timeline } from '../engine/animation';
+import type { RecognitionState } from '../vision/verdict';
 import type { AssemblyDef, PlacementState, Pose } from '../engine/types';
 import { gearbox } from '../data';
 
@@ -20,6 +21,8 @@ export interface AppState {
   /** Active build-animation timeline while in 'animate' mode, and its scrub time. */
   animationTimeline: Timeline | undefined;
   animationT: number;
+  /** Latest camera recognition + colour-coded discrepancy verdict. */
+  recognition: RecognitionState | undefined;
 
   placements: Map<string, PlacementState>;
   activeStepId: string | undefined;
@@ -38,6 +41,7 @@ export interface AppState {
   setViewMode(mode: ViewMode): void;
   setExplodeFactor(f: number): void;
   setAnimation(timeline: Timeline | undefined, t: number): void;
+  setRecognition(recognition: RecognitionState | undefined): void;
   selectPart(id: string | undefined): void;
   setActiveStep(id: string | undefined): void;
 
@@ -120,6 +124,7 @@ export const useStore = create<AppState>((set, get) => {
     explodeFactor: 0,
     animationTimeline: undefined,
     animationT: 0,
+    recognition: undefined,
     selectedPartId: undefined,
     ...derive(base),
 
@@ -158,6 +163,9 @@ export const useStore = create<AppState>((set, get) => {
     },
     setAnimation(timeline, t) {
       set({ animationTimeline: timeline, animationT: t });
+    },
+    setRecognition(recognition) {
+      set({ recognition });
     },
     selectPart(id) {
       set({ selectedPartId: id });

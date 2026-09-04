@@ -3,6 +3,7 @@ import { detectCapabilities, type Capabilities } from '../engine/tracking/capabi
 import { CameraTracker } from '../engine/tracking/cameraTracker';
 import { MarkerTracker } from '../engine/tracking/markerTracking';
 import { RecognitionPipeline, type PipelineStatus } from '../vision/pipeline';
+import { classifyRecognition, type LabelInfo } from '../vision/verdict';
 import { toImageData } from '../vision/opencv';
 import { alignToMarker } from '../engine/alignment';
 import { useStore } from '../state/store';
@@ -55,6 +56,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     markerRef.current?.stop();
     trackerRef.current?.stop();
     trackerRef.current = undefined;
+    useStore.getState().setRecognition(undefined);
     setArActive(false);
   }, []);
 
@@ -92,7 +94,14 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       frameTimer.current = window.setInterval(async () => {
         if (video.readyState < 2) return;
         const image = toImageData(video, 480, Math.round((480 * video.videoHeight) / (video.videoWidth || 640)));
-        if (image) await pipeline.process(image);
+        if (!image) return;
+        const result = await pipeline.process(image);
+        if (!result) return;
+        // Colour-coded discrepancy: compare confirmed tracks against the parts
+        // the active step expects, and publish the verdict for the overlay.
+        const st = useStore.getState();
+        const info = labelInfoFor(st);
+        useStore.getState().setRecognition(classifyRecognition(result.tracks, info, result.ts));
       }, 500);
     }
   }, [arActive, capabilities, assembly, setAnchor, stop, videoRef]);
@@ -100,4 +109,13 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
   useEffect(() => () => stop(), [stop]);
 
   return { capabilities, pipelineStatus, arActive, enterAr };
+}
+
+/** Map the assembly + active step into recognisable labels for the verdict. */
+function labelInfoFor(state: ReturnType<typeof useStore.getState>): LabelInfo {
+  const known = new Map<string, string>();
+  for (const p of state.assembly.parts) known.set(p.id, p.name);
+  const step = state.assembly.steps.find((s) => s.id === state.activeStepId);
+  const expected = new Set<string>(step?.partIds ?? []);
+  return { known, expected };
 }
