@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../state/store';
 import { getActiveManager } from '../render/babylon/managerRegistry';
 import { STATUS_COLORS, VERDICT_COLORS } from '../vision/verdict';
+import { useUiConfig } from '../ui/UiConfigContext';
 
 /**
  * Colour-coded discrepancy shown *on the affected part*.
@@ -29,6 +30,7 @@ export function RecognitionOverlay(): JSX.Element | null {
   const assembly = useStore((s) => s.assembly);
   const [tags, setTags] = useState<Tag[]>([]);
   const rafRef = useRef(0);
+  const showBanner = useUiConfig().showRecognitionBanner;
 
   // Project each affected part to screen space every frame so the tag tracks it.
   useEffect(() => {
@@ -67,7 +69,7 @@ export function RecognitionOverlay(): JSX.Element | null {
           </span>
         ))}
       </div>
-      <VerdictBanner />
+      {showBanner && <VerdictBanner />}
     </>
   );
 }

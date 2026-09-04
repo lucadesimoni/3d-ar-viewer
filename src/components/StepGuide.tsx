@@ -1,5 +1,6 @@
 import { useStore } from '../state/store';
 import { ASSEMBLIES } from '../data';
+import { useUiConfig } from '../ui/UiConfigContext';
 
 /** Left rail: the ordered build steps with live status, and the active card. */
 export function StepGuide(): JSX.Element {
@@ -10,6 +11,7 @@ export function StepGuide(): JSX.Element {
   const completeStep = useStore((s) => s.completeStep);
   const reopenStep = useStore((s) => s.reopenStep);
   const autoPlace = useStore((s) => s.autoPlaceActiveStep);
+  const ui = useUiConfig();
 
   const active = sequence.steps.find((s) => s.step.id === activeStepId);
   const remaining = Math.round(sequence.remainingS / 60);
@@ -18,18 +20,22 @@ export function StepGuide(): JSX.Element {
     <aside className="panel step-guide">
       <header className="panel-head">
         <div>
-          <select
-            className="assembly-picker"
-            value={assembly.id}
-            onChange={(e) => {
-              const next = ASSEMBLIES.find((a) => a.id === e.target.value);
-              if (next) useStore.getState().loadAssembly(next);
-            }}
-          >
-            {ASSEMBLIES.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
+          {ui.showAssemblyPicker ? (
+            <select
+              className="assembly-picker"
+              value={assembly.id}
+              onChange={(e) => {
+                const next = ASSEMBLIES.find((a) => a.id === e.target.value);
+                if (next) useStore.getState().loadAssembly(next);
+              }}
+            >
+              {ASSEMBLIES.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          ) : (
+            <h2>{assembly.name}</h2>
+          )}
           <span className="rev">Rev {assembly.revision} · {assembly.parts.length} parts</span>
         </div>
         <div className="progress-ring" role="progressbar" aria-valuenow={Math.round(sequence.progress * 100)} style={{ ["--p" as string]: Math.round(sequence.progress * 100) }}>

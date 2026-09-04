@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { App } from '../App';
+import type { UiConfig, UiPreset } from '../ui/config';
 import { useStore } from '../state/store';
 import type { AssemblyDef } from '../engine/types';
 
@@ -38,8 +39,24 @@ export interface SpatialArViewerProps {
   classifierModelUrl?: MendixValue<string>;
   /** Fired (as a Mendix action) when the operator signs off the final step. */
   onComplete?: { execute?: () => void; canExecute?: boolean };
+  /** UI layout preset: full | compact | minimal | viewer. */
+  uiPreset?: string | MendixValue<string>;
+  /** Embed mode: fill the widget's container and trim fixed chrome. */
+  embedded?: MendixValue<boolean>;
+  /** Brand accent colour (CSS). */
+  accent?: MendixValue<string>;
   class?: string;
   style?: React.CSSProperties;
+}
+
+function buildUiConfig(props: SpatialArViewerProps): Partial<UiConfig> {
+  const preset = typeof props.uiPreset === 'string' ? props.uiPreset : props.uiPreset?.value;
+  const cfg: Partial<UiConfig> = { embedded: props.embedded?.value ?? true };
+  if (preset === 'full' || preset === 'compact' || preset === 'minimal' || preset === 'viewer') {
+    cfg.preset = preset as UiPreset;
+  }
+  if (props.accent?.value) cfg.accent = props.accent.value;
+  return cfg;
 }
 
 function parseAssembly(json: string | undefined): AssemblyDef | undefined {
@@ -74,7 +91,7 @@ export function SpatialArViewer(props: SpatialArViewerProps): JSX.Element {
 
   return (
     <div className={props.class} style={{ height: '100%', minHeight: 480, ...props.style }}>
-      <App />
+      <App config={buildUiConfig(props)} />
     </div>
   );
 }

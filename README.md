@@ -123,6 +123,30 @@ iOS Safari has **no WebXR**, so the camera-passthrough path is a first-class
 citizen, not an afterthought — including 6-DoF marker pose recovery
 (planar homography) so the overlay re-registers automatically.
 
+## Flexible / embeddable UI
+
+The UI reshapes from a full workstation down to a bare embeddable canvas — same
+build, no separate embed bundle. A host picks the shape via a **preset**, then
+individual **panel toggles**, then look controls (density, brand accent). Config
+arrives three ways:
+
+- **React prop** — `<App config={{ preset: 'minimal', accent: '#ff7a00' }} />`
+  (this is how the Mendix widget passes `uiPreset` / `embedded` / `accent`).
+- **URL params** — for an `<iframe>` embed, no code:
+  `…/?ui=viewer&embedded=1&accent=%23ff7a00`, or granular
+  `…/?panels=steps,diagnostics` and `…/?diagnostics=0&steps=1`.
+- **Defaults** — full workstation.
+
+Presets: `full` (everything) · `compact` (denser, no drawers/picker) ·
+`minimal` (viewport + active-step guide + recognition) · `viewer` (bare canvas
+with the on-part recognition tint only). See `src/ui/config.ts`.
+
+```html
+<!-- Drop the guided viewer into any page -->
+<iframe src="https://your-host/?ui=minimal&embedded=1"
+        style="width:100%;height:600px;border:0" allow="camera;xr-spatial-tracking"></iframe>
+```
+
 ## Versioning & BOM
 
 Every part carries a **clean revision** (`revision`, plus optional

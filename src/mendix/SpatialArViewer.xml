@@ -28,6 +28,27 @@
         <returnType type="String"/>
       </property>
     </propertyGroup>
+    <propertyGroup caption="Layout">
+      <property key="uiPreset" type="enumeration" defaultValue="full">
+        <caption>UI preset</caption>
+        <description>How much UI to show.</description>
+        <enumerationValues>
+          <enumerationValue key="full">Full workstation</enumerationValue>
+          <enumerationValue key="compact">Compact</enumerationValue>
+          <enumerationValue key="minimal">Minimal guide</enumerationValue>
+          <enumerationValue key="viewer">Bare viewer</enumerationValue>
+        </enumerationValues>
+      </property>
+      <property key="embedded" type="boolean" defaultValue="true">
+        <caption>Embedded</caption>
+        <description>Fill the widget container and trim fixed chrome (recommended on a Mendix page).</description>
+      </property>
+      <property key="accent" type="expression" required="false">
+        <caption>Accent colour</caption>
+        <description>Brand accent as a CSS colour, e.g. '#ff7a00'.</description>
+        <returnType type="String"/>
+      </property>
+    </propertyGroup>
     <propertyGroup caption="Events">
       <property key="onComplete" type="action" required="false">
         <caption>On assembly complete</caption>
