@@ -11,6 +11,7 @@ import { BomPanel } from './components/BomPanel';
 import { useArController } from './components/useArController';
 import { QuickLookButton } from './components/QuickLookButton';
 import { RecognitionOverlay } from './components/RecognitionOverlay';
+import { PlacementHint } from './components/PlacementHint';
 import { UiConfigProvider } from './ui/UiConfigContext';
 import { resolveUiConfig, type UiConfig } from './ui/config';
 import { useMediaQuery } from './ui/useMediaQuery';
@@ -66,6 +67,7 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
           <main className="viewport">
             <Viewer transparent={arActive} />
             {ui.showRecognition && <RecognitionOverlay />}
+            {arActive && <PlacementHint capabilities={capabilities} />}
             <div className="viewport-overlay">
               {ui.showInspector && <InspectorPanel />}
               {ui.showDrawers && (

@@ -2,7 +2,8 @@
 
 Traceability from the original request (and its follow-up stack decisions) to
 where each requirement is implemented and how it is verified. Every row is
-backed by code that ships in this repo; the test suite is 59 passing tests.
+backed by code that ships in this repo; the test suite is 142 passing tests, plus a browser check of the AR anchoring
+path (`npm run ar:verify`).
 
 ## Original brief
 
@@ -14,12 +15,12 @@ backed by code that ships in this repo; the test suite is 59 passing tests.
 | # | Requirement | Where | Verified by |
 |---|---|---|---|
 | 1 | **React web app** | `src/App.tsx`, `src/main.tsx`, `src/components/*` | `npm run build` |
-| 2 | **Spatial recognition** | `src/vision/pipeline.ts` (OpenCV + ONNX), `src/engine/tracking/markerTracking.ts` (6-DoF fiducial pose) | `src/vision/vision.test.ts` |
-| 3 | **AR overlay** | WebXR: `src/render/babylon/xr.ts`; iOS camera passthrough: `src/engine/tracking/cameraTracker.ts` | manual device test (needs HTTPS) |
+| 2 | **Spatial recognition** | `src/vision/pipeline.ts` (OpenCV + ONNX), `src/vision/gridRecognition.ts` (markerless object facade → metric pose), `src/engine/tracking/markerTracking.ts` (6-DoF fiducial pose) | `src/vision/vision.test.ts`, `src/vision/gridRecognition.test.ts`, `scripts/ar-verify.mjs` |
+| 3 | **AR overlay** | WebXR hit-test: `src/render/babylon/xr.ts` via `SceneManager.startWebXr`; iOS camera passthrough + aim-and-tap floor placement: `src/engine/tracking/cameraTracker.ts`, `SceneManager.startGroundPlacement`; orchestrated in `src/components/useArController.ts` | `scripts/ar-verify.mjs` (phone viewport, fake camera); WebXR itself needs a device |
 | 4 | **Mobile/tablet, mainly iPad/iPhone** | `src/engine/tracking/capabilities.ts` (iOS/iPad detection, motion-permission gate), mobile-first CSS with safe-area insets | `capabilities` detection |
 | 5 | **Outperforms TeamViewer** | Spatial co-presence instead of screen pixels: `src/engine/collab/protocol.ts`, `session.ts`, `src/components/CollabPanel.tsx` | `src/engine/collab/protocol.test.ts` |
 | 6 | **Visualization** | Babylon renderer: `src/render/babylon/SceneManager.ts`, `meshFactory.ts` | `npm run build` |
-| 7 | **Mapping of complex assemblies** | Domain model `src/engine/types.ts`; sample `src/data/equipmentRack.ts` (~110 parts) | `src/data/equipmentRack.test.ts` |
+| 7 | **Mapping of complex assemblies** | Domain model `src/engine/types.ts`; samples `src/data/equipmentRack.ts` (108 parts), `src/data/kallax.ts` (a real 4x4 cube shelf) | `src/data/equipmentRack.test.ts`, `src/data/nominalFit.test.ts` |
 | 8 | **Animations** | Build fly-in + exploded view: `src/engine/animation.ts`; scrubber `src/components/ModeBar.tsx` | `src/engine/animation.test.ts` |
 | 9 | **Snapping error detection** | Snap engine `src/engine/snapping.ts`; diagnostics `src/engine/diagnostics.ts` (fit, seating, sequence, interference, keep-out, handed swap) | `snapping.test.ts`, `diagnostics.test.ts` |
 | 10 | **Background geometry** | Depth-only occluders + keep-out volumes: `types.ts` (`BackgroundGeometryDef`), `SceneManager.buildBackground`, `diagnostics.ts` keep-out | `collision.test.ts`, `diagnostics.test.ts` |

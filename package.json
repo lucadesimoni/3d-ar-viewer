@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "screenshots": "node scripts/screenshots.mjs",
+    "ar:verify": "node scripts/ar-verify.mjs",
     "start": "npm run build && node server/serve.mjs",
     "serve": "node server/serve.mjs"
   },

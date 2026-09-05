@@ -183,6 +183,33 @@ export interface ToolDef {
   note?: string;
 }
 
+/**
+ * A face made of `cols` x `rows` equal rectangular openings — a cube shelf, a
+ * drawer bank, a patch panel. `widthM`/`heightM` are the outer size of that
+ * face, which is what turns a detection into a metric pose.
+ */
+export interface GridTargetDef {
+  kind: 'grid';
+  cols: number;
+  rows: number;
+  /**
+   * Span of the lattice, centre-to-centre of the outermost board lines — not
+   * the outer size of the object. This is deliberate: what a camera measures is
+   * where the boards are, and each outer board's two edges merge into a single
+   * line at its centre. Quoting the outer size here would bake a half-board
+   * scale error (2% on a KALLAX, 30 mm of range at 1.5 m) into every pose.
+   */
+  widthM: number;
+  heightM: number;
+  /**
+   * Pose of the face centre in the assembly frame, with local +Z pointing out
+   * of the face towards the viewer and +Y up the face.
+   */
+  poseInAssembly: Pose;
+  /** Shown to the operator while the app is looking for it. */
+  label?: string;
+}
+
 export interface AssemblyDef {
   id: string;
   name: string;
@@ -199,6 +226,15 @@ export interface AssemblyDef {
    * can re-register after tracking loss without asking the operator to re-place.
    */
   marker?: { id: string; sizeM: number; poseInAssembly: Pose };
+  /**
+   * A markerless recognition target: the real object itself. Furniture and
+   * equipment racks present a regular grid of identical openings, which is a
+   * strong, cheap visual signature — far more reliable on a phone than a
+   * generic object detector, and it comes with metric scale for free because
+   * the opening pitch is known from the BOM. Seeing it re-registers the anchor
+   * exactly like a fiducial would.
+   */
+  recognition?: GridTargetDef;
   /** Named datum points used by the 3-point manual registration flow. */
   datums?: { id: string; label: string; position: Vec3 }[];
   /**

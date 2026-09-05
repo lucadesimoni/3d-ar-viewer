@@ -1,5 +1,9 @@
 import '@babylonjs/core/Materials/standardMaterial';
 import '@babylonjs/core/Rendering/edgesRenderer';
+// Side-effect import: tree-shaken builds ship Scene without ray casting, and
+// `createPickingRay` then throws at the first tap. Floor placement is built on
+// it, so it has to be pulled in explicitly.
+import '@babylonjs/core/Culling/ray';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import type { AbstractEngine } from '@babylonjs/core/Engines/abstractEngine';
 import { Scene } from '@babylonjs/core/scene';
@@ -92,7 +96,7 @@ export class SceneManager {
   readonly perf: PerfProfile;
 
   constructor(
-    canvas: HTMLCanvasElement,
+    private readonly canvas: HTMLCanvasElement,
     private assembly: AssemblyDef,
     opts: { transparent?: boolean } = {},
     injected?: { engine: AbstractEngine; kind: RenderBackendKind; perf: PerfProfile },
@@ -161,6 +165,17 @@ export class SceneManager {
 
     this.engine.runRenderLoop(() => this.scene.render());
     window.addEventListener('resize', this.onResize);
+    // A `resize` event only fires when the *window* changes. The canvas changes
+    // size for other reasons that matter more here: entering AR hides the side
+    // panels, the mobile sheet opens and closes, the iOS URL bar collapses. Any
+    // of those left the render buffer at its old size — the scene came out
+    // stretched to the wrong aspect ratio and soft, and screen-space picking
+    // (the placement reticle) aimed at the centre of a viewport that no longer
+    // existed. Watch the element itself.
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(this.onResize);
+      this.resizeObserver.observe(this.canvas);
+    }
   }
 
   /**
@@ -183,6 +198,7 @@ export class SceneManager {
   private readonly arFovDeg = 60;
   /** Hardware scaling the device should render at when it can keep up. */
   private baseScalingLevel = 1;
+  private reticle: Mesh | undefined;
 
   /**
    * Switch between the desktop orbit camera and the AR head camera.
@@ -265,6 +281,198 @@ export class SceneManager {
     return r;
   }
 
+  /**
+   * Ground reticle — the "where will it land" marker the operator aims with.
+   *
+   * A flat ring lying on the surface reads as attached to the floor, unlike a
+   * screen-space crosshair which floats.
+   */
+  private ensureReticle(): Mesh {
+    if (this.reticle) return this.reticle;
+    const r = MeshBuilder.CreateTorus(
+      'ar-reticle', { diameter: 0.26, thickness: 0.012, tessellation: 48 }, this.scene,
+    );
+    r.rotation.x = Math.PI / 2;           // lie flat on the ground
+    r.bakeCurrentTransformIntoVertices(); // so applyPose controls it cleanly
+    r.material = makeOverlayMaterial(this.scene, DIAGNOSTIC_COLORS.active, 0.9, 'ar-reticle-mat');
+    r.isPickable = false;
+    r.setEnabled(false);
+    this.reticle = r;
+    return r;
+  }
+
+  /** Show the reticle at a world pose, or hide it with `undefined`. */
+  setReticle(pose: Pose | undefined): void {
+    const r = this.ensureReticle();
+    if (!pose) { r.setEnabled(false); return; }
+    r.setEnabled(true);
+    applyPose(r, pose);
+  }
+
+  /**
+   * Where a screen point meets the ground plane, in world space.
+   *
+   * This is what turns "floating in front of your face" into a real placement:
+   * the operator aims at the floor and the assembly is anchored where the ray
+   * actually lands, at true distance. Uses the live camera, so the projection
+   * matches what is on screen. Returns undefined at or above the horizon, where
+   * a ground intersection would be meaningless.
+   */
+  pickGround(screenX: number, screenY: number, groundY: number): Pose | undefined {
+    const cam = this.scene.activeCamera;
+    if (!cam) return undefined;
+    const ray = this.scene.createPickingRay(screenX, screenY, Matrix.Identity(), cam);
+    if (Math.abs(ray.direction.y) < 1e-4) return undefined;
+    const t = (groundY - ray.origin.y) / ray.direction.y;
+    if (!Number.isFinite(t) || t <= 0 || t > 25) return undefined;
+    const p = ray.origin.add(ray.direction.scale(t));
+    return { position: [p.x, p.y, p.z], rotation: [0, 0, 0, 1] };
+  }
+
+  /**
+   * Screen centre in CSS pixels, for aiming the reticle.
+   *
+   * Babylon's picking takes CSS pixels and divides by the hardware scaling
+   * level itself, so feeding it the render-buffer size would put the reticle at
+   * twice the centre on any retina screen.
+   */
+  screenCentre(): { x: number; y: number } {
+    const s = this.engine.getHardwareScalingLevel();
+    return { x: (this.engine.getRenderWidth() * s) / 2, y: (this.engine.getRenderHeight() * s) / 2 };
+  }
+
+  /**
+   * Turn a surface hit into the anchor pose for the whole assembly.
+   *
+   * Two corrections make the difference between "a model appeared somewhere"
+   * and "the model is standing there": the assembly is centred on the point the
+   * operator actually aimed at (its origin is a datum, which for a shelf is a
+   * corner and for the gearbox is a locating pin — neither is the middle), and
+   * it is turned to face the operator, so the front of a cabinet is not pointing
+   * at the wall. Everything else is parented to this anchor, so one placement
+   * carries the entire assembly with it.
+   */
+  placementPose(hit: Pose): Pose {
+    const cam = this.scene.activeCamera;
+    const c = this.centroid;
+    let yaw = 0;
+    if (cam) {
+      const dx = cam.position.x - hit.position[0];
+      const dz = cam.position.z - hit.position[2];
+      // Left-handed: yaw about Y takes +Z to (sin, 0, cos), so this points the
+      // assembly's own +Z (its front) back towards the viewer.
+      if (dx * dx + dz * dz > 1e-6) yaw = Math.atan2(dx, dz);
+    }
+    const offset = Vector3.TransformCoordinates(new Vector3(c.x, 0, c.z), Matrix.RotationY(yaw));
+    const q = Quaternion.RotationAxis(new Vector3(0, 1, 0), yaw);
+    return {
+      position: [hit.position[0] - offset.x, hit.position[1], hit.position[2] - offset.z],
+      rotation: [q.x, q.y, q.z, q.w],
+    };
+  }
+
+  /**
+   * Aim-and-tap floor placement for the camera-passthrough fallback.
+   *
+   * iOS Safari has no WebXR and therefore no real plane detection, but it does
+   * report gravity: the phone knows which way is down and roughly how high it is
+   * being held, which is enough to define the floor plane. The operator aims the
+   * reticle at where the assembly should stand and taps; the ray-plane
+   * intersection gives a true metric position instead of the fixed standoff the
+   * app used to guess. Returns a stop function.
+   */
+  startGroundPlacement(eyeHeightM: number, onPlace: (pose: Pose) => void): () => void {
+    const camY = (this.scene.activeCamera ?? this.camera).position.y;
+    const groundY = camY - eyeHeightM;
+    // Aim down the screen until the ray meets the floor. With the phone held
+    // level the centre of the screen is the horizon and picks nothing, which
+    // left the operator staring at an empty view with no ring to aim; walking
+    // down the lower half finds the floor as soon as any of it is in shot.
+    const aim = (): Pose | undefined => {
+      const { x, y } = this.screenCentre();
+      for (const f of [1, 1.3, 1.6, 1.8]) {
+        const hit = this.pickGround(x, y * f, groundY);
+        if (hit) return hit;
+      }
+      return undefined;
+    };
+    const observer = this.scene.onBeforeRenderObservable.add(() => this.setReticle(aim()));
+    const stop = (): void => {
+      this.scene.onBeforeRenderObservable.remove(observer);
+      this.scene.onPointerDown = undefined;
+      this.setReticle(undefined);
+    };
+    this.scene.onPointerDown = () => {
+      // Place where they tapped, falling back to the reticle if the tap missed
+      // the floor plane (above the horizon).
+      const hit = this.pickGround(this.scene.pointerX, this.scene.pointerY, groundY) ?? aim();
+      if (!hit) return;
+      onPlace(this.placementPose(hit));
+      stop();
+    };
+    return stop;
+  }
+
+  /**
+   * Take a pose measured in the camera's own frame — as the vision pipeline
+   * reports it — into world space.
+   *
+   * Two conventions have to be reconciled: computer vision is right-handed with
+   * -Z pointing out of the lens, Babylon is left-handed with +Z forward. Getting
+   * this wrong puts a recognised object behind the operator, which is exactly
+   * the class of bug that makes an overlay "not work" while every unit test
+   * passes.
+   */
+  cameraToWorld(poseInCamera: Pose): Pose {
+    const cam = this.scene.activeCamera;
+    if (!cam) return poseInCamera;
+    const [px, py, pz] = poseInCamera.position;
+    const [qx, qy, qz, qw] = poseInCamera.rotation;
+    const local = new Vector3(px, py, -pz);
+    const localRot = new Quaternion(-qx, -qy, qz, qw);
+
+    const world = cam.getWorldMatrix();
+    const p = Vector3.TransformCoordinates(local, world);
+    const camRot = Quaternion.FromRotationMatrix(world.getRotationMatrix());
+    const q = camRot.multiply(localRot);
+    return { position: [p.x, p.y, p.z], rotation: [q.x, q.y, q.z, q.w] };
+  }
+
+  /**
+   * Enter a real WebXR AR session with hit-testing (Android/Quest/Vision Pro).
+   *
+   * This is genuine plane detection: the device reports where the ray from the
+   * screen actually meets a real surface, so the reticle sits on the true floor
+   * and the anchor placed from it is world-locked — the assembly stays put when
+   * the operator walks around it. iOS Safari has no WebXR, which is why the
+   * camera-passthrough path with ground picking exists alongside this.
+   *
+   * Returns undefined when the session cannot start, so the caller falls back.
+   */
+  async startWebXr(onPlace: (pose: Pose) => void): Promise<{ end: () => Promise<void> } | undefined> {
+    try {
+      const { startImmersiveAr } = await import('./xr');
+      const controller = await startImmersiveAr(this.scene, this.canvas, {
+        onReticle: (pose) => this.setReticle(pose),
+        onSelectAnchor: (pose) => {
+          onPlace(this.placementPose(pose));
+          this.setReticle(undefined);
+        },
+        onStateChange: (inXr) => {
+          this.arMode = inXr;
+          this.setTransparent(inXr);
+          if (!inXr) this.setReticle(undefined);
+        },
+      });
+      if (!controller) return undefined;
+      this.arMode = true;
+      this.setTransparent(true);
+      return { end: () => controller.end() };
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Clear to transparent (AR passthrough) or to the opaque studio background. */
   setTransparent(on: boolean): void {
     this.scene.clearColor = on ? new Color4(0, 0, 0, 0) : new Color4(0.05, 0.07, 0.1, 1);
@@ -272,7 +480,13 @@ export class SceneManager {
     this.scene.getMeshByName('grid')?.setEnabled(!on);
   }
 
-  private onResize = (): void => this.engine.resize();
+  private resizeObserver: ResizeObserver | undefined;
+
+  private onResize = (): void => {
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;   // hidden; resizing to 0 kills the depth buffer
+    this.engine.resize();
+  };
 
   private buildParts(): void {
     for (const part of this.assembly.parts) {
@@ -568,6 +782,7 @@ export class SceneManager {
     this.optimizer?.stop();
     this.optimizer?.dispose?.();
     window.removeEventListener('resize', this.onResize);
+    this.resizeObserver?.disconnect();
     this.engine.stopRenderLoop();
     this.scene.dispose();
     this.engine.dispose();

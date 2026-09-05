@@ -348,3 +348,41 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   position: absolute; top: 12px; right: 12px; z-index: 5;
   padding: 9px 16px; box-shadow: var(--shadow);
 }
+
+/* AR placement prompt: what the overlay is waiting for, in one line. It sits
+   above the safe area at the top of the viewport so it never fights with the
+   mode bar or the sheet tabs at the bottom of a phone screen. */
+.placement-hint {
+  position: absolute;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(92%, 460px);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(6, 12, 18, 0.72);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--edge);
+  color: #e8f4f8;
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: center;
+  pointer-events: none;
+}
+.placement-hint .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+  animation: hint-pulse 1.4s ease-in-out infinite;
+}
+/* In AR the stage runs full-bleed under the floating header, so the pill has to
+   clear it or the first line is hidden behind the brand bar. */
+.app.ar .placement-hint { top: calc(64px + env(safe-area-inset-top, 0px)); }
+.placement-hint .dot.ok { background: #4ade80; animation: none; }
+.placement-hint.placed { background: rgba(6, 12, 18, 0.55); }
+@keyframes hint-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .placement-hint .dot { animation: none; } }

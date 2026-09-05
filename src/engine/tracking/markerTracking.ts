@@ -163,25 +163,38 @@ export function reprojectionError(H: number[][], src: Point2[], dst: Point2[]): 
   return total / src.length;
 }
 
-/** Corner points of a marker of side `sizeM`, centred on its own origin, Z up. */
-export const markerModelCorners = (sizeM: number): Point2[] => {
-  const h = sizeM / 2;
+/** Corner points of a `widthM` x `heightM` rectangle centred on its own origin. */
+export const rectModelCorners = (widthM: number, heightM: number): Point2[] => {
+  const w = widthM / 2;
+  const h = heightM / 2;
   return [
-    { x: -h, y: h },
-    { x: h, y: h },
-    { x: h, y: -h },
-    { x: -h, y: -h },
+    { x: -w, y: h },
+    { x: w, y: h },
+    { x: w, y: -h },
+    { x: -w, y: -h },
   ];
 };
 
-/** Pose of a marker in the camera frame from its four detected image corners. */
-export function markerPoseFromCorners(
+/** Corner points of a marker of side `sizeM`, centred on its own origin, Z up. */
+export const markerModelCorners = (sizeM: number): Point2[] => rectModelCorners(sizeM, sizeM);
+
+/**
+ * Pose of a known planar rectangle in the camera frame, from its four image
+ * corners in TL, TR, BR, BL order.
+ *
+ * The same solve serves a printed fiducial and a recognised object facade — a
+ * QR code is just a rectangle whose size you happen to know, and so is the front
+ * of a cube shelf. Keeping one implementation means the object path inherits the
+ * marker path's re-orthonormalisation and reprojection quality metric.
+ */
+export function rectPoseFromCorners(
   corners: Point2[],
-  sizeM: number,
+  widthM: number,
+  heightM: number,
   K: Intrinsics,
 ): { pose: Pose; reprojectionPx: number; apparentPx: number } | undefined {
   if (corners.length !== 4) return undefined;
-  const model = markerModelCorners(sizeM);
+  const model = rectModelCorners(widthM, heightM);
   const H = solveHomography(model, corners);
   if (!H) return undefined;
   const pose = poseFromHomography(H, K);
@@ -199,6 +212,15 @@ export function markerPoseFromCorners(
     reprojectionPx: reprojectionError(H, model, corners),
     apparentPx: perimeter / 4,
   };
+}
+
+/** Pose of a marker in the camera frame from its four detected image corners. */
+export function markerPoseFromCorners(
+  corners: Point2[],
+  sizeM: number,
+  K: Intrinsics,
+): { pose: Pose; reprojectionPx: number; apparentPx: number } | undefined {
+  return rectPoseFromCorners(corners, sizeM, sizeM, K);
 }
 
 type BarcodeCtor = new (opts?: { formats?: string[] }) => {

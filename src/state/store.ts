@@ -11,11 +11,23 @@ import { gearbox } from '../data';
 
 export type ViewMode = 'guide' | 'explore' | 'explode' | 'animate';
 
+/**
+ * How the assembly got its place in the world.
+ *
+ * `awaiting` is the state that was missing: the app used to drop the model at a
+ * guessed standoff in front of the operator and call that AR. Now it says what
+ * it is doing — looking for the floor or for the object itself — until something
+ * real fixes the anchor.
+ */
+export type ArPlacement = 'idle' | 'awaiting' | 'floor' | 'recognized' | 'marker' | 'manual';
+
 export interface AppState {
   assembly: AssemblyDef;
   /** Rigid transform from assembly frame into world/AR frame. */
   anchor: Pose | undefined;
   anchorQuality: number;
+  /** Where the anchor came from — drives the AR prompt and the status bar. */
+  arPlacement: ArPlacement;
   arMode: ArMode;
   viewMode: ViewMode;
   explodeFactor: number;
@@ -41,7 +53,8 @@ export interface AppState {
 
   // Actions
   loadAssembly(a: AssemblyDef): void;
-  setAnchor(pose: Pose | undefined, quality: number): void;
+  setAnchor(pose: Pose | undefined, quality: number, placement?: ArPlacement): void;
+  setArPlacement(placement: ArPlacement): void;
   setArMode(mode: ArMode): void;
   setViewMode(mode: ViewMode): void;
   setExplodeFactor(f: number): void;
@@ -154,6 +167,7 @@ export const useStore = create<AppState>((set, get) => {
     ...base,
     anchor: undefined,
     anchorQuality: 0,
+    arPlacement: 'idle' as ArPlacement,
     arMode: 'preview' as ArMode,
     viewMode: 'guide' as ViewMode,
     explodeFactor: 0,
@@ -176,14 +190,22 @@ export const useStore = create<AppState>((set, get) => {
         ...next,
         anchor: undefined,
         anchorQuality: 0,
+        arPlacement: 'idle',
         selectedPartId: undefined,
         explodeFactor: 0,
         ...derive(next),
       });
     },
 
-    setAnchor(pose, quality) {
-      set({ anchor: pose, anchorQuality: quality });
+    setAnchor(pose, quality, placement) {
+      set({
+        anchor: pose,
+        anchorQuality: quality,
+        arPlacement: placement ?? (pose ? 'manual' : 'idle'),
+      });
+    },
+    setArPlacement(placement) {
+      set({ arPlacement: placement });
     },
     setArMode(mode) {
       set({ arMode: mode });

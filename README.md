@@ -28,6 +28,11 @@ join the *same spatial session* rather than watching a shaky screen-share.
 - **Background geometry** — the bench and fixtures render as depth-only
   **occluders** so virtual parts correctly disappear behind real ones; keep-out
   volumes are drawn and enforced.
+- **Anchoring that finds the world, not the screen** — WebXR hit-test on a real
+  plane where the device has it; **markerless object recognition** of the
+  assembly's own facade (see below); QR marker re-registration; and, on iOS,
+  aim-and-tap on the floor plane implied by gravity. It never drops the model at
+  a guessed standoff and calls that AR.
 - **Registration** — 3-point (Horn's absolute orientation), 2-point + gravity,
   plane-drop, and automatic **marker re-registration** so the overlay re-locks
   onto the workpiece after the operator walks away and back.
@@ -115,7 +120,7 @@ run a model per frame:
 | Device | Mode | How |
 | --- | --- | --- |
 | Android Chrome / Quest / Vision Pro | **WebXR immersive AR** | Babylon native, hit-test anchor drop, real occlusion |
-| **iPhone / iPad (Safari)** | **Camera passthrough** | Rear camera + motion sensors; anchor by touching a datum; auto re-lock via QR marker |
+| **iPhone / iPad (Safari)** | **Camera passthrough** | Rear camera + motion sensors; aim-and-tap floor placement, object recognition, auto re-lock via QR marker |
 | Any browser | 3D preview | Turntable view; everything except the camera works |
 | iOS with a single model | AR Quick Look | System AR viewer fallback |
 
@@ -232,16 +237,50 @@ model can be mapped to parts for a demo via `remapLabels`.
   just faster where WebGPU exists (modern Android/desktop, and iOS/iPadOS with
   Safari 26+).
 
+## Anchoring: floor, object, marker
+
+The app tries these in order, and tells the operator which one it is using:
+
+| Source | Where it works | How |
+| --- | --- | --- |
+| **WebXR hit-test** | Android, Quest, Vision Pro | The device reports a real plane; the reticle sits on the true floor and the anchor is world-locked. |
+| **Object recognition** | Everywhere the camera works | The assembly's own facade is found in the frame by `src/vision/gridRecognition.ts`, giving a full metric pose — no marker, no setup. |
+| **QR marker** | Assemblies that ship a fiducial | Planar homography from four corners; the most precise of the four. |
+| **Aim and tap** | iOS Safari (no WebXR) | Gravity plus an assumed eye height defines the floor; the tap lands the assembly at a true distance. |
+
+Everything hangs off one anchor node, so whichever source wins, **the whole
+assembly moves with it** and the parts stay aligned to each other and snapped to
+their mates.
+
+### Recognising an object without a marker
+
+A generic object detector tells you *that* there is furniture in the frame,
+which is worth nothing to AR — you need the outline and the scale. A regular
+grid facade gives both: the openings are identical, so their pitch is a number
+straight out of the BOM. `gridRecognition` projects gradient energy onto each
+axis, peak-picks the board lines, and fits a periodic lattice by exhaustive
+search over spacing and phase, scored by inliers minus missing lines. Clutter in
+one bay adds a stray peak that simply does not fit the lattice. It is a few
+milliseconds of plain JavaScript, deterministic, and it needs no model download.
+The facade must be roughly square-on (within ~20°), which is how you stand in
+front of a shelf anyway.
+
 ## Sample assemblies
 
-Two are bundled; switch between them with the picker at the top of the step
-guide.
+Three are bundled; switch between them with the picker at the top of the step
+guide, or open one directly with `?assembly=kallax-4x4`.
 
 - **`src/data/gearbox.ts`** — a small worked two-stage bench gearbox (11 parts)
   that exercises every diagnostic: a handed pair of bearing caps (the swap trap),
   a keyed shaft (roll matters), bolts that must follow their housing, a keep-out
   volume over the output shaft, and a strict six-step build order. The best place
   to read how the model works.
+- **`src/data/kallax.ts`** — a 4x4 cube shelf (20 parts, 8 steps) modelled on
+  the IKEA KALLAX 147 x 147 cm, so the AR path can be tested against a real
+  object that is actually in people's homes. Its facade is the markerless
+  recognition target. Dimensions are derived from the two published numbers
+  (1470 mm across, 330 mm opening ⇒ 30 mm board) rather than guessed, so the
+  model and the joints cannot drift apart.
 - **`src/data/equipmentRack.ts`** — a **large** 14-bay modular equipment rack
   (108 parts, 46-step dependency graph) that stresses the app at scale: handed
   left/right rail pairs on every bay (swap detection ×14), a rear cable-channel
