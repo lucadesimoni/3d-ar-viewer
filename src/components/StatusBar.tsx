@@ -47,7 +47,13 @@ export function StatusBar({ capabilities, pipeline, onEnterAr, arActive }: Props
       </div>
 
       <button className={`ar-enter ${arActive ? 'active' : ''}`} onClick={onEnterAr}>
-        {arActive ? 'Exit AR' : `Enter AR · ${capabilities ? MODE_LABELS[capabilities.recommended] : '…'}`}
+        {arActive ? 'Exit AR' : (
+          <>
+            Enter AR
+            {/* The mode suffix is dropped on narrow screens so the bar fits. */}
+            <span className="ar-mode-suffix"> · {capabilities ? MODE_LABELS[capabilities.recommended] : '…'}</span>
+          </>
+        )}
       </button>
     </header>
   );

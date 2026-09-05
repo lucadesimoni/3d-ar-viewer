@@ -27,7 +27,7 @@ export function ModeBar(): JSX.Element {
             onClick={() => setViewMode(m.id)}
           >
             <span className="mode-icon">{m.icon}</span>
-            {m.label}
+            <span className="mode-label">{m.label}</span>
           </button>
         ))}
       </div>

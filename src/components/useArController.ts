@@ -6,6 +6,7 @@ import { RecognitionPipeline, type PipelineStatus } from '../vision/pipeline';
 import { envModelConfig } from '../vision/defaultModels';
 import { classifyRecognition, type LabelInfo } from '../vision/verdict';
 import { detectPerfProfile } from '../render/perf';
+import { getActiveManager } from '../render/babylon/managerRegistry';
 import { toImageData } from '../vision/opencv';
 import { alignToMarker } from '../engine/alignment';
 import { useStore } from '../state/store';
@@ -59,6 +60,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     if (frameTimer.current) window.clearInterval(frameTimer.current);
     markerRef.current?.stop();
     trackerRef.current?.stop();
+    getActiveManager()?.setArMode(false);
     trackerRef.current = undefined;
     useStore.getState().setRecognition(undefined);
     setArActive(false);
@@ -77,6 +79,20 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     await tracker.start(video);
     if (tracker.state.error) return;
     setArActive(true);
+
+    // Put the 3D scene into AR: transparent clear, head camera, orbit controls
+    // off — then drive that camera from the device's orientation.
+    const manager = getActiveManager();
+    manager?.setArMode(true);
+    tracker.subscribe((st) => {
+      getActiveManager()?.setDeviceOrientation(st.orientation);
+    });
+
+    // Drop the assembly on the floor ahead of the operator so something is
+    // visible immediately; a marker or manual registration refines it later.
+    if (manager && !useStore.getState().anchor) {
+      useStore.getState().setAnchor(manager.computeAnchorInFront(), 0.25);
+    }
 
     // Marker re-registration: when the fiducial is in view, snap the anchor to it.
     if (assembly.marker) {

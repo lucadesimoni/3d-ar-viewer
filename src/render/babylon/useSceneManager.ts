@@ -52,12 +52,26 @@ export function useSceneManager(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasRef]);
 
+  // The scene is built once, so AR toggling must be applied to the live manager
+  // rather than rebuilt — otherwise the canvas stays opaque over the camera.
+  useEffect(() => {
+    managerRef.current?.setTransparent(Boolean(opts.transparent));
+  }, [opts.transparent, manager]);
+
   // Push store state into the manager whenever the relevant slices change.
   useEffect(() => {
+    let lastAssemblyId: string | undefined;
     const push = (): void => {
       const m = managerRef.current;
       if (!m) return;
       const s = useStore.getState();
+      // Rebuild the scene when the assembly itself changes — otherwise the
+      // picker (and the Mendix assembly binding) would swap the data while the
+      // 3D view kept rendering the previous model's meshes.
+      if (lastAssemblyId !== undefined && s.assembly.id !== lastAssemblyId) {
+        m.loadAssembly(s.assembly);
+      }
+      lastAssemblyId = s.assembly.id;
       const step = s.assembly.steps.find((st) => st.id === s.activeStepId);
       const partIds = new Set(s.assembly.parts.map((p) => p.id));
       const recognitionByPart = new Map<string, RecognitionStatus>();

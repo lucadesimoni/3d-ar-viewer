@@ -4,6 +4,7 @@ import { Engine } from '@babylonjs/core/Engines/engine';
 import type { AbstractEngine } from '@babylonjs/core/Engines/abstractEngine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
+import { UniversalCamera } from '@babylonjs/core/Cameras/universalCamera';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
@@ -69,6 +70,9 @@ export class SceneManager {
   readonly renderBackend: RenderBackendKind;
   readonly scene: Scene;
   camera: ArcRotateCamera;
+  /** Head camera used in AR: sits at the origin and is rotated by the device. */
+  arCamera: UniversalCamera | undefined;
+  private arMode = false;
   readonly assemblyRoot: TransformNode;
 
   private parts = new Map<string, PartVisual>();
@@ -121,6 +125,13 @@ export class SceneManager {
     this.camera.lowerRadiusLimit = 0.15;
     this.camera.upperRadiusLimit = 4;
 
+    // AR head camera: fixed at the origin (3-DoF), rotated by the device's
+    // orientation. Kept alongside the orbit camera and swapped in for AR.
+    this.arCamera = new UniversalCamera('arcam', Vector3.Zero(), this.scene);
+    this.arCamera.rotationQuaternion = Quaternion.Identity();
+    this.arCamera.minZ = 0.01;
+    this.arCamera.fov = (this.arFovDeg * Math.PI) / 180;
+
     const hemi = new HemisphericLight('hemi', new Vector3(0, 1, 0), this.scene);
     hemi.intensity = 0.75;
     const key = new DirectionalLight('key', new Vector3(-0.4, -1, -0.6), this.scene);
@@ -152,6 +163,97 @@ export class SceneManager {
     const search = typeof window !== 'undefined' ? window.location.search : '';
     const { engine, kind } = await createBestEngine(canvas, { antialias: perf.antialias }, search);
     return new SceneManager(canvas, assembly, opts, { engine, kind, perf });
+  }
+
+  /** Vertical FOV assumed for the passthrough camera, degrees. */
+  private readonly arFovDeg = 60;
+
+  /**
+   * Switch between the desktop orbit camera and the AR head camera.
+   *
+   * In AR the orbit controls must be detached, otherwise a drag rotates the
+   * model instead of the world staying put, and the scene must clear to
+   * transparent so the camera feed shows through.
+   */
+  setArMode(enabled: boolean): void {
+    if (this.arMode === enabled) return;
+    this.arMode = enabled;
+    if (enabled && this.arCamera) {
+      this.camera.detachControl();
+      this.scene.activeCamera = this.arCamera;
+    } else {
+      this.scene.activeCamera = this.camera;
+      this.camera.attachControl(true);
+    }
+    this.setTransparent(enabled);
+  }
+
+  /**
+   * Feed the device's orientation to the AR camera.
+   *
+   * The tracker reports a camera that looks down -Z (the WebXR/three
+   * convention); Babylon's cameras look down +Z, so the incoming rotation is
+   * turned 180 degrees about Y to match.
+   */
+  setDeviceOrientation(q: [number, number, number, number]): void {
+    if (!this.arCamera) return;
+    const device = new Quaternion(q[0], q[1], q[2], q[3]);
+    const toBabylon = Quaternion.RotationAxis(new Vector3(0, 1, 0), Math.PI);
+    this.arCamera.rotationQuaternion = device.multiply(toBabylon);
+  }
+
+  /**
+   * A pose `distanceM` in front of the operator and `dropM` below eye level —
+   * roughly a workbench — so the assembly is inside the field of view the moment
+   * AR starts, without any registration step. (A floor-height default would sit
+   * ~42 degrees below the horizon and be invisible until the operator looked down.)
+   *
+   * The direction is read from the live camera's forward vector rather than
+   * assumed from an axis convention, so it is correct either way.
+   */
+  computeAnchorInFront(): Pose {
+    const cam = this.arCamera ?? this.camera;
+    const forward = cam.getDirection(Vector3.Forward());
+    // Flatten to horizontal so the assembly sits level, not tilted with the head.
+    forward.y = 0;
+    if (forward.lengthSquared() < 1e-6) forward.set(0, 0, 1);
+    forward.normalize();
+
+    // Auto-frame: derive the distance from the assembly's own size so a 0.2 m
+    // gearbox and a 2.2 m rack both fill a similar share of the view. A fixed
+    // distance made the small sample a speck at the bottom edge.
+    const radius = this.assemblyRadius();
+    const halfFov = ((this.arFovDeg * Math.PI) / 180) / 2;
+    const distance = Math.min(5, Math.max(0.5, (radius / Math.tan(halfFov)) * 1.7));
+    const drop = Math.min(1.0, Math.max(0.1, radius * 0.5));
+
+    // Target point for the assembly's CENTRE, then offset so the centre lands
+    // there (the model's origin is a datum, not necessarily its middle).
+    const target = cam.position.add(forward.scale(distance)).add(new Vector3(0, -drop, 0));
+    const c = this.centroid;
+    return {
+      position: [target.x - c.x, target.y - c.y, target.z - c.z],
+      rotation: [0, 0, 0, 1],
+    };
+  }
+
+  /** Bounding radius of the assembly around its centroid, metres. */
+  private assemblyRadius(): number {
+    let r = 0.05;
+    for (const p of this.assembly.parts) {
+      const dx = p.targetPose.position[0] - this.centroid.x;
+      const dy = p.targetPose.position[1] - this.centroid.y;
+      const dz = p.targetPose.position[2] - this.centroid.z;
+      r = Math.max(r, Math.sqrt(dx * dx + dy * dy + dz * dz));
+    }
+    return r;
+  }
+
+  /** Clear to transparent (AR passthrough) or to the opaque studio background. */
+  setTransparent(on: boolean): void {
+    this.scene.clearColor = on ? new Color4(0, 0, 0, 0) : new Color4(0.05, 0.07, 0.1, 1);
+    // The ground grid is a studio aid; it must not float over the real world.
+    this.scene.getMeshByName('grid')?.setEnabled(!on);
   }
 
   private onResize = (): void => this.engine.resize();

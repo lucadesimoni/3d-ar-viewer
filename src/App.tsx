@@ -13,6 +13,7 @@ import { QuickLookButton } from './components/QuickLookButton';
 import { RecognitionOverlay } from './components/RecognitionOverlay';
 import { UiConfigProvider } from './ui/UiConfigContext';
 import { resolveUiConfig, type UiConfig } from './ui/config';
+import { useMediaQuery } from './ui/useMediaQuery';
 
 type Drawer = 'register' | 'collab' | 'bom' | undefined;
 
@@ -29,6 +30,12 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null);
   const { capabilities, pipelineStatus, arActive, enterAr } = useArController(videoRef);
   const [drawer, setDrawer] = useState<Drawer>(undefined);
+  // On a phone/tablet the three-column desktop layout does not fit: the viewport
+  // is the app, and the panels live in a collapsible sheet with one visible at a
+  // time. In AR the sheet starts collapsed so nothing covers the camera.
+  const isMobile = useMediaQuery('(max-width: 1024px)');
+  const [sheet, setSheet] = useState<'steps' | 'errors' | null>('steps');
+  const mobileSheet = arActive ? null : sheet;
 
   const rootClass = [
     'app',
@@ -38,6 +45,8 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
     `preset-${ui.preset}`,
     ui.showSteps ? '' : 'no-left',
     ui.showDiagnostics ? '' : 'no-right',
+    isMobile ? 'mobile' : '',
+    isMobile && mobileSheet === null ? 'sheet-collapsed' : '',
   ].filter(Boolean).join(' ');
 
   const accentStyle = ui.accent ? ({ ['--accent' as string]: ui.accent, ['--accent-2' as string]: ui.accent }) : undefined;
@@ -53,7 +62,7 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
         {ui.showRecognition && <QuickLookButton capabilities={capabilities} />}
 
         <div className="stage">
-          {ui.showSteps && <StepGuide />}
+          {ui.showSteps && (!isMobile || mobileSheet === 'steps') && <StepGuide />}
           <main className="viewport">
             <Viewer transparent={arActive} />
             {ui.showRecognition && <RecognitionOverlay />}
@@ -79,7 +88,23 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
               )}
             </div>
           </main>
-          {ui.showDiagnostics && <DiagnosticsPanel />}
+          {ui.showDiagnostics && (!isMobile || mobileSheet === 'errors') && <DiagnosticsPanel />}
+          {isMobile && (ui.showSteps || ui.showDiagnostics) && (
+            <nav className="sheet-tabs" role="tablist">
+              {ui.showSteps && (
+                <button role="tab" aria-selected={mobileSheet === 'steps'}
+                  className={mobileSheet === 'steps' ? 'active' : ''}
+                  onClick={() => setSheet(sheet === 'steps' ? null : 'steps')}>Steps</button>
+              )}
+              {ui.showDiagnostics && (
+                <button role="tab" aria-selected={mobileSheet === 'errors'}
+                  className={mobileSheet === 'errors' ? 'active' : ''}
+                  onClick={() => setSheet(sheet === 'errors' ? null : 'errors')}>Errors</button>
+              )}
+              <button className="sheet-collapse" onClick={() => setSheet(null)}
+                aria-label="Hide panel">▾</button>
+            </nav>
+          )}
         </div>
 
         {ui.showModeBar && <ModeBar />}

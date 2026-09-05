@@ -21,7 +21,7 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; margin: 0; }
+html, body, #root { height: 100%; height: 100dvh; margin: 0; }
 body {
   background: var(--bg);
   color: var(--text);
@@ -46,13 +46,29 @@ h2, h3 { margin: 0 0 6px; font-weight: 640; letter-spacing: 0.01em; }
 code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px; font-size: 0.85em; }
 
 /* ---------- Layout ---------- */
-.app { display: flex; flex-direction: column; height: 100%; position: relative; }
+.app { display: flex; flex-direction: column; height: 100%; height: 100dvh; position: relative; overflow: hidden; }
 .passthrough {
   position: fixed; inset: 0; width: 100%; height: 100%;
   object-fit: cover; z-index: 0; display: none; background: #000;
 }
 .app.ar .passthrough { display: block; }
+/* AR: everything behind the 3D canvas must be see-through, and the viewport
+   goes full-bleed so the overlay lines up with the camera image. */
 .app.ar .viewport-canvas, .app.ar .viewer-canvas { background: transparent; }
+/* The 3D canvas must be geometrically identical to the video underneath it,
+   otherwise the overlay is offset from the real world. Both go full-screen. */
+.app.ar .viewport {
+  position: fixed; inset: 0; z-index: 1;
+  background: transparent; border: none; border-radius: 0;
+}
+.app.ar .status-bar, .app.ar .mode-bar { position: relative; z-index: 4; }
+.app.ar .viewport-overlay { z-index: 5; }
+.app.ar .stage { padding: 0; gap: 0; grid-template-columns: 1fr; }
+.app.ar .panel { background: rgba(17, 24, 33, 0.72); }
+/* Side panels would cover the camera on a phone — hide them in AR there. */
+@media (max-width: 1024px) {
+  .app.ar .step-guide, .app.ar .diagnostics, .app.ar .sheet-tabs { display: none; }
+}
 
 .stage { flex: 1; display: grid; grid-template-columns: 320px 1fr 340px; gap: 12px; padding: 12px; min-height: 0; position: relative; z-index: 1; }
 .viewport { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--edge); background: radial-gradient(120% 120% at 50% 0%, #0e1622 0%, #070b10 100%); }
@@ -182,15 +198,64 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 .capability-notes p { margin: 3px 0; }
 
 /* ---------- Responsive: tablet portrait & phone ---------- */
+/* ---------- Mobile: the viewport IS the app ----------
+   The desktop three-column grid cannot fit a phone. Instead the 3D view fills
+   the screen and exactly one panel shows in a collapsible bottom sheet, so
+   nothing overflows and there is no page-level scrolling. */
 @media (max-width: 1024px) {
-  .stage { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
-  .step-guide, .diagnostics { max-height: 30vh; }
+  /* Scoped under .app so these win over the desktop `.stage` grid defined
+     later in this file — a bare `.stage` here would lose on source order. */
+  .app .stage {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    padding: 8px;
+    gap: 8px;
+  }
+  /* Viewport first and dominant regardless of DOM order. */
+  .app .viewport { order: -1; min-height: 40dvh; }
+  .app.mobile .panel {
+    max-height: 38dvh;
+    min-height: 0;
+  }
+  .app.mobile.sheet-collapsed .viewport { min-height: 60dvh; }
+
+  .sheet-tabs {
+    display: flex; gap: 6px; align-items: center;
+    background: var(--panel); border: 1px solid var(--edge);
+    border-radius: var(--radius); padding: 5px;
+  }
+  .sheet-tabs button {
+    flex: 1; min-height: 42px; border: none; background: transparent;
+    font-size: 13px; border-radius: 9px;
+  }
+  .sheet-tabs button.active { background: rgba(34, 211, 238, 0.18); color: var(--accent); }
+  .sheet-tabs .sheet-collapse { flex: 0 0 44px; }
+
+  /* Overlay drawers must not cover the whole small screen. */
+  .viewport-overlay { max-width: 70vw; }
+  .drawer { width: min(300px, 70vw); }
+  .capability-notes { display: none; }
 }
+
 @media (max-width: 640px) {
   .brand .tagline { display: none; }
   .badges { display: none; }
-  .mode-switch { flex-wrap: wrap; }
-  .viewport-overlay { max-width: 62vw; }
+  .status-bar { gap: 8px; padding: 8px 12px; }
+  /* Keep the title and AR button on one line each. */
+  .brand strong { font-size: 14px; white-space: nowrap; }
+  .ar-enter { padding: 10px 12px; font-size: 12.5px; white-space: nowrap; }
+  .ar-mode-suffix { display: none; }
+  /* The step-guide header stacks instead of colliding. */
+  .panel-head { flex-wrap: wrap; gap: 6px; }
+  .assembly-picker { max-width: 100%; }
+  .rev { flex-basis: 100%; }
+  /* Mode bar must fit the width: icons only, no labels, no reset. */
+  .mode-switch { flex: 1; justify-content: space-between; }
+  .mode { padding: 9px 10px; }
+  .mode-label { display: none; }
+  .mode-icon { font-size: 18px; }
+  .reset { display: none; }
+  .viewport-overlay { max-width: 78vw; }
 }
 
 /* Assembly picker */
