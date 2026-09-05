@@ -68,7 +68,7 @@ export function runDiagnostics(input: DiagnosticInput): Diagnostic[] {
   const out: Diagnostic[] = [
     ...fitDiagnostics(assembly, parts, poses),
     ...sequenceDiagnostics(assembly, poses, completedStepIds),
-    ...interferenceDiagnostics(parts, poses),
+    ...interferenceDiagnostics(assembly, parts, poses),
     ...keepOutDiagnostics(assembly, parts, poses),
     ...swapDiagnostics(assembly, parts, poses),
     ...missingPartDiagnostics(assembly, poses, completedStepIds),
@@ -264,9 +264,20 @@ function sequenceDiagnostics(
  * *meant* to touch do not light up the panel; only real overlap survives.
  */
 function interferenceDiagnostics(
+  assembly: AssemblyDef,
   parts: Map<string, PartDef>,
   poses: Map<string, Pose>,
 ): Diagnostic[] {
+  // Pairs that are supposed to occupy the same space: anything joined by a mate
+  // (a pin in its socket, a bolt in its boss) plus declared pass-throughs.
+  const key = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const expected = new Set<string>();
+  for (const step of assembly.steps) {
+    for (const m of step.mates) expected.add(key(m.a.partId, m.b.partId));
+  }
+  for (const p of parts.values()) {
+    for (const other of p.clearanceWith ?? []) expected.add(key(p.id, other));
+  }
   const items: { id: string; part: PartDef; obb: Obb }[] = [];
   for (const [id, pose] of poses) {
     const part = parts.get(id);
@@ -275,6 +286,7 @@ function interferenceDiagnostics(
 
   const out: Diagnostic[] = [];
   for (const [a, b] of broadphasePairs(items)) {
+    if (expected.has(key(a.id, b.id))) continue; // mated or declared pass-through
     const depth = obbPenetration(a.obb, b.obb);
     const depthMm = depth * M_TO_MM;
     if (depthMm < 1) continue; // sub-millimetre overlap is bounding-box slop, not a clash

@@ -3,6 +3,7 @@ import type { ArMode } from '../engine/tracking/capabilities';
 import { runDiagnostics, severityByPart, type Diagnostic, type Severity } from '../engine/diagnostics';
 import { buildSequenceView, suggestNextStep, type SequenceView } from '../engine/sequencer';
 import { clonePose } from '../engine/math';
+import { bestSnap, findSnapCandidates, type MateResidual } from '../engine/snapping';
 import type { Timeline } from '../engine/animation';
 import type { RecognitionState } from '../vision/verdict';
 import type { AssemblyDef, PlacementState, Pose } from '../engine/types';
@@ -23,6 +24,10 @@ export interface AppState {
   animationT: number;
   /** Latest camera recognition + colour-coded discrepancy verdict. */
   recognition: RecognitionState | undefined;
+  /** Snap a dropped part onto its mate when it is within capture range. */
+  snapEnabled: boolean;
+  /** Most recent successful snap, for transient UI feedback. */
+  lastSnap: { partId: string; mateId: string; residual: MateResidual; atMs: number } | undefined;
 
   placements: Map<string, PlacementState>;
   activeStepId: string | undefined;
@@ -42,6 +47,7 @@ export interface AppState {
   setExplodeFactor(f: number): void;
   setAnimation(timeline: Timeline | undefined, t: number): void;
   setRecognition(recognition: RecognitionState | undefined): void;
+  setSnapEnabled(on: boolean): void;
   selectPart(id: string | undefined): void;
   setActiveStep(id: string | undefined): void;
 
@@ -56,6 +62,35 @@ export interface AppState {
   /** Snap every part of the active step to nominal — the "show me" affordance. */
   autoPlaceActiveStep(): void;
   reset(): void;
+}
+
+/**
+ * Snap a dropped part onto the best mate within capture range.
+ *
+ * This is what makes placement feel mechanical rather than free-floating: the
+ * operator gets the part roughly onto the joint and it seats itself exactly,
+ * exactly as the tolerance check then expects. Only mates whose *other* side is
+ * already placed are candidates, so a joint goes live only once its counterpart
+ * exists. Returns the original pose unchanged when nothing is in range.
+ */
+function snapToMate(
+  assembly: AssemblyDef,
+  partId: string,
+  pose: Pose,
+  placements: Map<string, PlacementState>,
+): { pose: Pose; mateId?: string; residual?: MateResidual } {
+  const part = assembly.parts.find((p) => p.id === partId);
+  if (!part) return { pose };
+
+  const partsById = new Map(assembly.parts.map((p) => [p.id, p]));
+  const posesById = new Map<string, Pose>();
+  for (const [id, pl] of placements) {
+    if (id !== partId && pl.status !== 'ghost') posesById.set(id, pl.pose);
+  }
+
+  const mates = assembly.steps.flatMap((s) => s.mates);
+  const best = bestSnap(findSnapCandidates(part, pose, mates, partsById, posesById));
+  return best ? { pose: best.snappedPose, mateId: best.mate.id, residual: best.residual } : { pose };
 }
 
 function initialPlacements(assembly: AssemblyDef): Map<string, PlacementState> {
@@ -125,6 +160,8 @@ export const useStore = create<AppState>((set, get) => {
     animationTimeline: undefined,
     animationT: 0,
     recognition: undefined,
+    snapEnabled: true,
+    lastSnap: undefined,
     selectedPartId: undefined,
     ...derive(base),
 
@@ -167,6 +204,9 @@ export const useStore = create<AppState>((set, get) => {
     setRecognition(recognition) {
       set({ recognition });
     },
+    setSnapEnabled(on) {
+      set({ snapEnabled: on });
+    },
     selectPart(id) {
       set({ selectedPartId: id });
     },
@@ -183,9 +223,18 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     placePart(partId, pose) {
+      const { assembly, snapEnabled } = get();
       const placements = new Map(get().placements);
-      placements.set(partId, { partId, pose, status: 'placed', placedAtMs: Date.now() });
-      set({ ...derive({ ...get(), placements }) });
+      const snap = snapEnabled
+        ? snapToMate(assembly, partId, pose, placements)
+        : { pose, mateId: undefined, residual: undefined };
+      placements.set(partId, { partId, pose: snap.pose, status: 'placed', placedAtMs: Date.now() });
+      set({
+        lastSnap: snap.mateId
+          ? { partId, mateId: snap.mateId, residual: snap.residual!, atMs: Date.now() }
+          : get().lastSnap,
+        ...derive({ ...get(), placements }),
+      });
     },
 
     removePart(partId) {

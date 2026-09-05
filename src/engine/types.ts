@@ -109,6 +109,14 @@ export interface PartDef {
   mirrorGroup?: string;
   /** Direction the part is brought in from, assembly frame. Drives the animation. */
   approach?: Vec3;
+  /**
+   * Parts this one may legitimately overlap. Interference is detected with
+   * oriented bounding boxes, which cannot see a bore — so a shaft running
+   * through a bearing cap's hole looks like a clash. Parts joined by a mate are
+   * exempt automatically; this covers pass-through pairs that are not directly
+   * mated.
+   */
+  clearanceWith?: string[];
 }
 
 export interface PartConnectorRef {

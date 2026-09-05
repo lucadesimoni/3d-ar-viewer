@@ -420,9 +420,16 @@ export class SceneManager {
       }
     }
     visual.outline = wantOutline;
-    // Pulse the part root so a recognised or erroring part breathes for attention.
-    const pulse = reco !== undefined || severity === 'error' ? pulseScale(performance.now() - this.startMs) : 1;
-    visual.root.scaling.setAll(pulse);
+    // Attention pulse must NEVER touch geometry: this overlay is measured
+    // against real parts in millimetres, so scaling it would falsify the size.
+    // Pulse the outline width instead and keep the part exactly 1:1.
+    const pulsing = reco !== undefined || severity === 'error';
+    const pulse = pulsing ? pulseScale(performance.now() - this.startMs) : 1;
+    if (wantOutline) {
+      const base = reco ? 0.008 : 0.004;
+      for (const m of outlineTargets) m.outlineWidth = base * pulse;
+    }
+    visual.root.scaling.setAll(1);
 
     for (const m of this.background) m.setEnabled(state.showBackground);
   }
@@ -471,7 +478,10 @@ export class SceneManager {
   projectPart(partId: string): { x: number; y: number; onScreen: boolean } | undefined {
     const visual = this.parts.get(partId);
     if (!visual) return undefined;
-    const world = visual.root.getAbsolutePosition();
+    // Anchor to the part's visible centre. The root is its datum origin, which
+    // for a long part (a shaft, a rail) sits at one end — a label pinned there
+    // floats off the object.
+    const world = this.visualCentre(visual);
     const w = this.engine.getRenderWidth();
     const h = this.engine.getRenderHeight();
     const p = Vector3.Project(
@@ -481,6 +491,22 @@ export class SceneManager {
       this.camera.viewport.toGlobal(w, h),
     );
     return { x: p.x / w, y: p.y / h, onScreen: p.z > 0 && p.z < 1 && p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h };
+  }
+
+  /** World-space centre of a part's visible geometry. */
+  private visualCentre(visual: PartVisual): Vector3 {
+    const meshes = visual.loadedMeshes ?? [visual.mesh];
+    let min: Vector3 | undefined;
+    let max: Vector3 | undefined;
+    for (const m of meshes) {
+      if (!m.getTotalVertices || m.getTotalVertices() === 0) continue;
+      m.computeWorldMatrix(true);
+      const bb = m.getBoundingInfo().boundingBox;
+      min = min ? Vector3.Minimize(min, bb.minimumWorld) : bb.minimumWorld.clone();
+      max = max ? Vector3.Maximize(max, bb.maximumWorld) : bb.maximumWorld.clone();
+    }
+    if (!min || !max) return visual.root.getAbsolutePosition();
+    return min.add(max).scale(0.5);
   }
 
   pickPartAt(x: number, y: number): string | undefined {
