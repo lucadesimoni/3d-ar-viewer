@@ -13,6 +13,38 @@ join the *same spatial session* rather than watching a shaky screen-share.
 > workpiece independently. That survives a factory-floor cellular link where
 > video collapses.
 
+### Compared with TeamViewer Assist AR, honestly
+
+TeamViewer Assist AR is a native app built on **ARKit and ARCore**, with 3D
+annotations placed on a live video feed, OCR and session summaries, and support
+for industrial smart glasses. Two of those are structural advantages we cannot
+match from a browser, and the rest is a different product to a different problem.
+
+| | TeamViewer Assist AR | This app |
+| --- | --- | --- |
+| Tracking | ARKit / ARCore visual-inertial odometry, native | WebXR (which *is* ARCore) on Android, Quest and visionOS Safari; on iPhone/iPad Safari there is no WebXR, so: gravity + object recognition + tap-to-place |
+| What it knows about the object | Nothing — a human expert draws on the video | The CAD assembly: parts, mates, tolerances, build sequence, keep-outs |
+| What the overlay does | Shows where the expert pointed | Verifies fit as parts go in: position, tilt, roll, seating, sequence, interference, handed swaps |
+| Anchoring | Feature map from ARKit/ARCore | Detected plane; **or the object itself**, recognised markerlessly with metric scale |
+| Needs a remote expert | Yes, that is the product | No — it works solo; co-presence is an option on top |
+| Install | App Store / Play, MDM rollout | A URL |
+| Glasses | RealWear, Vuzix, Epson | Android-based glasses run the same URL; untested by us |
+
+**The honest gap:** on iPhone and iPad there is no way to reach ARKit from
+Safari, so we do not have 6-DoF world tracking there — walking around with the
+device translates the overlay only as far as re-recognition corrects it, whereas
+ARKit holds the anchor continuously. Closing that properly means either
+per-frame visual tracking of the recognised object (feasible, and the next
+obvious step), or shipping a thin native wrapper around a WKWebView with an
+ARKit plugin. On Android and Quest, WebXR gives us the same ARCore tracking they
+use.
+
+**Where the trade goes the other way:** an ARKit anchor knows where a surface is
+but not what is standing on it. Because the model, the mates and the tolerances
+are in the app, this can tell an operator that the left bearing cap is fitted on
+the right, or that step 7 was skipped — which is not something a drawing on a
+video feed can do, no matter how good the tracking underneath it is.
+
 ## What it does
 
 - **Guided assembly** — an ordered, dependency-aware step list with live status,
