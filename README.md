@@ -22,7 +22,7 @@ match from a browser, and the rest is a different product to a different problem
 
 | | TeamViewer Assist AR | This app |
 | --- | --- | --- |
-| Tracking | ARKit / ARCore visual-inertial odometry, native | WebXR (which *is* ARCore) on Android, Quest and visionOS Safari; on iPhone/iPad Safari there is no WebXR, so: gravity + object recognition + tap-to-place |
+| Tracking | ARKit / ARCore visual-inertial odometry, native | WebXR (which *is* ARCore) on Android, Quest and visionOS Safari; on iPhone/iPad Safari there is no WebXR, so: gravity, tap-to-place, and frame-by-frame visual tracking of the recognised object |
 | What it knows about the object | Nothing — a human expert draws on the video | The CAD assembly: parts, mates, tolerances, build sequence, keep-outs |
 | What the overlay does | Shows where the expert pointed | Verifies fit as parts go in: position, tilt, roll, seating, sequence, interference, handed swaps |
 | Anchoring | Feature map from ARKit/ARCore | Detected plane; **or the object itself**, recognised markerlessly with metric scale |
@@ -31,13 +31,13 @@ match from a browser, and the rest is a different product to a different problem
 | Glasses | RealWear, Vuzix, Epson | Android-based glasses run the same URL; untested by us |
 
 **The honest gap:** on iPhone and iPad there is no way to reach ARKit from
-Safari, so we do not have 6-DoF world tracking there — walking around with the
-device translates the overlay only as far as re-recognition corrects it, whereas
-ARKit holds the anchor continuously. Closing that properly means either
-per-frame visual tracking of the recognised object (feasible, and the next
-obvious step), or shipping a thin native wrapper around a WKWebView with an
-ARKit plugin. On Android and Quest, WebXR gives us the same ARCore tracking they
-use.
+Safari. What we have instead is object tracking, not world tracking: while the
+recognised object is in shot the overlay follows it frame by frame (see above),
+which covers the case that matters for guided assembly. Look away from it and
+there is nothing holding the anchor — ARKit would keep it from the room's
+feature map. Closing *that* means a thin native wrapper around a WKWebView with
+an ARKit plugin. On Android and Quest, WebXR gives us the same ARCore tracking
+they use.
 
 **Where the trade goes the other way:** an ARKit anchor knows where a surface is
 but not what is standing on it. Because the model, the mates and the tolerances
@@ -283,6 +283,33 @@ The app tries these in order, and tells the operator which one it is using:
 Everything hangs off one anchor node, so whichever source wins, **the whole
 assembly moves with it** and the parts stay aligned to each other and snapped to
 their mates.
+
+### Following it once it is recognised
+
+Detection on its own updates the anchor once or twice a second, which is fine
+for a shelf that stays put and useless for an operator who moves: the overlay
+freezes between answers. So a lock is handed to `vision/latticeTracker`, which
+follows the lattice intersections from frame to frame by normalised
+cross-correlation — coarse pass at half resolution to cover fast motion, fine
+pass to land sub-pixel — and refits the homography every frame.
+
+Three details are what make it hold rather than slide:
+
+- after each frame the points are snapped back onto the fitted homography, so
+  per-point error cannot accumulate — the object's own rigid geometry is the
+  correction, and points briefly lost behind a hand come back on their own;
+- points that moved unlike the rest are dropped before the fit, and a fit whose
+  surviving points do not span three rows and three columns is refused outright,
+  because points confined to two lines leave the perspective unconstrained and
+  will happily produce a confident wrong pose on a repeating pattern;
+- beyond its motion budget it lets go and re-detects instead of matching
+  something that merely looks similar.
+
+Cost is about 3 ms per frame at 480x360, against 2.4 ms for a full detection —
+so speed is not really the point. The point is continuity, and that tracked
+points feed a *full* homography: the detector needs the facade roughly
+square-on, whereas once the lock exists it survives the operator walking round
+to an oblique view.
 
 ### Recognising an object without a marker
 

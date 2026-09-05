@@ -1,21 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { detectCapabilities, type Capabilities } from '../engine/tracking/capabilities';
 import { CameraTracker } from '../engine/tracking/cameraTracker';
-import {
-  MarkerTracker,
-  estimateIntrinsics,
-  rectPoseFromCorners,
-} from '../engine/tracking/markerTracking';
+import { MarkerTracker } from '../engine/tracking/markerTracking';
 import { RecognitionPipeline, type PipelineStatus } from '../vision/pipeline';
 import { envModelConfig } from '../vision/defaultModels';
 import { classifyRecognition, type LabelInfo } from '../vision/verdict';
-import { detectGridFacade, matchesGridTarget } from '../vision/gridRecognition';
+import { ObjectAnchorTracker } from '../vision/objectAnchor';
 import { detectPerfProfile } from '../render/perf';
 import { getActiveManager } from '../render/babylon/managerRegistry';
 import { toImageData } from '../vision/opencv';
 import { alignToMarker } from '../engine/alignment';
 import { useStore } from '../state/store';
-import type { GridTargetDef, Pose } from '../engine/types';
+import type { GridTargetDef } from '../engine/types';
+import type { SceneManager } from '../render/babylon/SceneManager';
 
 /**
  * Orchestrates the whole AR runtime for the current device.
@@ -25,11 +22,13 @@ import type { GridTargetDef, Pose } from '../engine/types';
  *  1. **WebXR hit-test** — a real plane reported by the device. The reticle sits
  *     on the actual floor and the anchor is world-locked, so the operator can
  *     walk around the assembly. Android, Quest, Vision Pro.
- *  2. **Object recognition** — the assembly's own facade, found in the camera
- *     frame by `vision/gridRecognition`, which yields a full metric pose with no
- *     marker and no setup. This is what "recognise the object and keep the rest
- *     aligned to it" means in practice: every part hangs off `assemblyRoot`, so
- *     one recognised pose carries the whole build with it.
+ *  2. **Object recognition, then tracking** — the assembly's own facade, found
+ *     in the camera frame by `vision/gridRecognition` and thereafter *followed*
+ *     frame by frame by `vision/objectAnchor`. Detection alone updates once or
+ *     twice a second, which leaves the overlay standing still while the operator
+ *     moves; tracking closes that gap and is the nearest thing to ARKit's world
+ *     tracking that Safari allows. Every part hangs off `assemblyRoot`, so one
+ *     pose carries the whole build with it.
  *  3. **Fiducial marker** — a printed QR of known size, when the assembly ships
  *     with one. Most precise, but it has to be there.
  *  4. **Aim-and-tap on the estimated floor** — iOS Safari has no WebXR, but
@@ -42,8 +41,8 @@ import type { GridTargetDef, Pose } from '../engine/types';
 
 /** Fall back to a floating preview if nothing has been placed by then, ms. */
 const PREVIEW_FALLBACK_MS = 6000;
-/** Two detections must agree within this to be trusted, metres. */
-const GRID_AGREEMENT_M = 0.2;
+/** Width the camera frame is sampled at for recognition and tracking. */
+const FRAME_WIDTH = 480;
 
 export function useArController(videoRef: React.RefObject<HTMLVideoElement | null>) {
   const [capabilities, setCapabilities] = useState<Capabilities>();
@@ -56,7 +55,8 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
   const previewTimer = useRef<number | undefined>(undefined);
   const stopPlacement = useRef<(() => void) | undefined>(undefined);
   const xrSession = useRef<{ end: () => Promise<void> } | undefined>(undefined);
-  const lastGrid = useRef<Pose | undefined>(undefined);
+  const rafRef = useRef<number | undefined>(undefined);
+  const objectAnchor = useRef<ObjectAnchorTracker | undefined>(undefined);
   const videoGeometryCleanup = useRef<(() => void) | undefined>(undefined);
 
   const setAnchor = useStore((s) => s.setAnchor);
@@ -89,6 +89,9 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
 
   const stop = useCallback(() => {
     if (frameTimer.current) window.clearInterval(frameTimer.current);
+    if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
+    rafRef.current = undefined;
+    objectAnchor.current = undefined;
     if (previewTimer.current) window.clearTimeout(previewTimer.current);
     stopPlacement.current?.();
     stopPlacement.current = undefined;
@@ -100,7 +103,6 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     trackerRef.current?.stop();
     getActiveManager()?.setArMode(false);
     trackerRef.current = undefined;
-    lastGrid.current = undefined;
     useStore.getState().setRecognition(undefined);
     useStore.getState().setArPlacement('idle');
     setArActive(false);
@@ -198,33 +200,62 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       marker.start(video);
     }
 
-    // Frame loop: object recognition first (it anchors the overlay), then the
-    // CV/ML pipeline for wrong-part detection.
-    frameTimer.current = window.setInterval(async () => {
+    // Frame loop. Two jobs at two very different rates, driven off one capture:
+    // the object anchor runs as fast as the device can take it, because that is
+    // what makes the overlay follow the operator, while the CV/ML pipeline stays
+    // on its slow interval because it is comparatively enormous.
+    const perf = detectPerfProfile();
+    const trackIntervalMs = Math.max(30, Math.round(2000 / perf.targetFps));
+    objectAnchor.current = assembly.recognition
+      ? new ObjectAnchorTracker(assembly.recognition, { detectIntervalMs: perf.recognitionIntervalMs })
+      : undefined;
+
+    let lastTrack = 0;
+    let lastPipeline = 0;
+    let pipelineBusy = false;
+
+    const loop = (now: number): void => {
+      rafRef.current = requestAnimationFrame(loop);
       if (video.readyState < 2) return;
-      const image = toImageData(video, 480, Math.round((480 * video.videoHeight) / (video.videoWidth || 640)));
+      const anchorDue = objectAnchor.current !== undefined && now - lastTrack >= trackIntervalMs;
+      const pipeline = pipelineRef.current;
+      const pipelineDue = pipeline !== undefined && !pipelineBusy
+        && now - lastPipeline >= perf.recognitionIntervalMs;
+      if (!anchorDue && !pipelineDue) return;
+
+      const height = Math.round((FRAME_WIDTH * video.videoHeight) / (video.videoWidth || 640));
+      const image = toImageData(video, FRAME_WIDTH, height);
       if (!image) return;
 
-      // 2. Recognise the assembly itself and align everything to it.
-      if (assembly.recognition && useStore.getState().arSettings.autoRecognize) {
-        const anchored = tryGridAnchor(image, assembly.recognition, lastGrid);
-        if (anchored) {
-          stopPlacement.current?.();
-          stopPlacement.current = undefined;
-          if (previewTimer.current) window.clearTimeout(previewTimer.current);
+      if (anchorDue) {
+        lastTrack = now;
+        if (useStore.getState().arSettings.autoRecognize) {
+          const anchored = applyObjectAnchor(objectAnchor.current!, image, now, manager, assembly.recognition!);
+          if (anchored) {
+            stopPlacement.current?.();
+            stopPlacement.current = undefined;
+            if (previewTimer.current) window.clearTimeout(previewTimer.current);
+          }
+        } else {
+          objectAnchor.current!.reset();
         }
       }
 
-      const pipeline = pipelineRef.current;
-      if (!pipeline) return;
-      const result = await pipeline.process(image);
-      if (!result) return;
-      // Colour-coded discrepancy: compare confirmed tracks against the parts
-      // the active step expects, and publish the verdict for the overlay.
-      const st = useStore.getState();
-      const info = labelInfoFor(st);
-      useStore.getState().setRecognition(classifyRecognition(result.tracks, info, result.ts));
-    }, detectPerfProfile().recognitionIntervalMs);
+      if (pipelineDue) {
+        lastPipeline = now;
+        pipelineBusy = true;
+        void pipeline!.process(image)
+          .then((result) => {
+            if (!result) return;
+            // Colour-coded discrepancy: compare confirmed tracks against the
+            // parts the active step expects, and publish it for the overlay.
+            const st = useStore.getState();
+            st.setRecognition(classifyRecognition(result.tracks, labelInfoFor(st), result.ts));
+          })
+          .finally(() => { pipelineBusy = false; });
+      }
+    };
+    rafRef.current = requestAnimationFrame(loop);
   }, [arActive, capabilities, assembly, setAnchor, stop, videoRef]);
 
   /**
@@ -237,7 +268,9 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     const manager = getActiveManager();
     if (!manager || !arActive) return;
     stopPlacement.current?.();
-    lastGrid.current = undefined;
+    // Forget the object lock too: "Move" means the operator wants to say where
+    // this goes, and a tracked recognition would otherwise pull it straight back.
+    objectAnchor.current?.reset();
     useStore.getState().setAnchor(undefined, 0, 'awaiting');
     stopPlacement.current = manager.startGroundPlacement(
       useStore.getState().arSettings.eyeHeightM,
@@ -254,50 +287,32 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
 }
 
 /**
- * Try to anchor the assembly to its own recognised facade.
+ * Push one object observation into the world.
  *
- * A single frame is not enough: one confident-looking lattice in a bookshelf or
- * a window frame would yank the overlay across the room. Two consecutive
- * detections have to agree to within 200 mm before the anchor moves, which is
- * cheap and rejects essentially every one-frame false positive.
+ * The observation is in the camera's frame, so it only means something once it
+ * has been taken through the live camera into world space; from there the
+ * target's declared pose on the assembly gives the anchor, and every part
+ * follows because they all hang off it.
  *
- * Returns true when the anchor was updated.
+ * A printed marker is the more precise reference, so a good marker lock is
+ * never overruled by a recognition.
  */
-function tryGridAnchor(
+function applyObjectAnchor(
+  tracker: ObjectAnchorTracker,
   image: ImageData,
+  nowMs: number,
+  manager: SceneManager | undefined,
   target: GridTargetDef,
-  lastGrid: { current: Pose | undefined },
 ): boolean {
-  const obs = detectGridFacade(image);
-  if (!obs || !matchesGridTarget(obs, target)) {
-    lastGrid.current = undefined;
-    return false;
-  }
-  const manager = getActiveManager();
   if (!manager) return false;
-  // Same field of view the overlay is rendered with, so a recognised pose and
-  // the rendering cannot disagree.
-  const K = estimateIntrinsics(image.width, image.height, manager.effectiveFovDeg());
-  const solved = rectPoseFromCorners(obs.quad, target.widthM, target.heightM, K);
-  if (!solved || solved.reprojectionPx > 6) return false;
-  const world = manager.cameraToWorld(solved.pose);
+  const obs = tracker.update(image, nowMs, manager.effectiveFovDeg());
+  if (!obs) return false;
+
+  const world = manager.cameraToWorld(obs.pose);
   const anchor = alignToMarker(world, target.poseInAssembly);
-
-  const previous = lastGrid.current;
-  lastGrid.current = anchor;
-  if (!previous) return false;
-  const drift = Math.hypot(
-    anchor.position[0] - previous.position[0],
-    anchor.position[1] - previous.position[1],
-    anchor.position[2] - previous.position[2],
-  );
-  if (drift > GRID_AGREEMENT_M) return false;
-
   const state = useStore.getState();
-  const quality = Math.max(0, Math.min(1, obs.confidence * (1 - solved.reprojectionPx / 8)));
-  // A printed marker is the more precise reference; never overrule a good one.
-  if (state.arPlacement === 'marker' && state.anchorQuality >= quality) return false;
-  state.setAnchor(anchor, quality, 'recognized');
+  if (state.arPlacement === 'marker' && state.anchorQuality >= obs.confidence) return false;
+  state.setAnchor(anchor, obs.confidence, 'recognized');
   return true;
 }
 

@@ -37,7 +37,7 @@ const check = (name, ok, detail) => {
 };
 
 /** Draw a cube shelf into a canvas and serve it as the camera stream. */
-const SHELF_STREAM = ({ cols, rows, span }) => {
+const SHELF_STREAM = ({ cols, rows, span, sway = 0 }) => {
   const c = document.createElement('canvas');
   c.width = 640; c.height = 480;
   const g = c.getContext('2d');
@@ -45,13 +45,17 @@ const SHELF_STREAM = ({ cols, rows, span }) => {
   const spanY = (span / cols) * rows;
   const left = (640 - span) / 2, top = (480 - spanY) / 2;
   const draw = () => {
+    // `sway` pans the shelf across the frame, standing in for an operator
+    // walking sideways — the motion the tracker has to follow between
+    // detections.
+    const x = left + (sway ? Math.sin(performance.now() / 900) * sway : 0);
     g.fillStyle = '#808080'; g.fillRect(0, 0, 640, 480);
-    g.fillStyle = '#ebebeb'; g.fillRect(left, top, span, spanY);
+    g.fillStyle = '#ebebeb'; g.fillRect(x, top, span, spanY);
     const pitchX = (span - boardPx) / cols, pitchY = (spanY - boardPx) / rows;
     g.fillStyle = '#2a2a2a';
     for (let r = 0; r < rows; r++) {
       for (let cc = 0; cc < cols; cc++) {
-        g.fillRect(left + boardPx + cc * pitchX, top + boardPx + r * pitchY,
+        g.fillRect(x + boardPx + cc * pitchX, top + boardPx + r * pitchY,
           pitchX - boardPx, pitchY - boardPx);
       }
     }
@@ -179,7 +183,52 @@ const context = await browser.newContext({
   await page.close();
 }
 
-// --- 4. Tablet in landscape: the case the desktop layout used to ruin. ------
+// --- 4. Following a moving object between detections. ---------------------
+{
+  const page = await context.newPage();
+  await page.addInitScript(SHELF_STREAM, { cols: 4, rows: 4, span: 340, sway: 55 });
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  await page.click('.ar-enter');
+
+  let locked = false;
+  for (let i = 0; i < 20 && !locked; i++) {
+    await page.waitForTimeout(400);
+    locked = (await state(page)).placement === 'recognized';
+  }
+  check('locks onto a moving shelf', locked);
+
+  // Record every anchor change for two seconds while the shelf pans.
+  const log = await page.evaluate(async () => {
+    const seen = [];
+    let previous = null;
+    const stop = window.spatialStore.subscribe((s) => {
+      if (!s.anchor) return;
+      const p = s.anchor.position;
+      if (previous && Math.hypot(p[0] - previous[0], p[1] - previous[1], p[2] - previous[2]) < 0.001) return;
+      previous = p;
+      seen.push([performance.now(), p[0]]);
+    });
+    await new Promise((r) => setTimeout(r, 2000));
+    stop();
+    return seen;
+  });
+
+  // Detection alone runs at the perf profile's interval (0.4-1 s), so anything
+  // above ~5 updates in two seconds can only come from frame-by-frame tracking.
+  check('the anchor follows the object between detections', log.length >= 12,
+    `${log.length} anchor updates in 2 s`);
+  const xs = log.map((e) => e[1]);
+  const swing = Math.max(...xs) - Math.min(...xs);
+  check('and it actually moves with it', swing > 0.15, `${swing.toFixed(2)} m of travel tracked`);
+  // Consecutive updates must be small: a tracker that keeps re-detecting from
+  // scratch jumps, a tracker that follows glides.
+  const jumps = xs.slice(1).map((v, i) => Math.abs(v - xs[i]));
+  const worst = Math.max(...jumps);
+  check('the overlay glides rather than jumping', worst < 0.2, `largest step ${worst.toFixed(3)} m`);
+  await page.close();
+}
+
+// --- 5. Tablet in landscape: the case the desktop layout used to ruin. ------
 {
   const tablet = await browser.newContext({
     viewport: { width: 1180, height: 820 }, deviceScaleFactor: 2,

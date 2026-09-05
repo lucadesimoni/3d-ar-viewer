@@ -1,3 +1,5 @@
+import { toGray } from './imageOps';
+
 /**
  * Markerless recognition of a regular grid facade — a cube shelf, a drawer
  * bank, a patch panel, a rack of identical bays.
@@ -69,29 +71,6 @@ interface Lattice {
   positions: number[];
   spacing: number;
   coverage: number;
-}
-
-/** Luma of an RGBA frame, box-downsampled so the cost is bounded. */
-function grayscale(image: ImageData, workingSize: number): { g: Float32Array; w: number; h: number; scale: number } {
-  const step = Math.max(1, Math.ceil(Math.max(image.width, image.height) / workingSize));
-  const w = Math.floor(image.width / step);
-  const h = Math.floor(image.height / step);
-  const g = new Float32Array(w * h);
-  const d = image.data;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let sum = 0;
-      for (let sy = 0; sy < step; sy++) {
-        const row = (y * step + sy) * image.width;
-        for (let sx = 0; sx < step; sx++) {
-          const i = (row + x * step + sx) * 4;
-          sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        }
-      }
-      g[y * w + x] = sum / (step * step);
-    }
-  }
-  return { g, w, h, scale: step };
 }
 
 /** Column-wise vertical-edge energy and row-wise horizontal-edge energy. */
@@ -229,7 +208,8 @@ export function detectGridFacade(image: ImageData, opts: GridDetectOptions = {})
   const maxCells = opts.maxCells ?? 8;
   if (image.width < 16 || image.height < 16) return undefined;
 
-  const { g, w, h, scale } = grayscale(image, workingSize);
+  const gray = toGray(image, workingSize);
+  const { data: g, width: w, height: h, scale } = gray;
   const { cols, rows } = edgeProfiles(g, w, h);
 
   const xPeaks = findPeaks(cols, opts.peakSigma ?? 0.8);

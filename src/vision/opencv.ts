@@ -118,17 +118,30 @@ function getCv(): CvModule | undefined {
   return cv && !(cv instanceof Promise) && 'Mat' in cv ? cv : undefined;
 }
 
+let scratch: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | undefined;
+
 /** Draw any frame source into a canvas and return its ImageData. */
 export function toImageData(
   source: CanvasImageSource,
   width: number,
   height: number,
 ): ImageData | undefined {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return undefined;
+  if (width < 1 || height < 1) return undefined;
+  // One canvas for the life of the page. This is called every frame by the
+  // object tracker, and allocating a canvas plus a fresh GPU texture thirty
+  // times a second is a real cost on a tablet — it showed up as heat before it
+  // showed up as frame rate.
+  if (!scratch) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return undefined;
+    scratch = { canvas, ctx };
+  }
+  const { canvas, ctx } = scratch;
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
   ctx.drawImage(source, 0, 0, width, height);
   return ctx.getImageData(0, 0, width, height);
 }

@@ -82,20 +82,31 @@ function solveLinear(A: number[][], b: number[]): number[] | undefined {
  * Returned row-major as a 3x3 with `h22` fixed at 1.
  */
 export function solveHomography(src: Point2[], dst: Point2[]): number[][] | undefined {
-  if (src.length !== 4 || dst.length !== 4) return undefined;
-  const A: number[][] = [];
-  const b: number[] = [];
+  const n = Math.min(src.length, dst.length);
+  if (n < 4) return undefined;
 
-  for (let i = 0; i < 4; i++) {
+  // Four correspondences determine the homography exactly; more over-determine
+  // it, and the extra rows are folded in through the normal equations so a
+  // tracker with nine points still solves one 8x8 system per frame. Least
+  // squares also means one badly matched point bends the fit instead of
+  // breaking it — the caller can then spot it by reprojection error.
+  const AtA: number[][] = Array.from({ length: 8 }, () => new Array<number>(8).fill(0));
+  const Atb: number[] = new Array<number>(8).fill(0);
+  const accumulate = (row: number[], rhs: number): void => {
+    for (let i = 0; i < 8; i++) {
+      Atb[i] += row[i] * rhs;
+      for (let j = 0; j < 8; j++) AtA[i][j] += row[i] * row[j];
+    }
+  };
+
+  for (let i = 0; i < n; i++) {
     const { x, y } = src[i];
     const { x: u, y: v } = dst[i];
-    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]);
-    b.push(u);
-    A.push([0, 0, 0, x, y, 1, -v * x, -v * y]);
-    b.push(v);
+    accumulate([x, y, 1, 0, 0, 0, -u * x, -u * y], u);
+    accumulate([0, 0, 0, x, y, 1, -v * x, -v * y], v);
   }
 
-  const h = solveLinear(A, b);
+  const h = solveLinear(AtA, Atb);
   if (!h) return undefined;
   return [
     [h[0], h[1], h[2]],
@@ -235,6 +246,46 @@ export const markerModelCorners = (sizeM: number): Point2[] => rectModelCorners(
  * `cvPoseToRenderer`), so callers hand it straight to the scene without any
  * further axis juggling.
  */
+export interface PlanePose {
+  pose: Pose;
+  /** Mean reprojection error in pixels — the honest quality number. */
+  reprojectionPx: number;
+  /** Mean apparent edge length in pixels; small targets give noisy poses. */
+  apparentPx: number;
+}
+
+/**
+ * Pose of a known planar pattern from any number of point correspondences.
+ *
+ * This is the general form the tracker uses: it follows a whole lattice of
+ * points across the frame rather than four corners, so losing one to a hand in
+ * the way costs accuracy instead of costing the lock.
+ */
+export function planePoseFromPoints(
+  model: Point2[],
+  image: Point2[],
+  K: Intrinsics,
+): PlanePose | undefined {
+  if (model.length < 4 || image.length !== model.length) return undefined;
+  const H = solveHomography(model, image);
+  if (!H) return undefined;
+  const cvPose = poseFromHomography(H, K);
+  if (!cvPose) return undefined;
+
+  // Apparent size: the mean spacing of the projected points, which scales the
+  // same way an edge length does and works for any point layout.
+  let spread = 0;
+  for (let i = 1; i < image.length; i++) {
+    spread += Math.hypot(image[i].x - image[i - 1].x, image[i].y - image[i - 1].y);
+  }
+
+  return {
+    pose: cvPoseToRenderer(cvPose),
+    reprojectionPx: reprojectionError(H, model, image),
+    apparentPx: image.length > 1 ? spread / (image.length - 1) : 0,
+  };
+}
+
 export function rectPoseFromCorners(
   corners: Point2[],
   widthM: number,
