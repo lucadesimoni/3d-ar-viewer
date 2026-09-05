@@ -35,6 +35,7 @@ import {
 import { detectPerfProfile, type PerfProfile } from '../perf';
 import { createBestEngine, type RenderBackendKind } from './engineFactory';
 import { STATUS_COLORS, type RecognitionStatus } from '../../vision/verdict';
+import { ASSUMED_CAMERA_FOV_DEG } from '../../engine/tracking/markerTracking';
 import {
   DIAGNOSTIC_COLORS,
   applyPose,
@@ -148,7 +149,7 @@ export class SceneManager {
     this.arCamera = new UniversalCamera('arcam', Vector3.Zero(), this.scene);
     this.arCamera.rotationQuaternion = Quaternion.Identity();
     this.arCamera.minZ = 0.01;
-    this.arCamera.fov = (this.arFovDeg * Math.PI) / 180;
+    this.arCamera.fov = (this.visibleFovDeg * Math.PI) / 180;
 
     const hemi = new HemisphericLight('hemi', new Vector3(0, 1, 0), this.scene);
     hemi.intensity = 0.75;
@@ -194,8 +195,21 @@ export class SceneManager {
     return new SceneManager(canvas, assembly, opts, { engine, kind, perf });
   }
 
-  /** Vertical FOV assumed for the passthrough camera, degrees. */
-  private readonly arFovDeg = 60;
+  /**
+   * Vertical field of view assumed for the *physical* camera, degrees.
+   *
+   * Browsers do not expose the real calibration, so this is the one number the
+   * whole passthrough path is calibrated on. The store owns it (settable from
+   * the AR settings sheet or `?camfov=52`) and pushes it in on AR entry; this
+   * is only the fallback until then.
+   */
+  private cameraFovDeg = ASSUMED_CAMERA_FOV_DEG;
+  /** Natural size of the passthrough video, once it is known. */
+  private passthrough: { width: number; height: number } | undefined;
+  /** Assumed height of the device above the floor during placement, metres. */
+  private placementEyeHeight = 1.45;
+  /** Vertical FOV actually visible on screen, degrees — see `applyPassthroughFov`. */
+  private visibleFovDeg = ASSUMED_CAMERA_FOV_DEG;
   /** Hardware scaling the device should render at when it can keep up. */
   private baseScalingLevel = 1;
   private reticle: Mesh | undefined;
@@ -255,7 +269,7 @@ export class SceneManager {
     // gearbox and a 2.2 m rack both fill a similar share of the view. A fixed
     // distance made the small sample a speck at the bottom edge.
     const radius = this.assemblyRadius();
-    const halfFov = ((this.arFovDeg * Math.PI) / 180) / 2;
+    const halfFov = ((this.visibleFovDeg * Math.PI) / 180) / 2;
     const distance = Math.min(5, Math.max(0.5, (radius / Math.tan(halfFov)) * 1.7));
     const drop = Math.min(1.0, Math.max(0.1, radius * 0.5));
 
@@ -330,6 +344,67 @@ export class SceneManager {
   }
 
   /**
+   * Tell the scene how big the camera image is, so the overlay can be drawn
+   * with the same field of view the operator is actually looking at.
+   *
+   * This is the difference between a virtual shelf that sits on the real one
+   * and one that is a few percent too small. The video is painted with
+   * `object-fit: cover`, so on a tablet in landscape a 4:3 camera frame is
+   * cropped top and bottom — the visible vertical FOV is then *narrower* than
+   * the camera's own, and rendering at the camera's FOV shrinks the overlay by
+   * exactly that ratio. Recompute on every resize, because rotating an iPad
+   * changes which axis gets cropped.
+   */
+  setPassthroughSource(width: number, height: number, fovDeg?: number): void {
+    if (width < 1 || height < 1) return;
+    this.passthrough = { width, height };
+    if (fovDeg && fovDeg > 1 && fovDeg < 179) this.cameraFovDeg = fovDeg;
+    this.applyPassthroughFov();
+  }
+
+  /** Vertical FOV currently on screen, degrees — use this for intrinsics too. */
+  effectiveFovDeg(): number {
+    return this.visibleFovDeg;
+  }
+
+  /** Recalibrate the assumed camera FOV live, from the AR settings sheet. */
+  setCameraFov(fovDeg: number): void {
+    if (!(fovDeg > 1 && fovDeg < 179)) return;
+    this.cameraFovDeg = fovDeg;
+    this.applyPassthroughFov();
+  }
+
+  /**
+   * Move the assumed floor plane while the operator is still aiming at it.
+   *
+   * Applied to the live placement session rather than only to the next one, so
+   * dragging the slider moves the reticle under the finger — you can see the
+   * ring settle onto the real floor instead of guessing a number.
+   */
+  setEyeHeight(metres: number): void {
+    this.placementEyeHeight = metres;
+  }
+
+  private applyPassthroughFov(): void {
+    const src = this.passthrough;
+    let visible = this.cameraFovDeg;
+    if (src) {
+      const rect = this.canvas.getBoundingClientRect();
+      const cw = rect.width || this.canvas.clientWidth;
+      const ch = rect.height || this.canvas.clientHeight;
+      if (cw > 0 && ch > 0) {
+        // `cover`: scale so the video covers the box, then crop the overflow.
+        const scale = Math.max(cw / src.width, ch / src.height);
+        const shownFraction = Math.min(1, ch / (src.height * scale));
+        const halfTan = Math.tan((this.cameraFovDeg * Math.PI) / 360) * shownFraction;
+        visible = (2 * Math.atan(halfTan) * 180) / Math.PI;
+      }
+    }
+    this.visibleFovDeg = visible;
+    if (this.arCamera) this.arCamera.fov = (visible * Math.PI) / 180;
+  }
+
+  /**
    * Screen centre in CSS pixels, for aiming the reticle.
    *
    * Babylon's picking takes CSS pixels and divides by the hardware scaling
@@ -382,8 +457,9 @@ export class SceneManager {
    * app used to guess. Returns a stop function.
    */
   startGroundPlacement(eyeHeightM: number, onPlace: (pose: Pose) => void): () => void {
-    const camY = (this.scene.activeCamera ?? this.camera).position.y;
-    const groundY = camY - eyeHeightM;
+    this.placementEyeHeight = eyeHeightM;
+    const groundY = (): number =>
+      (this.scene.activeCamera ?? this.camera).position.y - this.placementEyeHeight;
     // Aim down the screen until the ray meets the floor. With the phone held
     // level the centre of the screen is the horizon and picks nothing, which
     // left the operator staring at an empty view with no ring to aim; walking
@@ -391,7 +467,7 @@ export class SceneManager {
     const aim = (): Pose | undefined => {
       const { x, y } = this.screenCentre();
       for (const f of [1, 1.3, 1.6, 1.8]) {
-        const hit = this.pickGround(x, y * f, groundY);
+        const hit = this.pickGround(x, y * f, groundY());
         if (hit) return hit;
       }
       return undefined;
@@ -405,37 +481,12 @@ export class SceneManager {
     this.scene.onPointerDown = () => {
       // Place where they tapped, falling back to the reticle if the tap missed
       // the floor plane (above the horizon).
-      const hit = this.pickGround(this.scene.pointerX, this.scene.pointerY, groundY) ?? aim();
+      const hit = this.pickGround(this.scene.pointerX, this.scene.pointerY, groundY()) ?? aim();
       if (!hit) return;
       onPlace(this.placementPose(hit));
       stop();
     };
     return stop;
-  }
-
-  /**
-   * Take a pose measured in the camera's own frame — as the vision pipeline
-   * reports it — into world space.
-   *
-   * Two conventions have to be reconciled: computer vision is right-handed with
-   * -Z pointing out of the lens, Babylon is left-handed with +Z forward. Getting
-   * this wrong puts a recognised object behind the operator, which is exactly
-   * the class of bug that makes an overlay "not work" while every unit test
-   * passes.
-   */
-  cameraToWorld(poseInCamera: Pose): Pose {
-    const cam = this.scene.activeCamera;
-    if (!cam) return poseInCamera;
-    const [px, py, pz] = poseInCamera.position;
-    const [qx, qy, qz, qw] = poseInCamera.rotation;
-    const local = new Vector3(px, py, -pz);
-    const localRot = new Quaternion(-qx, -qy, qz, qw);
-
-    const world = cam.getWorldMatrix();
-    const p = Vector3.TransformCoordinates(local, world);
-    const camRot = Quaternion.FromRotationMatrix(world.getRotationMatrix());
-    const q = camRot.multiply(localRot);
-    return { position: [p.x, p.y, p.z], rotation: [q.x, q.y, q.z, q.w] };
   }
 
   /**
@@ -473,6 +524,29 @@ export class SceneManager {
     }
   }
 
+  /**
+   * Take a pose measured in the camera's own frame — as the vision pipeline
+   * reports it — into world space.
+   *
+   * The axis conventions are already reconciled upstream (`cvPoseToRenderer`
+   * in the tracking module), so this is a plain change of basis through the
+   * live camera. Keeping the handedness fix next to the maths that creates the
+   * problem, rather than here, means there is exactly one place where a sign
+   * can be wrong.
+   */
+  cameraToWorld(poseInCamera: Pose): Pose {
+    const cam = this.scene.activeCamera;
+    if (!cam) return poseInCamera;
+    const [px, py, pz] = poseInCamera.position;
+    const [qx, qy, qz, qw] = poseInCamera.rotation;
+
+    const world = cam.getWorldMatrix();
+    const p = Vector3.TransformCoordinates(new Vector3(px, py, pz), world);
+    const camRot = Quaternion.FromRotationMatrix(world.getRotationMatrix());
+    const q = camRot.multiply(new Quaternion(qx, qy, qz, qw));
+    return { position: [p.x, p.y, p.z], rotation: [q.x, q.y, q.z, q.w] };
+  }
+
   /** Clear to transparent (AR passthrough) or to the opaque studio background. */
   setTransparent(on: boolean): void {
     this.scene.clearColor = on ? new Color4(0, 0, 0, 0) : new Color4(0.05, 0.07, 0.1, 1);
@@ -486,6 +560,8 @@ export class SceneManager {
     const rect = this.canvas.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) return;   // hidden; resizing to 0 kills the depth buffer
     this.engine.resize();
+    // Rotating the device changes which axis of the camera image is cropped.
+    this.applyPassthroughFov();
   };
 
   private buildParts(): void {

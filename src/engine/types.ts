@@ -202,8 +202,11 @@ export interface GridTargetDef {
   widthM: number;
   heightM: number;
   /**
-   * Pose of the face centre in the assembly frame, with local +Z pointing out
-   * of the face towards the viewer and +Y up the face.
+   * Pose of the face centre in the assembly frame. The face's own frame is
+   * +X across it, +Y up it, and **+Z into the object, away from whoever is
+   * looking at it** — the renderer's left-handed convention, which is also
+   * what the pose solver returns. So a face that looks along world -Z carries
+   * a 180-degree rotation about Y, not identity.
    */
   poseInAssembly: Pose;
   /** Shown to the operator while the app is looking for it. */
@@ -226,6 +229,7 @@ export interface AssemblyDef {
    * can re-register after tracking loss without asking the operator to re-place.
    */
   marker?: { id: string; sizeM: number; poseInAssembly: Pose };
+
   /**
    * A markerless recognition target: the real object itself. Furniture and
    * equipment racks present a regular grid of identical openings, which is a

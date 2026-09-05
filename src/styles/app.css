@@ -64,10 +64,77 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
 .app.ar .status-bar, .app.ar .mode-bar { position: relative; z-index: 4; }
 .app.ar .viewport-overlay { z-index: 5; }
 .app.ar .stage { padding: 0; gap: 0; grid-template-columns: 1fr; }
-.app.ar .panel { background: rgba(17, 24, 33, 0.72); }
-/* Side panels would cover the camera on a phone — hide them in AR there. */
-@media (max-width: 1024px) {
-  .app.ar .step-guide, .app.ar .diagnostics, .app.ar .sheet-tabs { display: none; }
+.app.ar .panel { background: rgba(17, 24, 33, 0.82); }
+/* In AR the camera image is the interface: no side columns at any width. A
+   1366-wide iPad in landscape used to keep the desktop grid and lose two thirds
+   of the live view to panels. The HUD below replaces them. */
+.app.ar .stage > .step-guide, .app.ar .stage > .diagnostics, .app.ar .sheet-tabs { display: none; }
+/* The canvas owns every gesture in AR: a tap places the assembly, and the
+   browser must not turn it into a scroll, a pinch-zoom or a double-tap zoom. */
+.app.ar .viewer-canvas, .app.ar .passthrough { touch-action: none; }
+.app.ar { overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
+
+/* ---------- AR HUD (phone + tablet) ---------- */
+.ar-hud {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 6;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 0 max(10px, env(safe-area-inset-left)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-right));
+  pointer-events: none;
+}
+.ar-hud > * { pointer-events: auto; }
+/* On a tablet the bar would stretch to 1366 px and put "Exit" out of reach of
+   the hand holding it; keep it thumb-width and centred. */
+.ar-now, .ar-bar, .ar-sheet { width: 100%; max-width: 760px; margin: 0 auto; }
+
+.ar-now {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(6, 12, 18, 0.72); backdrop-filter: blur(10px);
+  border: 1px solid var(--edge); border-radius: 14px; padding: 6px 6px 6px 4px;
+}
+.ar-now-text { flex: 1; min-width: 0; text-align: center; }
+.ar-now-text strong { display: block; font-size: 14px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ar-now-count { font-size: 11px; color: var(--muted); letter-spacing: 0.02em; }
+.ar-step-nav {
+  flex: 0 0 auto; width: 44px; height: 44px; border-radius: 12px;
+  font-size: 22px; line-height: 1; background: rgba(255,255,255,0.06); border-color: transparent;
+}
+.ar-step-nav:disabled { opacity: 0.3; }
+
+.ar-bar {
+  display: flex; gap: 8px;
+  background: rgba(6, 12, 18, 0.78); backdrop-filter: blur(12px);
+  border: 1px solid var(--edge); border-radius: 16px; padding: 8px;
+}
+.ar-btn {
+  flex: 1 1 0; min-width: 0; min-height: 48px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.01em;
+  background: rgba(255,255,255,0.05); border-color: transparent; border-radius: 12px;
+  position: relative;
+}
+.ar-btn-icon { font-size: 17px; line-height: 1; }
+.ar-btn.active { background: rgba(34, 211, 238, 0.2); color: var(--accent); }
+.ar-btn.alert { color: var(--error); }
+.ar-btn.danger { color: #ffb4b4; }
+.ar-count {
+  position: absolute; top: 4px; right: calc(50% - 26px);
+  min-width: 18px; padding: 0 5px; border-radius: 999px;
+  background: var(--error); color: #fff; font-size: 10px; line-height: 18px; font-weight: 700;
+}
+
+/* Panels in AR live in a sheet that never takes more than half the view. */
+.ar-sheet {
+  max-height: 46dvh; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  background: rgba(9, 14, 20, 0.9); backdrop-filter: blur(14px);
+  border: 1px solid var(--edge); border-radius: 16px;
+}
+.ar-sheet .panel { background: transparent; border: none; box-shadow: none; border-radius: 0; }
+.ar-sheet .mode-bar { background: transparent; border: none; flex-wrap: wrap; padding-bottom: 10px; }
+.ar-sheet .mode-bar input[type="range"] { min-width: 120px; }
+/* A phone in landscape has almost no height to give away. */
+@media (max-height: 480px) {
+  .ar-sheet { max-height: 60dvh; }
+  .ar-now { display: none; }
 }
 
 .stage { flex: 1; display: grid; grid-template-columns: 320px 1fr 340px; gap: 12px; padding: 12px; min-height: 0; position: relative; z-index: 1; }
@@ -379,10 +446,24 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   flex: 0 0 auto;
   animation: hint-pulse 1.4s ease-in-out infinite;
 }
-/* In AR the stage runs full-bleed under the floating header, so the pill has to
-   clear it or the first line is hidden behind the brand bar. */
-.app.ar .placement-hint { top: calc(64px + env(safe-area-inset-top, 0px)); }
+/* AR hides the header, so the pill only has to clear the notch. */
+.app.ar .placement-hint { top: calc(10px + env(safe-area-inset-top, 0px)); }
 .placement-hint .dot.ok { background: #4ade80; animation: none; }
 .placement-hint.placed { background: rgba(6, 12, 18, 0.55); }
 @keyframes hint-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) { .placement-hint .dot { animation: none; } }
+
+/* ---------- AR settings sheet ---------- */
+.ar-settings { gap: 14px; padding: 16px 14px; }
+.ar-set { display: flex; flex-direction: column; gap: 6px; }
+.ar-set-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; font-weight: 600; }
+.ar-set-label em { font-style: normal; color: var(--accent); font-variant-numeric: tabular-nums; }
+.ar-set-help { font-size: 11.5px; color: var(--muted); }
+/* Full-width sliders with a thumb big enough to hit while holding a tablet. */
+.ar-set input[type="range"] { width: 100%; min-width: 0; height: 32px; }
+.ar-toggle { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.35; }
+.ar-toggle input { width: 22px; height: 22px; flex: 0 0 auto; accent-color: var(--accent); }
+.ar-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 2px 0 0; }
+.ar-facts div { background: rgba(255,255,255,0.04); border-radius: 10px; padding: 8px 10px; }
+.ar-facts dt { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.ar-facts dd { margin: 2px 0 0; font-size: 13px; font-weight: 600; }

@@ -2,8 +2,8 @@
 
 Traceability from the original request (and its follow-up stack decisions) to
 where each requirement is implemented and how it is verified. Every row is
-backed by code that ships in this repo; the test suite is 142 passing tests, plus a browser check of the AR anchoring
-path (`npm run ar:verify`).
+backed by code that ships in this repo; the test suite is 149 passing tests, plus a 17-check browser run over the AR
+anchoring and HUD on phone and tablet viewports (`npm run ar:verify`).
 
 ## Original brief
 
@@ -17,7 +17,7 @@ path (`npm run ar:verify`).
 | 1 | **React web app** | `src/App.tsx`, `src/main.tsx`, `src/components/*` | `npm run build` |
 | 2 | **Spatial recognition** | `src/vision/pipeline.ts` (OpenCV + ONNX), `src/vision/gridRecognition.ts` (markerless object facade → metric pose), `src/engine/tracking/markerTracking.ts` (6-DoF fiducial pose) | `src/vision/vision.test.ts`, `src/vision/gridRecognition.test.ts`, `scripts/ar-verify.mjs` |
 | 3 | **AR overlay** | WebXR hit-test: `src/render/babylon/xr.ts` via `SceneManager.startWebXr`; iOS camera passthrough + aim-and-tap floor placement: `src/engine/tracking/cameraTracker.ts`, `SceneManager.startGroundPlacement`; orchestrated in `src/components/useArController.ts` | `scripts/ar-verify.mjs` (phone viewport, fake camera); WebXR itself needs a device |
-| 4 | **Mobile/tablet, mainly iPad/iPhone** | `src/engine/tracking/capabilities.ts` (iOS/iPad detection, motion-permission gate), mobile-first CSS with safe-area insets | `capabilities` detection |
+| 4 | **Mobile/tablet, mainly iPad/iPhone** | `src/engine/tracking/capabilities.ts` (iOS/iPad detection, motion-permission gate), mobile-first CSS with safe-area insets, AR HUD `src/components/ArHud.tsx` + `ArSettings.tsx` (48 px targets, sheets under half the screen), passthrough FOV matching in `SceneManager` | `scripts/ar-verify.mjs` on phone, phone-landscape and tablet-landscape viewports |
 | 5 | **Outperforms TeamViewer** | Spatial co-presence instead of screen pixels: `src/engine/collab/protocol.ts`, `session.ts`, `src/components/CollabPanel.tsx` | `src/engine/collab/protocol.test.ts` |
 | 6 | **Visualization** | Babylon renderer: `src/render/babylon/SceneManager.ts`, `meshFactory.ts` | `npm run build` |
 | 7 | **Mapping of complex assemblies** | Domain model `src/engine/types.ts`; samples `src/data/equipmentRack.ts` (108 parts), `src/data/kallax.ts` (a real 4x4 cube shelf) | `src/data/equipmentRack.test.ts`, `src/data/nominalFit.test.ts` |

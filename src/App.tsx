@@ -12,6 +12,7 @@ import { useArController } from './components/useArController';
 import { QuickLookButton } from './components/QuickLookButton';
 import { RecognitionOverlay } from './components/RecognitionOverlay';
 import { PlacementHint } from './components/PlacementHint';
+import { ArHud } from './components/ArHud';
 import { UiConfigProvider } from './ui/UiConfigContext';
 import { resolveUiConfig, type UiConfig } from './ui/config';
 import { useMediaQuery } from './ui/useMediaQuery';
@@ -29,7 +30,7 @@ type Drawer = 'register' | 'collab' | 'bom' | undefined;
 export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
   const ui = useMemo(() => resolveUiConfig(config), [config]);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const { capabilities, pipelineStatus, arActive, enterAr } = useArController(videoRef);
+  const { capabilities, pipelineStatus, arActive, enterAr, replaceAnchor } = useArController(videoRef);
   const [drawer, setDrawer] = useState<Drawer>(undefined);
   // On a phone/tablet the three-column desktop layout does not fit: the viewport
   // is the app, and the panels live in a collapsible sheet with one visible at a
@@ -57,20 +58,20 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
       <div className={rootClass} style={accentStyle}>
         <video ref={videoRef} className="passthrough" playsInline muted />
 
-        {ui.showHeader && (
+        {ui.showHeader && !arActive && (
           <StatusBar capabilities={capabilities} pipeline={pipelineStatus} onEnterAr={enterAr} arActive={arActive} />
         )}
-        {ui.showRecognition && <QuickLookButton capabilities={capabilities} />}
+        {ui.showRecognition && !arActive && <QuickLookButton capabilities={capabilities} />}
 
         <div className="stage">
-          {ui.showSteps && (!isMobile || mobileSheet === 'steps') && <StepGuide />}
+          {ui.showSteps && !arActive && (!isMobile || mobileSheet === 'steps') && <StepGuide />}
           <main className="viewport">
             <Viewer transparent={arActive} />
             {ui.showRecognition && <RecognitionOverlay />}
             {arActive && <PlacementHint capabilities={capabilities} />}
             <div className="viewport-overlay">
               {ui.showInspector && <InspectorPanel />}
-              {ui.showDrawers && (
+              {ui.showDrawers && !arActive && (
                 <>
                   <div className="drawer-tabs">
                     <button className={drawer === 'register' ? 'active' : ''} onClick={() => setDrawer(drawer === 'register' ? undefined : 'register')}>Register</button>
@@ -83,15 +84,13 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
                 </>
               )}
               {/* Minimal/viewer layouts still expose AR entry when the header is hidden. */}
-              {!ui.showHeader && (
-                <button className={`ar-enter floating ${arActive ? 'active' : ''}`} onClick={enterAr}>
-                  {arActive ? 'Exit AR' : 'Enter AR'}
-                </button>
+              {!ui.showHeader && !arActive && (
+                <button className="ar-enter floating" onClick={enterAr}>Enter AR</button>
               )}
             </div>
           </main>
-          {ui.showDiagnostics && (!isMobile || mobileSheet === 'errors') && <DiagnosticsPanel />}
-          {isMobile && (ui.showSteps || ui.showDiagnostics) && (
+          {ui.showDiagnostics && !arActive && (!isMobile || mobileSheet === 'errors') && <DiagnosticsPanel />}
+          {isMobile && !arActive && (ui.showSteps || ui.showDiagnostics) && (
             <nav className="sheet-tabs" role="tablist">
               {ui.showSteps && (
                 <button role="tab" aria-selected={mobileSheet === 'steps'}
@@ -109,7 +108,8 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
           )}
         </div>
 
-        {ui.showModeBar && <ModeBar />}
+        {ui.showModeBar && !arActive && <ModeBar />}
+        {arActive && <ArHud onExit={enterAr} onReplace={replaceAnchor} capabilities={capabilities} />}
 
         {ui.showHeader && capabilities && capabilities.notes.length > 0 && !arActive && (
           <div className="capability-notes">

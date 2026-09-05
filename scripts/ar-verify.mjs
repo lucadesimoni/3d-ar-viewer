@@ -69,12 +69,28 @@ async function open(page, url) {
 }
 const state = (page) => page.evaluate(() => {
   const s = window.spatialStore.getState();
+  const m = window.spatialScene?.();
+  const canvas = document.querySelector('canvas.viewer-canvas');
+  const rect = canvas?.getBoundingClientRect();
   return {
     placement: s.arPlacement, quality: s.anchorQuality,
     anchor: s.anchor ? s.anchor.position : null,
+    rotation: s.anchor ? s.anchor.rotation : null,
     assembly: s.assembly.id, parts: s.assembly.parts.length,
+    fovDeg: m ? (m.scene.activeCamera.fov * 180) / Math.PI : null,
+    css: rect ? [Math.round(rect.width), Math.round(rect.height)] : null,
+    buffer: canvas ? [canvas.width, canvas.height] : null,
   };
 });
+
+/** Angle between the assembly's own up axis and world up, degrees. */
+function tiltDeg(q) {
+  if (!q) return 999;
+  const [x, y, z, w] = q;
+  // Rotate (0,1,0) by q and read off its y component.
+  const uy = 1 - 2 * (x * x + z * z);
+  return (Math.acos(Math.max(-1, Math.min(1, uy))) * 180) / Math.PI;
+}
 
 const context = await browser.newContext({
   viewport: { width: 390, height: 844 },
@@ -133,9 +149,63 @@ const context = await browser.newContext({
   if (recognised) {
     const range = Math.hypot(...recognised.anchor);
     check('the recognised anchor is at a sane range', range > 0.5 && range < 10, `${range.toFixed(2)} m`);
+    // The bug this catches: a reflected basis out of the homography solve put
+    // the shelf on its side while the position stayed plausible.
+    check('the recognised assembly stands upright', tiltDeg(recognised.rotation) < 3,
+      `${tiltDeg(recognised.rotation).toFixed(1)}° from vertical`);
+    check('it stands on the floor, not at eye level', recognised.anchor[1] < -0.4,
+      `origin ${recognised.anchor[1].toFixed(2)} m below the camera`);
   }
+
+  // The HUD replaces the desktop chrome in AR; it has to be there and work.
+  const buttons = await page.locator('.ar-bar .ar-btn').allTextContents();
+  check('the AR HUD offers the full control set',
+    ['Steps', 'Errors', 'View', 'Move', 'Settings', 'Exit'].every((l) => buttons.some((b) => b.includes(l))),
+    buttons.join(' / '));
+  const box = await page.locator('.ar-bar .ar-btn').first().boundingBox();
+  check('controls are big enough for a gloved finger', box.height >= 44, `${Math.round(box.height)} px tall`);
+
+  await page.locator('.ar-btn', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(400);
+  check('settings open over the passthrough', await page.locator('.ar-settings').count() === 1);
+  const sheet = await page.locator('.ar-sheet').boundingBox();
+  const vh = page.viewportSize().height;
+  check('the sheet leaves most of the camera visible', sheet.height < vh * 0.55,
+    `${Math.round((sheet.height / vh) * 100)}% of the screen`);
+  await page.screenshot({ path: `${OUT}/ar-settings.png` });
+  await page.locator('.ar-btn', { hasText: 'Settings' }).click();
+
   await page.screenshot({ path: `${OUT}/ar-recognized.png` });
   await page.close();
+}
+
+// --- 4. Tablet in landscape: the case the desktop layout used to ruin. ------
+{
+  const tablet = await browser.newContext({
+    viewport: { width: 1180, height: 820 }, deviceScaleFactor: 2,
+    isMobile: true, hasTouch: true, permissions: ['camera'],
+  });
+  const page = await tablet.newPage();
+  await page.addInitScript(SHELF_STREAM, { cols: 4, rows: 4, span: 360 });
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  await page.click('.ar-enter');
+  await page.waitForTimeout(3000);
+
+  const s = await state(page);
+  const cssAspect = s.css[0] / s.css[1];
+  const bufAspect = s.buffer[0] / s.buffer[1];
+  check('the render buffer matches the canvas shape',
+    Math.abs(cssAspect - bufAspect) / cssAspect < 0.02,
+    `css ${s.css.join('x')} vs buffer ${s.buffer.join('x')}`);
+  // A 4:3 camera frame in a landscape viewport is cropped top and bottom, so
+  // the visible vertical FOV is narrower than the camera's own 60 degrees.
+  check('the overlay uses the field of view actually on screen', s.fovDeg < 58,
+    `${s.fovDeg.toFixed(1)}° effective`);
+  check('no side panels steal the camera view on a tablet',
+    await page.locator('.stage > .step-guide').count() === 0);
+  await page.screenshot({ path: `${OUT}/ar-tablet-landscape.png` });
+  await page.close();
+  await tablet.close();
 }
 
 // --- 3. A frame with no shelf must not anchor to anything. -----------------

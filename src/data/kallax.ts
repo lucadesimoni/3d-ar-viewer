@@ -177,7 +177,9 @@ export const kallax: AssemblyDef = {
   // board thickness in from each outer face.
   recognition: {
     kind: 'grid', cols: COLS, rows: ROWS, widthM: W - T, heightM: H - T,
-    poseInAssembly: { position: [0, H / 2, FRONT_Z], rotation: I },
+    // The front looks along world +Z, and a recognition target's +Z points away
+    // from the viewer — hence the half turn about Y rather than identity.
+    poseInAssembly: { position: [0, H / 2, FRONT_Z], rotation: [0, 1, 0, 0] },
     label: '4x4 cube shelf front',
   },
   datums: [

@@ -43,7 +43,9 @@ export interface MarkerObservation {
  * result is used for *re-registration* against a known anchor rather than as a
  * primary measurement.
  */
-export function estimateIntrinsics(width: number, height: number, fovDeg = 60): Intrinsics {
+export const ASSUMED_CAMERA_FOV_DEG = 60;
+
+export function estimateIntrinsics(width: number, height: number, fovDeg = ASSUMED_CAMERA_FOV_DEG): Intrinsics {
   const f = height / 2 / Math.tan((fovDeg * Math.PI) / 360);
   return { fx: f, fy: f, cx: width / 2, cy: height / 2 };
 }
@@ -126,21 +128,33 @@ export function poseFromHomography(H: number[][], K: Intrinsics): Pose | undefin
   let r2 = h2.multiplyScalar(lambda);
   const t = h3.multiplyScalar(lambda);
 
-  // Gram-Schmidt on the average of the two, keeping the pair symmetric.
+  // Symmetric orthonormalisation: rather than fix r1 and bend r2 onto it, split
+  // the error between them. `orth` must be the in-plane vector that leads mid
+  // towards r1 — cross(mid, normal), in that order. With the operands the other
+  // way round it points the opposite way, which swaps r1 and r2 and hands back
+  // a basis rotated 90 degrees about the view axis. That was the overlay lying
+  // on its side; the round-trip test in poseRecovery.test.ts pins it down.
   const mid = r1.clone().add(r2).normalize();
-  const diff = new Vector3().crossVectors(r1, r2).normalize();
-  const orth = new Vector3().crossVectors(diff, mid).normalize();
+  const normal = new Vector3().crossVectors(r1, r2).normalize();
+  const orth = new Vector3().crossVectors(mid, normal).normalize();
   r1 = mid.clone().add(orth).normalize();
   r2 = mid.clone().sub(orth).normalize();
-  const r3 = new Vector3().crossVectors(r1, r2).normalize();
 
-  // The marker must be in front of the camera; flip the whole basis if not.
-  if (t.z > 0) {
+  // The marker must be in front of the camera. In this frame — OpenCV's, since
+  // the intrinsics map straight to pixels with y down — "in front" is z > 0.
+  //
+  // Negating the third column as well is what made the basis left-handed: with
+  // r3 flipped it no longer equals r1 x r2, `makeBasis` produced a matrix with
+  // determinant -1, and the quaternion pulled out of it was a reflection
+  // wearing a rotation's clothes. Downstream that showed up as an overlay
+  // rolled 90 degrees onto its side. Flip only the two solved columns, then
+  // rebuild the third from them.
+  if (t.z < 0) {
     r1.negate();
     r2.negate();
-    r3.negate();
     t.negate();
   }
+  const r3 = new Vector3().crossVectors(r1, r2).normalize();
 
   const m = new Matrix4().makeBasis(r1, r2, r3);
   m.setPosition(t);
@@ -163,17 +177,47 @@ export function reprojectionError(H: number[][], src: Point2[], dst: Point2[]): 
   return total / src.length;
 }
 
-/** Corner points of a `widthM` x `heightM` rectangle centred on its own origin. */
+/**
+ * Corner points of a `widthM` x `heightM` rectangle centred on its own origin,
+ * in TL, TR, BR, BL order with **y increasing downwards**.
+ *
+ * Matching the image's own axis direction is deliberate. The homography then
+ * maps a right-handed model frame onto a right-handed camera frame, and the
+ * decomposition comes out as a plain rotation. Using a y-up model frame against
+ * a y-down image sneaks a reflection into the middle of the solve, which is not
+ * a rotation and cannot be recovered as one.
+ */
 export const rectModelCorners = (widthM: number, heightM: number): Point2[] => {
   const w = widthM / 2;
   const h = heightM / 2;
   return [
-    { x: -w, y: h },
-    { x: w, y: h },
-    { x: w, y: -h },
     { x: -w, y: -h },
+    { x: w, y: -h },
+    { x: w, y: h },
+    { x: -w, y: h },
   ];
 };
+
+/**
+ * Convert a pose measured in the OpenCV camera frame (x right, y **down**,
+ * z forward, right-handed) into the renderer's camera frame (x right, y **up**,
+ * z forward, left-handed).
+ *
+ * Flipping one axis is a handedness change, so the quaternion is conjugated
+ * rather than copied: negating y takes (x, y, z, w) to (-x, y, -z, w).
+ *
+ * The plane's own frame flips with it, and lands on the renderer's convention:
+ * +X right across the face, +Y up it, **+Z into the object, away from the
+ * viewer**. That is what `poseInAssembly` on a marker or a recognition target
+ * has to be expressed in — a frame with +Z out towards the viewer alongside
+ * +X right and +Y up is right-handed and simply does not exist in a
+ * left-handed scene.
+ */
+export function cvPoseToRenderer(pose: Pose): Pose {
+  const [x, y, z] = pose.position;
+  const [qx, qy, qz, qw] = pose.rotation;
+  return { position: [x, -y, z], rotation: [-qx, qy, -qz, qw] };
+}
 
 /** Corner points of a marker of side `sizeM`, centred on its own origin, Z up. */
 export const markerModelCorners = (sizeM: number): Point2[] => rectModelCorners(sizeM, sizeM);
@@ -186,6 +230,10 @@ export const markerModelCorners = (sizeM: number): Point2[] => rectModelCorners(
  * QR code is just a rectangle whose size you happen to know, and so is the front
  * of a cube shelf. Keeping one implementation means the object path inherits the
  * marker path's re-orthonormalisation and reprojection quality metric.
+ *
+ * The returned pose is already in the renderer's camera frame (see
+ * `cvPoseToRenderer`), so callers hand it straight to the scene without any
+ * further axis juggling.
  */
 export function rectPoseFromCorners(
   corners: Point2[],
@@ -197,8 +245,9 @@ export function rectPoseFromCorners(
   const model = rectModelCorners(widthM, heightM);
   const H = solveHomography(model, corners);
   if (!H) return undefined;
-  const pose = poseFromHomography(H, K);
-  if (!pose) return undefined;
+  const cvPose = poseFromHomography(H, K);
+  if (!cvPose) return undefined;
+  const pose = cvPoseToRenderer(cvPose);
 
   let perimeter = 0;
   for (let i = 0; i < 4; i++) {

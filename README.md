@@ -265,6 +265,31 @@ milliseconds of plain JavaScript, deterministic, and it needs no model download.
 The facade must be roughly square-on (within ~20°), which is how you stand in
 front of a shelf anyway.
 
+## The AR view on a phone or tablet
+
+In AR the camera image *is* the interface, so the desktop layout is put away
+entirely — no header, no side columns, no bottom bar. What is left is a single
+thumb-height HUD over the live view:
+
+- the current step, always visible, with prev/next arrows;
+- **Steps**, **Errors** and **View** open the corresponding panel in a sheet
+  that covers under half the screen and closes with the same button;
+- **Move** goes back to aiming at the floor, to re-place the assembly;
+- **Settings** holds the two numbers the browser will not tell us — the camera's
+  field of view and how high the device is being held. Both are live: drag the
+  FOV slider until the overlay matches the real object, drag the height until
+  the reticle sits on the real floor. `?camfov=52` pre-sets the first.
+
+Every control is at least 48 px tall, the bar is capped at 760 px wide so it
+stays under the thumb on a 13-inch iPad, and the canvas takes `touch-action:
+none` so a tap places the assembly instead of scrolling the page.
+
+The overlay is rendered at the field of view **actually visible** rather than
+the camera's own: the video is painted with `object-fit: cover`, so a 4:3 frame
+in a landscape tablet loses about 7% of its height, and drawing at the uncropped
+FOV would shrink the whole overlay by the same amount. It is recomputed on every
+resize, because rotating an iPad changes which axis gets cropped.
+
 ## Sample assemblies
 
 Three are bundled; switch between them with the picker at the top of the step

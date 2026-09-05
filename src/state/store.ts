@@ -19,6 +19,35 @@ export type ViewMode = 'guide' | 'explore' | 'explode' | 'animate';
  * it is doing — looking for the floor or for the object itself — until something
  * real fixes the anchor.
  */
+/**
+ * The handful of AR numbers a device can be wrong about.
+ *
+ * Browsers expose no camera calibration and no eye height, so the passthrough
+ * path runs on two assumptions. Rather than bury them in a constant, they are
+ * settings the operator can correct in the field: if the overlay is a little
+ * too big or the assembly lands too close, these are the two dials that fix it.
+ */
+export interface ArSettings {
+  /** Assumed vertical field of view of the physical camera, degrees. */
+  cameraFovDeg: number;
+  /** How high the device is being held, metres — defines the floor plane. */
+  eyeHeightM: number;
+  /** Let recognition of the object re-anchor the overlay automatically. */
+  autoRecognize: boolean;
+}
+
+/**
+ * `?camfov=<degrees>` pre-sets the camera calibration, so a device that is
+ * known to be off can be deep-linked already corrected. Invalid values are
+ * ignored rather than breaking the projection.
+ */
+function readFovOverride(): number | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const raw = new URLSearchParams(window.location.search).get('camfov');
+  const v = raw ? Number(raw) : NaN;
+  return Number.isFinite(v) && v > 35 && v < 110 ? v : undefined;
+}
+
 export type ArPlacement = 'idle' | 'awaiting' | 'floor' | 'recognized' | 'marker' | 'manual';
 
 export interface AppState {
@@ -28,6 +57,7 @@ export interface AppState {
   anchorQuality: number;
   /** Where the anchor came from — drives the AR prompt and the status bar. */
   arPlacement: ArPlacement;
+  arSettings: ArSettings;
   arMode: ArMode;
   viewMode: ViewMode;
   explodeFactor: number;
@@ -55,6 +85,7 @@ export interface AppState {
   loadAssembly(a: AssemblyDef): void;
   setAnchor(pose: Pose | undefined, quality: number, placement?: ArPlacement): void;
   setArPlacement(placement: ArPlacement): void;
+  setArSettings(patch: Partial<ArSettings>): void;
   setArMode(mode: ArMode): void;
   setViewMode(mode: ViewMode): void;
   setExplodeFactor(f: number): void;
@@ -168,6 +199,11 @@ export const useStore = create<AppState>((set, get) => {
     anchor: undefined,
     anchorQuality: 0,
     arPlacement: 'idle' as ArPlacement,
+    arSettings: {
+      cameraFovDeg: readFovOverride() ?? 60,
+      eyeHeightM: 1.45,
+      autoRecognize: true,
+    } as ArSettings,
     arMode: 'preview' as ArMode,
     viewMode: 'guide' as ViewMode,
     explodeFactor: 0,
@@ -206,6 +242,14 @@ export const useStore = create<AppState>((set, get) => {
     },
     setArPlacement(placement) {
       set({ arPlacement: placement });
+    },
+    setArSettings(patch) {
+      const next = { ...get().arSettings, ...patch };
+      // Clamp to what is physically sensible: a phone camera is 40-100 degrees
+      // and nobody holds a tablet below the knee or above their head.
+      next.cameraFovDeg = Math.max(35, Math.min(110, next.cameraFovDeg));
+      next.eyeHeightM = Math.max(0.4, Math.min(2.2, next.eyeHeightM));
+      set({ arSettings: next });
     },
     setArMode(mode) {
       set({ arMode: mode });

@@ -40,8 +40,6 @@ import type { GridTargetDef, Pose } from '../engine/types';
  * camera and call that a placement.
  */
 
-/** Height the device is held at when no better estimate exists, metres. */
-const EYE_HEIGHT_M = 1.45;
 /** Fall back to a floating preview if nothing has been placed by then, ms. */
 const PREVIEW_FALLBACK_MS = 6000;
 /** Two detections must agree within this to be trusted, metres. */
@@ -59,6 +57,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
   const stopPlacement = useRef<(() => void) | undefined>(undefined);
   const xrSession = useRef<{ end: () => Promise<void> } | undefined>(undefined);
   const lastGrid = useRef<Pose | undefined>(undefined);
+  const videoGeometryCleanup = useRef<(() => void) | undefined>(undefined);
 
   const setAnchor = useStore((s) => s.setAnchor);
   const assembly = useStore((s) => s.assembly);
@@ -93,6 +92,8 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     if (previewTimer.current) window.clearTimeout(previewTimer.current);
     stopPlacement.current?.();
     stopPlacement.current = undefined;
+    videoGeometryCleanup.current?.();
+    videoGeometryCleanup.current = undefined;
     void xrSession.current?.end();
     xrSession.current = undefined;
     markerRef.current?.stop();
@@ -139,6 +140,21 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     // Put the 3D scene into AR: transparent clear, head camera, orbit controls
     // off — then drive that camera from the device's orientation.
     manager?.setArMode(true);
+    // Tell the scene the camera image's shape so the overlay is drawn at the
+    // field of view actually visible after `object-fit: cover` crops it. On a
+    // tablet in landscape a 4:3 frame loses ~7% of its height, and rendering at
+    // the uncropped FOV makes the whole overlay that much too small.
+    const publishGeometry = (): void => {
+      if (video.videoWidth > 0) {
+        manager?.setPassthroughSource(
+          video.videoWidth, video.videoHeight,
+          useStore.getState().arSettings.cameraFovDeg,
+        );
+      }
+    };
+    publishGeometry();
+    video.addEventListener('loadedmetadata', publishGeometry);
+    videoGeometryCleanup.current = () => video.removeEventListener('loadedmetadata', publishGeometry);
     tracker.subscribe((st) => {
       getActiveManager()?.setDeviceOrientation(st.orientation);
     });
@@ -147,10 +163,13 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     // by gravity and eye height, so the tap lands at a real distance.
     if (manager) {
       useStore.getState().setArPlacement('awaiting');
-      stopPlacement.current = manager.startGroundPlacement(EYE_HEIGHT_M, (pose) => {
-        useStore.getState().setAnchor(pose, 0.6, 'floor');
-        stopPlacement.current = undefined;
-      });
+      stopPlacement.current = manager.startGroundPlacement(
+        useStore.getState().arSettings.eyeHeightM,
+        (pose) => {
+          useStore.getState().setAnchor(pose, 0.6, 'floor');
+          stopPlacement.current = undefined;
+        },
+      );
       // Safety net: if they have not placed it and nothing has been recognised,
       // show the assembly in front of them so the screen is not empty. Aiming
       // and tapping still re-places it properly.
@@ -187,7 +206,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       if (!image) return;
 
       // 2. Recognise the assembly itself and align everything to it.
-      if (assembly.recognition) {
+      if (assembly.recognition && useStore.getState().arSettings.autoRecognize) {
         const anchored = tryGridAnchor(image, assembly.recognition, lastGrid);
         if (anchored) {
           stopPlacement.current?.();
@@ -208,9 +227,30 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     }, detectPerfProfile().recognitionIntervalMs);
   }, [arActive, capabilities, assembly, setAnchor, stop, videoRef]);
 
+  /**
+   * Put the assembly somewhere else: go back to aiming at the floor.
+   *
+   * Operators move. Without this the only way to correct a placement was to
+   * leave AR and come back, which loses the build state on screen.
+   */
+  const replaceAnchor = useCallback(() => {
+    const manager = getActiveManager();
+    if (!manager || !arActive) return;
+    stopPlacement.current?.();
+    lastGrid.current = undefined;
+    useStore.getState().setAnchor(undefined, 0, 'awaiting');
+    stopPlacement.current = manager.startGroundPlacement(
+      useStore.getState().arSettings.eyeHeightM,
+      (pose) => {
+        useStore.getState().setAnchor(pose, 0.6, 'floor');
+        stopPlacement.current = undefined;
+      },
+    );
+  }, [arActive]);
+
   useEffect(() => () => stop(), [stop]);
 
-  return { capabilities, pipelineStatus, arActive, enterAr };
+  return { capabilities, pipelineStatus, arActive, enterAr, replaceAnchor };
 }
 
 /**
@@ -233,12 +273,13 @@ function tryGridAnchor(
     lastGrid.current = undefined;
     return false;
   }
-  const K = estimateIntrinsics(image.width, image.height);
-  const solved = rectPoseFromCorners(obs.quad, target.widthM, target.heightM, K);
-  if (!solved || solved.reprojectionPx > 6) return false;
-
   const manager = getActiveManager();
   if (!manager) return false;
+  // Same field of view the overlay is rendered with, so a recognised pose and
+  // the rendering cannot disagree.
+  const K = estimateIntrinsics(image.width, image.height, manager.effectiveFovDeg());
+  const solved = rectPoseFromCorners(obs.quad, target.widthM, target.heightM, K);
+  if (!solved || solved.reprojectionPx > 6) return false;
   const world = manager.cameraToWorld(solved.pose);
   const anchor = alignToMarker(world, target.poseInAssembly);
 
