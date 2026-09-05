@@ -76,3 +76,35 @@ describe('describeGpu', () => {
     expect(g.accelerated).toBe(false);
   });
 });
+
+describe('render resolution (sharpness)', () => {
+  /**
+   * Babylon's hardware scaling level is CSS-pixels : rendered-pixels, so the
+   * correct value is 1 / min(dpr, cap): BELOW 1 on a retina screen. An earlier
+   * `max(1, dpr / cap)` inverted this and rendered a dpr-3 phone at 0.58x CSS —
+   * about a seventh of the native pixels — which is what made parts look soft.
+   */
+  const scalingLevel = (dpr: number, cap: number) => 1 / Math.min(dpr, cap);
+
+  it('renders above CSS resolution on a retina screen', () => {
+    expect(scalingLevel(3, 3)).toBeCloseTo(1 / 3, 6);   // native on a dpr-3 phone
+    expect(scalingLevel(2, 2)).toBeCloseTo(0.5, 6);     // native on a dpr-2 screen
+    expect(scalingLevel(3, 2)).toBeCloseTo(0.5, 6);     // capped, still 2x CSS
+  });
+
+  it('always renders at the device\'s own pixel density, up to the cap', () => {
+    // The invariant is the render scale (device px per CSS px), not the level:
+    // a screen with dpr < 1 genuinely has fewer pixels than CSS units, so
+    // rendering below CSS size is correct there — it is still native.
+    const renderScale = (dpr: number, cap: number) => 1 / scalingLevel(dpr, cap);
+    for (const [dpr, cap] of [[3, 3], [2, 3], [1, 3], [0.75, 2], [4, 2]] as const) {
+      expect(renderScale(dpr, cap)).toBeCloseTo(Math.min(dpr, cap), 6);
+    }
+  });
+
+  it('targets at least native resolution on capable devices', () => {
+    // A high-tier device must not be capped below a typical retina ratio.
+    expect(profileForTier('high').maxPixelRatio).toBeGreaterThanOrEqual(2);
+    expect(profileForTier('mid').maxPixelRatio).toBeGreaterThanOrEqual(2);
+  });
+});

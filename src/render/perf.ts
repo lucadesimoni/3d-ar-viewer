@@ -90,10 +90,18 @@ export function classifyTier(s: DeviceSignals): PerfTier {
   return tier;
 }
 
+/**
+ * Aim for a sharp image and let the (bounded) runtime optimizer pull back only
+ * if the device cannot keep up. The scenes are simple untextured meshes, so
+ * they are geometry- rather than fill-rate-bound; capping resolution well below
+ * native — as an earlier, more timid setting did — cost visible sharpness for
+ * performance headroom that is not needed. Degradation is floored at CSS
+ * resolution, so a weak device gets smooth without ever becoming mush.
+ */
 const PROFILES: Record<PerfTier, Omit<PerfProfile, 'tier'>> = {
-  high: { maxPixelRatio: 2, antialias: true, targetFps: 60, recognitionIntervalMs: 400, adaptive: true },
-  mid: { maxPixelRatio: 1.75, antialias: true, targetFps: 45, recognitionIntervalMs: 600, adaptive: true },
-  low: { maxPixelRatio: 1.25, antialias: false, targetFps: 30, recognitionIntervalMs: 1000, adaptive: true },
+  high: { maxPixelRatio: 3, antialias: true, targetFps: 60, recognitionIntervalMs: 400, adaptive: true },
+  mid: { maxPixelRatio: 2, antialias: true, targetFps: 45, recognitionIntervalMs: 600, adaptive: true },
+  low: { maxPixelRatio: 1.5, antialias: false, targetFps: 30, recognitionIntervalMs: 1000, adaptive: true },
 };
 
 export function profileForTier(tier: PerfTier): PerfProfile {

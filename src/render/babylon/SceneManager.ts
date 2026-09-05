@@ -19,7 +19,15 @@ import type { AssemblyDef, PartDef, PlacementState, Pose } from '../../engine/ty
 import type { Severity } from '../../engine/diagnostics';
 import { assemblyCentroid, explodePose, pulseScale, sampleTimeline, type Timeline } from '../../engine/animation';
 import { loadPartModel } from './gltf';
-import { SceneOptimizer, SceneOptimizerOptions } from '@babylonjs/core/Misc/sceneOptimizer';
+import {
+  HardwareScalingOptimization,
+  LensFlaresOptimization,
+  ParticlesOptimization,
+  RenderTargetsOptimization,
+  SceneOptimizer,
+  SceneOptimizerOptions,
+  ShadowsOptimization,
+} from '@babylonjs/core/Misc/sceneOptimizer';
 import { detectPerfProfile, type PerfProfile } from '../perf';
 import { createBestEngine, type RenderBackendKind } from './engineFactory';
 import { STATUS_COLORS, type RecognitionStatus } from '../../vision/verdict';
@@ -106,10 +114,16 @@ export class SceneManager {
       });
       this.renderBackend = 'webgl';
     }
-    // Cap render resolution to the profile's pixel-ratio ceiling — the single
-    // biggest lever on fill-rate-bound tablets.
+    // Render resolution, capped at the profile's pixel-ratio ceiling.
+    //
+    // Babylon's hardware scaling level is CSS-pixels : rendered-pixels, so a
+    // level BELOW 1 renders above CSS size (what a retina screen needs) and a
+    // level above 1 renders below it. The previous `max(1, dpr / cap)` was
+    // inverted: on a dpr-3 phone it produced 1.71, rendering at 0.58x CSS —
+    // roughly a fifth of native — which is why parts looked soft.
     const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-    this.engine.setHardwareScalingLevel(Math.max(1, dpr / this.perf.maxPixelRatio));
+    this.baseScalingLevel = 1 / Math.min(dpr, this.perf.maxPixelRatio);
+    this.engine.setHardwareScalingLevel(this.baseScalingLevel);
     this.scene = new Scene(this.engine);
     // We only pick on explicit taps, so skip per-move picking entirely.
     this.scene.skipPointerMovePicking = true;
@@ -167,6 +181,8 @@ export class SceneManager {
 
   /** Vertical FOV assumed for the passthrough camera, degrees. */
   private readonly arFovDeg = 60;
+  /** Hardware scaling the device should render at when it can keep up. */
+  private baseScalingLevel = 1;
 
   /**
    * Switch between the desktop orbit camera and the AR head camera.
@@ -523,8 +539,18 @@ export class SceneManager {
    */
   private startAdaptiveOptimizer(): void {
     if (!this.perf.adaptive) return;
-    const options = SceneOptimizerOptions.ModerateDegradationAllowed(this.perf.targetFps);
-    options.targetFrameRate = this.perf.targetFps;
+    // Build the degradation ladder explicitly. The stock "moderate" preset lets
+    // HardwareScalingOptimization fall to a quarter of the pixels and never
+    // restores it — one stutter and the overlay stays blurry for the session.
+    // Here resolution is the LAST lever and is floored at CSS resolution.
+    const options = new SceneOptimizerOptions(this.perf.targetFps, 2000);
+    options.addOptimization(new ShadowsOptimization(0));
+    options.addOptimization(new LensFlaresOptimization(0));
+    options.addOptimization(new ParticlesOptimization(1));
+    options.addOptimization(new RenderTargetsOptimization(1));
+    options.addOptimization(
+      new HardwareScalingOptimization(2, Math.max(1, this.baseScalingLevel), 0.25),
+    );
     this.optimizer = new SceneOptimizer(this.scene, options);
     this.optimizer.start();
   }
