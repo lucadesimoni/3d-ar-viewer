@@ -3,6 +3,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Run the whole battery by hand from the Actions tab, and nightly against the
+  # live deployment — a build that passed yesterday says nothing about the site
+  # that is actually serving today.
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * *'
 
 jobs:
   # Fast gate: types, unit tests, production build.
@@ -59,3 +65,27 @@ jobs:
         env:
           PREVIEW_URL: http://localhost:8080/
       - run: npm run deploy:check
+
+  # Nightly (and on demand): the same browser checks, pointed at the deployed
+  # site instead of a local build. This is what catches a bad deploy, a stale
+  # service worker, a missing header — none of which a local `dist` can show.
+  # It never runs on a push, so a wobbly deployment cannot block a merge.
+  production-smoke:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Check the live site
+        env:
+          # Override with a repository variable if the deployment moves.
+          PREVIEW_URL: ${{ vars.PREVIEW_URL || 'https://3d-ar-viewer-ten.vercel.app/' }}
+        run: |
+          npm run ar:verify
+          npm run steps:check
+          npm run place:check
