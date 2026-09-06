@@ -524,8 +524,19 @@ export class SceneManager {
   startGroundPlacement(
     eyeHeightM: number,
     onPlace: (pose: Pose) => void,
-    maxDistanceM = this.placementRange(),
+    opts: {
+      maxDistanceM?: number;
+      /**
+       * Asked at the moment of the tap: is the floor plane trustworthy? With no
+       * orientation reading the scene camera stays level whatever the phone is
+       * doing, and every point of a floor 1.45 m below it lies well outside the
+       * view — the ring is invisible, the tap "places" the assembly under the
+       * frame, and the screen stays empty while the badge says 60%.
+       */
+      floorIsGuesswork?: () => boolean;
+    } = {},
   ): () => void {
+    const maxDistanceM = opts.maxDistanceM ?? this.placementRange();
     this.placementEyeHeight = eyeHeightM;
     this.setPlacementActive(true);
     const groundY = (): number =>
@@ -542,7 +553,9 @@ export class SceneManager {
       }
       return undefined;
     };
-    const observer = this.scene.onBeforeRenderObservable.add(() => this.setReticle(aim()));
+    const observer = this.scene.onBeforeRenderObservable.add(
+      () => this.setReticle(opts.floorIsGuesswork?.() ? undefined : aim()),
+    );
     const stop = (): void => {
       this.scene.onBeforeRenderObservable.remove(observer);
       this.scene.onPointerDown = undefined;
@@ -552,7 +565,16 @@ export class SceneManager {
     this.scene.onPointerDown = () => {
       if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) return;
       // Place where they tapped, falling back to the reticle if the tap missed
-      // the floor plane (above the horizon).
+      // the floor plane (above the horizon), and to a spot straight ahead when
+      // there is no orientation to derive a floor from at all.
+      if (opts.floorIsGuesswork?.()) {
+        // Already an anchor pose, centroid and heading included: hand it over
+        // as it is rather than through `placementPose`, which would offset it
+        // by the centroid a second time.
+        onPlace(this.computeAnchorInFront());
+        stop();
+        return;
+      }
       const hit = this.pickGround(this.scene.pointerX, this.scene.pointerY, groundY(), maxDistanceM) ?? aim();
       if (!hit) return;
       onPlace(this.placementPose(hit));

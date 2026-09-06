@@ -1,5 +1,4 @@
 import { useStore } from '../state/store';
-import type { Capabilities } from '../engine/tracking/capabilities';
 
 /**
  * The one line of AR chrome that has to be there: what the app is waiting for.
@@ -9,7 +8,7 @@ import type { Capabilities } from '../engine/tracking/capabilities';
  * aim and tap, or "hold still, I can see the shelf" — and gets out of the way
  * the moment the assembly is anchored to something real.
  */
-export function PlacementHint({ capabilities }: { capabilities?: Capabilities }): JSX.Element | null {
+export function PlacementHint(): JSX.Element | null {
   const placement = useStore((s) => s.arPlacement);
   const quality = useStore((s) => s.anchorQuality);
   const target = useStore((s) => s.assembly.recognition);
@@ -30,7 +29,7 @@ export function PlacementHint({ capabilities }: { capabilities?: Capabilities })
         <span className={`dot ${blind ? 'warn' : ''}`} />
         {blind
           ? 'No motion sensor — tap to place it straight ahead'
-          : capabilities?.immersiveAr
+          : source === 'webxr'
             ? `Move the phone to find a surface, then tap${looking}`
             : `Tap the floor to place${looking}`}
       </div>
