@@ -213,6 +213,15 @@ export class SceneManager {
   /** Hardware scaling the device should render at when it can keep up. */
   private baseScalingLevel = 1;
   private reticle: Mesh | undefined;
+  /**
+   * Whether the operator is currently placing the assembly.
+   *
+   * Placement is a mode, not a permanent state of the app. Left always-on, the
+   * reticle sits over the work for the whole session and every stray tap picks
+   * the assembly up and drops it somewhere else — which is precisely what you
+   * do not want once it is where it belongs.
+   */
+  private placementActive = false;
 
   /**
    * Switch between the desktop orbit camera and the AR head camera.
@@ -313,6 +322,16 @@ export class SceneManager {
     r.setEnabled(false);
     this.reticle = r;
     return r;
+  }
+
+  /** Arm or disarm placement: the reticle and the tap-to-place gesture. */
+  setPlacementActive(on: boolean): void {
+    this.placementActive = on;
+    if (!on) this.setReticle(undefined);
+  }
+
+  get placing(): boolean {
+    return this.placementActive;
   }
 
   /** Show the reticle at a world pose, or hide it with `undefined`. */
@@ -458,6 +477,7 @@ export class SceneManager {
    */
   startGroundPlacement(eyeHeightM: number, onPlace: (pose: Pose) => void): () => void {
     this.placementEyeHeight = eyeHeightM;
+    this.placementActive = true;
     const groundY = (): number =>
       (this.scene.activeCamera ?? this.camera).position.y - this.placementEyeHeight;
     // Aim down the screen until the ray meets the floor. With the phone held
@@ -476,6 +496,7 @@ export class SceneManager {
     const stop = (): void => {
       this.scene.onBeforeRenderObservable.remove(observer);
       this.scene.onPointerDown = undefined;
+      this.placementActive = false;
       this.setReticle(undefined);
     };
     this.scene.onPointerDown = () => {
@@ -500,19 +521,29 @@ export class SceneManager {
    *
    * Returns undefined when the session cannot start, so the caller falls back.
    */
-  async startWebXr(onPlace: (pose: Pose) => void): Promise<{ end: () => Promise<void> } | undefined> {
+  async startWebXr(
+    onPlace: (pose: Pose) => void,
+    onEnd?: () => void,
+  ): Promise<{ end: () => Promise<void> } | undefined> {
     try {
       const { startImmersiveAr } = await import('./xr');
-      const controller = await startImmersiveAr(this.scene, this.canvas, {
-        onReticle: (pose) => this.setReticle(pose),
+      // The DOM overlay has to be the app root, not the canvas: the canvas is
+      // what WebXR replaces, while the HUD around it is the part that must stay
+      // on screen and stay tappable inside the session.
+      const overlayRoot = this.canvas.closest('.app') as HTMLElement | null;
+      const controller = await startImmersiveAr(this.scene, overlayRoot ?? document.body, {
+        onReticle: (pose) => this.setReticle(this.placementActive ? pose : undefined),
         onSelectAnchor: (pose) => {
+          // Placed already: a tap is someone touching the screen, not a request
+          // to pick the assembly up and put it somewhere else.
+          if (!this.placementActive) return;
           onPlace(this.placementPose(pose));
-          this.setReticle(undefined);
+          this.setPlacementActive(false);
         },
         onStateChange: (inXr) => {
           this.arMode = inXr;
           this.setTransparent(inXr);
-          if (!inXr) this.setReticle(undefined);
+          if (!inXr) { this.setReticle(undefined); onEnd?.(); }
         },
       });
       if (!controller) return undefined;

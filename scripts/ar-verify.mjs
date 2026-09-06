@@ -208,6 +208,84 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 3b. A device that claims WebXR but cannot start a session. ------------
+{
+  const page = await context.newPage();
+  // Chrome on a phone advertises immersive-ar; the request can still be refused
+  // (permission, an unsupported feature, a headset already in use). Before this
+  // check the app went into "AR" anyway: a transparent canvas over a black page
+  // with the model floating in the void and no camera at all.
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'xr', {
+      configurable: true,
+      value: {
+        isSessionSupported: async (mode) => mode === 'immersive-ar',
+        requestSession: async () => { throw new DOMException('refused', 'NotAllowedError'); },
+        addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; },
+      },
+    });
+  });
+  await page.addInitScript(SHELF_STREAM, { cols: 4, rows: 4, span: 360 });
+  await open(page, `${URL}?assembly=kallax-4x4`);
+
+  const advertised = await page.evaluate(() => navigator.xr.isSessionSupported('immersive-ar'));
+  check('the fake device advertises WebXR', advertised);
+
+  await page.locator('.ar-enter').click();
+  await page.waitForTimeout(3000);
+  const live = await page.evaluate(() => {
+    const v = document.querySelector('video.passthrough');
+    return { w: v?.videoWidth ?? 0, playing: Boolean(v && !v.paused), ar: window.spatialStore.getState().arPlacement };
+  });
+  check('a refused XR session falls back to the camera, not a black screen',
+    live.w > 0 && live.playing, `video ${live.w}px, playing=${live.playing}, placement=${live.ar}`);
+  await page.screenshot({ path: `${OUT}/ar-xr-fallback.png` });
+  await page.close();
+}
+
+// --- 3c. Placement is a mode, not a permanent state. ----------------------
+{
+  const page = await context.newPage();
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  await page.locator('.ar-enter').click();
+  await page.waitForTimeout(1500);
+
+  const placing = () => page.evaluate(() => {
+    const m = window.spatialScene();
+    const reticle = m?.scene.getMeshByName('ar-reticle');
+    return { placing: Boolean(m?.placing), reticle: Boolean(reticle?.isEnabled()) };
+  });
+  const armed = await placing();
+  check('placement is armed when there is nothing placed yet', armed.placing);
+
+  await page.mouse.click(195, 640);
+  await page.waitForTimeout(600);
+  const after = await placing();
+  check('and disarms itself once placed — the ring goes away and taps stop moving it',
+    !after.placing && !after.reticle, `placing=${after.placing} reticle=${after.reticle}`);
+
+  // "Move" is how repositioning is asked for.
+  await page.locator('.ar-btn', { hasText: 'Move' }).click();
+  await page.waitForTimeout(600);
+  check('"Move" re-arms it on demand', (await placing()).placing);
+
+  // With the setting off, AR opens where it was left instead of asking again.
+  await page.locator('.ar-btn', { hasText: 'Exit' }).click();
+  await page.waitForTimeout(500);
+  await page.evaluate(() => {
+    const s = window.spatialStore.getState();
+    s.setArSettings({ placeOnEntry: false });
+    s.setAnchor({ position: [0, -1.4, 2], rotation: [0, 0, 0, 1] }, 0.6, 'floor');
+  });
+  await page.locator('.ar-enter').click();
+  await page.waitForTimeout(1500);
+  const reopened = await placing();
+  const placement = await page.evaluate(() => window.spatialStore.getState().arPlacement);
+  check('with "ask each time" off it opens where you left it',
+    !reopened.placing && placement !== 'awaiting', `placing=${reopened.placing} placement=${placement}`);
+  await page.close();
+}
+
 // --- 4. Following a moving object between detections. ---------------------
 {
   const page = await context.newPage();

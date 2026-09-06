@@ -307,7 +307,7 @@ The app tries these in order, and tells the operator which one it is using:
 
 | Source | Where it works | How |
 | --- | --- | --- |
-| **WebXR hit-test** | Android, Quest, Vision Pro | The device reports a real plane; the reticle sits on the true floor and the anchor is world-locked. |
+| **WebXR hit-test** | Android, Quest, Vision Pro | The device reports a real plane; the reticle sits on the true floor and the anchor is world-locked. The session is entered by the app itself and the HUD is composited over the camera through `dom-overlay`; if the session is refused for any reason the app falls back to camera passthrough rather than showing a transparent canvas over a black page. |
 | **Object recognition** | Everywhere the camera works | The assembly's own facade is found in the frame by `src/vision/gridRecognition.ts`, giving a full metric pose — no marker, no setup. |
 | **QR marker** | Assemblies that ship a fiducial | Planar homography from four corners; the most precise of the four. |
 | **Aim and tap** | iOS Safari (no WebXR) | Gravity plus an assumed eye height defines the floor; the tap lands the assembly at a true distance. |
@@ -365,8 +365,14 @@ thumb-height HUD over the live view:
 - the current step, always visible, with prev/next arrows;
 - **Steps**, **Errors** and **View** open the corresponding panel in a sheet
   that covers under half the screen and closes with the same button;
-- **Move** goes back to aiming at the floor, to re-place the assembly;
-- **Settings** holds the two numbers the browser will not tell us — the camera's
+- **Move** goes back to aiming at the floor, to re-place the assembly — because
+  placement is a *mode*, not a permanent state. The reticle appears while you
+  are placing and goes away once the assembly is down, and a tap after that is
+  someone touching the screen rather than a request to move the workpiece.
+  Whether AR asks for a placement at all on entry is a setting: turn it off and
+  it opens where you left it;
+- **Settings** holds the placement behaviour above and the two numbers the
+  browser will not tell us — the camera's
   field of view and how high the device is being held. Both are live: drag the
   FOV slider until the overlay matches the real object, drag the height until
   the reticle sits on the real floor. `?camfov=52` pre-sets the first.

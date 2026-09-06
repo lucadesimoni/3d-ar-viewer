@@ -57,6 +57,9 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
 .app.ar .passthrough { display: block; }
 /* AR: everything behind the 3D canvas must be see-through, and the viewport
    goes full-bleed so the overlay lines up with the camera image. */
+/* In a WebXR session the app root *is* the DOM overlay composited over the
+   camera, so anything opaque behind the HUD would hide the real world. */
+.app.ar, .app.ar .stage { background: transparent; }
 .app.ar .viewport-canvas, .app.ar .viewer-canvas { background: transparent; }
 /* The 3D canvas must be geometrically identical to the video underneath it,
    otherwise the overlay is offset from the real world. Both go full-screen. */
@@ -483,6 +486,7 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 .ar-set input[type="range"] { width: 100%; min-width: 0; height: 32px; }
 .ar-toggle { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.35; }
 .ar-toggle input { width: 22px; height: 22px; flex: 0 0 auto; accent-color: var(--accent); }
+.ar-toggle .ar-set-help { display: block; font-style: normal; margin-top: 2px; }
 .ar-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 2px 0 0; }
 .ar-facts div { background: rgba(255,255,255,0.04); border-radius: 10px; padding: 8px 10px; }
 .ar-facts dt { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }

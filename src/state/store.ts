@@ -34,6 +34,14 @@ export interface ArSettings {
   eyeHeightM: number;
   /** Let recognition of the object re-anchor the overlay automatically. */
   autoRecognize: boolean;
+  /**
+   * Ask for a placement every time AR starts.
+   *
+   * Off means AR opens with the assembly where it was left, and repositioning
+   * is something the operator asks for with "Move" — which is what you want
+   * once a workpiece is where it belongs and the reticle is just in the way.
+   */
+  placeOnEntry: boolean;
 }
 
 /**
@@ -203,6 +211,7 @@ export const useStore = create<AppState>((set, get) => {
       cameraFovDeg: readFovOverride() ?? 60,
       eyeHeightM: 1.45,
       autoRecognize: true,
+      placeOnEntry: true,
     } as ArSettings,
     arMode: 'preview' as ArMode,
     viewMode: 'guide' as ViewMode,

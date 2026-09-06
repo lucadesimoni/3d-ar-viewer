@@ -40,9 +40,14 @@ export async function startImmersiveAr(scene: Scene, overlayRoot: HTMLElement, h
   const { WebXRDefaultExperience } = await import('@babylonjs/core/XR/webXRDefaultExperience');
   const { WebXRHitTest } = await import('@babylonjs/core/XR/features/WebXRHitTest');
   const { WebXRFeatureName } = await import('@babylonjs/core/XR/webXRFeaturesManager');
+  await import('@babylonjs/core/XR/features/WebXRDOMOverlay');
 
+  // `disableDefaultUI` because the app has its own way in — Babylon's floating
+  // "AR" button otherwise sits in the corner, behind our HUD, as a second
+  // control nobody asked for.
   const xr = await WebXRDefaultExperience.CreateAsync(scene, {
     uiOptions: { sessionMode: 'immersive-ar', referenceSpaceType: 'local-floor' },
+    disableDefaultUI: true,
     optionalFeatures: true,
     disableTeleportation: true,
   }).catch(() => undefined);
@@ -71,6 +76,17 @@ export async function startImmersiveAr(scene: Scene, overlayRoot: HTMLElement, h
     // Hit-test unsupported on this device; the app falls back to manual placement.
   }
 
+  // The HUD is ordinary DOM, and an immersive session hides the page unless the
+  // session is told to composite an element over the camera. Without this the
+  // operator gets the overlay and no controls at all.
+  try {
+    xr.baseExperience.featuresManager.enableFeature(
+      WebXRFeatureName.DOM_OVERLAY, 'latest', { element: overlayRoot }, false, false,
+    );
+  } catch {
+    // Not supported (or the element is unsuitable) — the session still runs.
+  }
+
   xr.baseExperience.onStateChangedObservable.add((state) => {
     hooks.onStateChange?.(state === WebXRState.IN_XR);
   });
@@ -79,7 +95,23 @@ export async function startImmersiveAr(scene: Scene, overlayRoot: HTMLElement, h
   scene.onPointerDown = () => {
     if (xr.baseExperience.state === WebXRState.IN_XR && reticle) hooks.onSelectAnchor?.(reticle);
   };
-  void overlayRoot;
+
+  // Actually enter the session. Creating the experience only *prepares* one —
+  // it builds the helper and, left to itself, a button for the user to press.
+  // Skipping this call was the bug behind a black screen on Android: the app
+  // switched into AR mode, cleared the canvas to transparent for a camera feed
+  // that was never started, and rendered the assembly over the page background.
+  try {
+    await xr.baseExperience.enterXRAsync('immersive-ar', 'local-floor', xr.renderTarget);
+  } catch (err) {
+    await xr.baseExperience.exitXRAsync().catch(() => undefined);
+    xr.dispose();
+    return undefined;   // the caller falls back to camera passthrough
+  }
+  if (xr.baseExperience.state !== WebXRState.IN_XR) {
+    xr.dispose();
+    return undefined;
+  }
 
   return {
     experience: xr,

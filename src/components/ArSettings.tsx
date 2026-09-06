@@ -64,6 +64,17 @@ export function ArSettings({ capabilities }: { capabilities?: Capabilities }): J
 
       <label className="ar-toggle">
         <input
+          type="checkbox" checked={settings.placeOnEntry}
+          onChange={(e) => setArSettings({ placeOnEntry: e.target.checked })}
+        />
+        <span>
+          Ask where to put it when AR starts
+          <em className="ar-set-help">Off: opens where you left it. "Move" repositions on demand.</em>
+        </span>
+      </label>
+
+      <label className="ar-toggle">
+        <input
           type="checkbox" checked={settings.autoRecognize}
           onChange={(e) => setArSettings({ autoRecognize: e.target.checked })}
         />

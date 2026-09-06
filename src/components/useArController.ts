@@ -101,6 +101,10 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       if (!alive) return;
       setCapabilities(caps);
       setArMode(caps.recommended);
+      // Requesting an XR session needs the user's click to still be "fresh".
+      // Loading 300 kB of WebXR code first can spend that activation, so pull
+      // the module in now, while nobody is waiting for it.
+      if (caps.immersiveAr) void import('../render/babylon/xr');
     });
     // Boot the recognition pipeline in the background; no models are bundled, so
     // this only wires up OpenCV unless a deployment supplies model URLs.
@@ -142,17 +146,23 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
 
     // 1. A device with real AR: let WebXR find the floor and place on a tap.
     if (capabilities.immersiveAr && manager) {
-      const session = await manager.startWebXr((pose) => {
-        useStore.getState().setAnchor(pose, 0.9, 'floor');
-      });
+      const session = await manager.startWebXr(
+        (pose) => useStore.getState().setAnchor(pose, 0.9, 'floor'),
+        // Leaving the session (the system back gesture, or the headset's own
+        // exit) has to take the app out of AR too, or the UI claims to be in a
+        // session that ended.
+        () => stop(),
+      );
       if (session) {
         xrSession.current = session;
         wakeLock.current = await takeWakeLock();
-        useStore.getState().setArPlacement('awaiting');
+        armPlacement(manager, 'webxr');
         setArActive(true);
         return;
       }
-      // Falls through to passthrough when the session is refused.
+      // The session was refused or could not be entered — fall through to
+      // camera passthrough rather than leaving a transparent canvas over a
+      // black page, which is what "AR" looked like before this fell through.
     }
 
     const video = videoRef.current;
@@ -193,8 +203,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
 
     // 4. Aim at the floor and tap. The reticle follows the ground plane implied
     // by gravity and eye height, so the tap lands at a real distance.
-    if (manager) {
-      useStore.getState().setArPlacement('awaiting');
+    if (manager && armPlacement(manager, 'camera')) {
       stopPlacement.current = manager.startGroundPlacement(
         useStore.getState().arSettings.eyeHeightM,
         (pose) => {
@@ -298,10 +307,18 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     const manager = getActiveManager();
     if (!manager || !arActive) return;
     stopPlacement.current?.();
+    stopPlacement.current = undefined;
     // Forget the object lock too: "Move" means the operator wants to say where
     // this goes, and a tracked recognition would otherwise pull it straight back.
     objectAnchor.current?.reset();
     useStore.getState().setAnchor(undefined, 0, 'awaiting');
+
+    if (xrSession.current) {
+      // In a WebXR session the surface comes from the device, so re-arming is
+      // all there is to do: the reticle reappears on the real floor.
+      manager.setPlacementActive(true);
+      return;
+    }
     stopPlacement.current = manager.startGroundPlacement(
       useStore.getState().arSettings.eyeHeightM,
       (pose) => {
@@ -327,6 +344,33 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
   useEffect(() => () => stop(), [stop]);
 
   return { capabilities, pipelineStatus, arActive, enterAr, replaceAnchor };
+}
+
+/**
+ * Decide whether AR should open in placement mode, and arm it if so.
+ *
+ * Placement is a mode with a cost: the reticle sits over the work and a tap
+ * moves the assembly. That is exactly right the first time and wrong every time
+ * after, so it is asked for rather than assumed — by the setting, or by there
+ * being nothing placed yet. "Move" in the HUD re-arms it on demand.
+ *
+ * Returns whether placement was armed.
+ */
+function armPlacement(manager: SceneManager, source: 'webxr' | 'camera'): boolean {
+  const state = useStore.getState();
+  const wanted = state.arSettings.placeOnEntry || !state.anchor;
+  if (!wanted) {
+    manager.setPlacementActive(false);
+    // Keep whatever the anchor already says about itself; only a stale 'idle'
+    // needs correcting, since something is on screen.
+    if (state.arPlacement === 'idle' || state.arPlacement === 'awaiting') {
+      state.setArPlacement('manual');
+    }
+    return false;
+  }
+  if (source === 'webxr') manager.setPlacementActive(true);
+  state.setArPlacement('awaiting');
+  return true;
 }
 
 /**
