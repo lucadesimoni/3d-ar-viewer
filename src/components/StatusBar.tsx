@@ -10,10 +10,17 @@ interface Props {
   pipeline: PipelineStatus | undefined;
   onEnterAr: () => void;
   arActive: boolean;
+  /**
+   * Whether the header carries the AR entry button. On a phone it does not:
+   * the button lives in the bottom nav instead, where a thumb can reach it and
+   * where a long assembly name or a wrapped badge row cannot push it off the
+   * edge of the screen.
+   */
+  showEnterAr?: boolean;
 }
 
 /** Top bar: identity, the AR-entry button, and honest capability badges. */
-export function StatusBar({ capabilities, pipeline, onEnterAr, arActive }: Props): JSX.Element {
+export function StatusBar({ capabilities, pipeline, onEnterAr, arActive, showEnterAr = true }: Props): JSX.Element {
   const anchorQuality = useStore((s) => s.anchorQuality);
   const gpu = useMemo(() => detectGpu(), []);
   // The active engine is created asynchronously; reflect WebGPU once it is live.
@@ -46,15 +53,17 @@ export function StatusBar({ capabilities, pipeline, onEnterAr, arActive }: Props
         )}
       </div>
 
-      <button className={`ar-enter ${arActive ? 'active' : ''}`} onClick={onEnterAr}>
-        {arActive ? 'Exit AR' : (
-          <>
-            Enter AR
-            {/* The mode suffix is dropped on narrow screens so the bar fits. */}
-            <span className="ar-mode-suffix"> · {capabilities ? MODE_LABELS[capabilities.recommended] : '…'}</span>
-          </>
-        )}
-      </button>
+      {showEnterAr && (
+        <button className={`ar-enter ${arActive ? 'active' : ''}`} onClick={onEnterAr}>
+          {arActive ? 'Exit AR' : (
+            <>
+              Enter AR
+              {/* The mode suffix is dropped on narrow screens so the bar fits. */}
+              <span className="ar-mode-suffix"> · {capabilities ? MODE_LABELS[capabilities.recommended] : '…'}</span>
+            </>
+          )}
+        </button>
+      )}
     </header>
   );
 }

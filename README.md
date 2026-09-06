@@ -202,6 +202,38 @@ dotted numeric, ordered and compared by `src/engine/versioning.ts`. From that:
 - a **wrong-revision** relation (`revisionRelation`) that distinguishes a
   superseded (older) part from a newer one — the dangerous shop-floor case.
 
+## Deploying
+
+The repo ships `server/serve.mjs` for a container or a shop-floor box, and a
+`vercel.json` for a static host. They set the same things: `Permissions-Policy`
+for camera and sensors, immutable caching for the fingerprinted bundles,
+no-cache for the HTML shell and the service worker, and deliberately **no**
+`X-Frame-Options`, so the app stays embeddable.
+
+A static host is not the same environment as the bundled server, and one failure
+only appears on the *second* deployment: a service worker that serves its cached
+HTML shell hands the browser an index.html from the previous build, whose
+fingerprinted bundles no longer exist. That is a blank screen, and nothing local
+reproduces it. So `npm run deploy:check` serves the real build from a directory
+it swaps underneath a headless browser and walks the sequence a user actually
+gets — first visit, offline visit, visit after a redeploy, offline again:
+
+```
+npm run build && npm run deploy:check
+```
+
+The service worker is split accordingly: `/assets/*` is cache-first (the names
+are fingerprinted, so a cached copy cannot be stale), everything else is
+network-first with a 3 s timeout and a cached fallback. It also precaches the
+bundles named by `index.html` at install, because on a first visit the worker is
+not yet controlling the page and would otherwise cache a shell whose scripts it
+never stored — offline that looks fine right up until it has to work.
+
+> Upgrading from an earlier deployment: a device that already registered the
+> previous worker gets one stale load before the new one takes over. One reload
+> fixes it; there is no way to avoid that from the new build, which is the point
+> of not shipping the old policy in the first place.
+
 ## Running
 
 ```bash
@@ -341,7 +373,21 @@ thumb-height HUD over the live view:
 
 Every control is at least 48 px tall, the bar is capped at 760 px wide so it
 stays under the thumb on a 13-inch iPad, and the canvas takes `touch-action:
-none` so a tap places the assembly instead of scrolling the page.
+none` so a tap places the assembly instead of scrolling the page. The screen is
+held awake for the session — a tablet that dims mid-step drops the camera feed
+and the anchor with it.
+
+Two layout rules exist specifically because of iOS Safari:
+
+- **The HUD is a normal flex child of a `100dvh` column, never `position:
+  fixed`.** iOS resolves a fixed element against the *layout* viewport — the
+  tall one that exists when the toolbars are hidden — so a bar anchored to its
+  bottom sits behind the toolbar on a real iPhone while every desktop viewport
+  looks perfect. `npm run ar:verify` asserts the computed position and that the
+  HUD's bottom edge is inside the viewport.
+- **The way into AR lives in the bottom nav on a phone, not in the header.** In
+  the header it is one long assembly name away from being pushed off the edge,
+  and the top of the screen is the worst place to reach one-handed.
 
 The overlay is rendered at the field of view **actually visible** rather than
 the camera's own: the video is painted with `object-fit: cover`, so a 4:3 frame

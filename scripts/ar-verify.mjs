@@ -110,7 +110,19 @@ const context = await browser.newContext({
   const loaded = await state(page);
   check('KALLAX loads from the URL', loaded.assembly === 'kallax-4x4', `${loaded.parts} parts`);
 
-  await page.click('.ar-enter');
+  // The way in has to be findable on a phone. The header's button is dropped on
+  // mobile precisely because a long assembly name or a wrapped badge row can
+  // push it off the edge; the bottom nav carries it instead.
+  const entry = page.locator('.ar-enter');
+  const entryBox = await entry.boundingBox();
+  const vp = page.viewportSize();
+  check('the AR entry button is on screen on a phone',
+    Boolean(entryBox) && entryBox.x >= 0 && entryBox.x + entryBox.width <= vp.width
+      && entryBox.y + entryBox.height <= vp.height,
+    entryBox ? `x=${Math.round(entryBox.x)} y=${Math.round(entryBox.y)} ${Math.round(entryBox.width)}x${Math.round(entryBox.height)}` : 'no box');
+  check('and it is one button, not a hidden duplicate', await entry.count() === 1);
+
+  await entry.click();
   await page.waitForTimeout(1500);
   const awaiting = await state(page);
   check('AR starts by asking for a surface, not by guessing',
@@ -168,6 +180,19 @@ const context = await browser.newContext({
     buttons.join(' / '));
   const box = await page.locator('.ar-bar .ar-btn').first().boundingBox();
   check('controls are big enough for a gloved finger', box.height >= 44, `${Math.round(box.height)} px tall`);
+
+  // iOS places a fixed element against the *layout* viewport — the tall one,
+  // without Safari's toolbars — so a bar anchored to its bottom disappears
+  // behind the toolbar on a real phone while every desktop viewport looks fine.
+  // In the flow of a 100dvh column that cannot happen.
+  const hudPosition = await page.evaluate(() =>
+    getComputedStyle(document.querySelector('.ar-hud')).position);
+  check('the HUD is laid out in flow, not fixed to the viewport', hudPosition !== 'fixed', hudPosition);
+  const hud = await page.locator('.ar-hud').boundingBox();
+  const view = page.viewportSize();
+  check('the whole HUD is inside the visible area',
+    hud.y + hud.height <= view.height + 1 && hud.y >= 0,
+    `bottom at ${Math.round(hud.y + hud.height)} of ${view.height}`);
 
   await page.locator('.ar-btn', { hasText: 'Settings' }).click();
   await page.waitForTimeout(400);

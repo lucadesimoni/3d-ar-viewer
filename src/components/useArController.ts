@@ -44,6 +44,30 @@ const PREVIEW_FALLBACK_MS = 6000;
 /** Width the camera frame is sampled at for recognition and tracking. */
 const FRAME_WIDTH = 480;
 
+/** The slice of the Screen Wake Lock API used here; not in every lib.dom yet. */
+interface WakeLock { released: boolean; release(): Promise<void> }
+type WakeLockNavigator = Navigator & {
+  wakeLock?: { request(type: 'screen'): Promise<WakeLock> };
+};
+
+/**
+ * Hold the screen awake for the duration of an AR session.
+ *
+ * Guided assembly is exactly the case where the operator's hands are busy and
+ * they are not touching the screen: the display dims mid-step, the camera feed
+ * stops, and the anchor is lost. The lock is dropped by the browser whenever the
+ * page is hidden, so it has to be taken again on the way back.
+ */
+async function takeWakeLock(): Promise<WakeLock | undefined> {
+  const nav = typeof navigator !== 'undefined' ? (navigator as WakeLockNavigator) : undefined;
+  if (!nav?.wakeLock) return undefined;
+  try {
+    return await nav.wakeLock.request('screen');
+  } catch {
+    return undefined;   // denied, or the tab is not visible
+  }
+}
+
 export function useArController(videoRef: React.RefObject<HTMLVideoElement | null>) {
   const [capabilities, setCapabilities] = useState<Capabilities>();
   const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus>();
@@ -56,6 +80,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
   const stopPlacement = useRef<(() => void) | undefined>(undefined);
   const xrSession = useRef<{ end: () => Promise<void> } | undefined>(undefined);
   const rafRef = useRef<number | undefined>(undefined);
+  const wakeLock = useRef<WakeLock | undefined>(undefined);
   const objectAnchor = useRef<ObjectAnchorTracker | undefined>(undefined);
   const videoGeometryCleanup = useRef<(() => void) | undefined>(undefined);
 
@@ -99,6 +124,8 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     videoGeometryCleanup.current = undefined;
     void xrSession.current?.end();
     xrSession.current = undefined;
+    void wakeLock.current?.release().catch(() => undefined);
+    wakeLock.current = undefined;
     markerRef.current?.stop();
     trackerRef.current?.stop();
     getActiveManager()?.setArMode(false);
@@ -120,6 +147,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       });
       if (session) {
         xrSession.current = session;
+        wakeLock.current = await takeWakeLock();
         useStore.getState().setArPlacement('awaiting');
         setArActive(true);
         return;
@@ -132,6 +160,8 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
 
     // iOS gates motion behind a user gesture — this call is inside the click.
     if (capabilities.motionNeedsPermission) await CameraTracker.requestMotionPermission();
+
+    wakeLock.current = await takeWakeLock();
 
     const tracker = new CameraTracker();
     trackerRef.current = tracker;
@@ -279,6 +309,19 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
         stopPlacement.current = undefined;
       },
     );
+  }, [arActive]);
+
+  // The browser drops the wake lock when the page is hidden; take it again when
+  // the operator comes back to a still-running AR session.
+  useEffect(() => {
+    if (!arActive) return;
+    const onVisible = (): void => {
+      if (document.visibilityState !== 'visible') return;
+      if (wakeLock.current && !wakeLock.current.released) return;
+      void takeWakeLock().then((lock) => { wakeLock.current = lock; });
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, [arActive]);
 
   useEffect(() => () => stop(), [stop]);

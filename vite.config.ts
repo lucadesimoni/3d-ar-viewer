@@ -15,6 +15,10 @@ export default defineConfig({
         // three is by far the biggest dependency; splitting it lets the shell
         // and the HUD paint before the renderer is parsed on a cold cellular load.
         manualChunks(id: string) {
+          // Babylon is deliberately NOT forced into one chunk: it ships its
+          // shaders as separate modules that Rollup otherwise leaves as lazy
+          // chunks, and grouping them turned a 1.6 MB entry plus on-demand
+          // shaders into a 4 MB download before first paint. Measured, reverted.
           if (id.includes('node_modules/three')) return 'three';
           if (id.includes('node_modules/react')) return 'react';
           return undefined;

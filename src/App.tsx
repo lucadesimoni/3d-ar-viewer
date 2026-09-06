@@ -59,7 +59,8 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
         <video ref={videoRef} className="passthrough" playsInline muted />
 
         {ui.showHeader && !arActive && (
-          <StatusBar capabilities={capabilities} pipeline={pipelineStatus} onEnterAr={enterAr} arActive={arActive} />
+          <StatusBar capabilities={capabilities} pipeline={pipelineStatus} onEnterAr={enterAr}
+            arActive={arActive} showEnterAr={!isMobile} />
         )}
         {ui.showRecognition && !arActive && <QuickLookButton capabilities={capabilities} />}
 
@@ -84,13 +85,13 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
                 </>
               )}
               {/* Minimal/viewer layouts still expose AR entry when the header is hidden. */}
-              {!ui.showHeader && !arActive && (
+              {!ui.showHeader && !isMobile && !arActive && (
                 <button className="ar-enter floating" onClick={enterAr}>Enter AR</button>
               )}
             </div>
           </main>
           {ui.showDiagnostics && !arActive && (!isMobile || mobileSheet === 'errors') && <DiagnosticsPanel />}
-          {isMobile && !arActive && (ui.showSteps || ui.showDiagnostics) && (
+          {isMobile && !arActive && (
             <nav className="sheet-tabs" role="tablist">
               {ui.showSteps && (
                 <button role="tab" aria-selected={mobileSheet === 'steps'}
@@ -102,8 +103,14 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
                   className={mobileSheet === 'errors' ? 'active' : ''}
                   onClick={() => setSheet(sheet === 'errors' ? null : 'errors')}>Errors</button>
               )}
-              <button className="sheet-collapse" onClick={() => setSheet(null)}
-                aria-label="Hide panel">▾</button>
+              {(ui.showSteps || ui.showDiagnostics) && (
+                <button className="sheet-collapse" onClick={() => setSheet(null)}
+                  aria-label="Hide panel">▾</button>
+              )}
+              {/* Always last, always there: the way into AR on a phone. */}
+              <button className="ar-enter sheet-ar" onClick={enterAr}>
+                <span aria-hidden="true">◉</span> Enter AR
+              </button>
             </nav>
           )}
         </div>
