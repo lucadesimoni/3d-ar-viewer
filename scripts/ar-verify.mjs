@@ -286,6 +286,65 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 3d. The whole session: place, move, exit, come back. -----------------
+{
+  const page = await context.newPage();
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  const camera = () => page.evaluate(() => {
+    const v = document.querySelector('video.passthrough');
+    const stream = v?.srcObject ?? null;
+    return {
+      width: v?.videoWidth ?? 0,
+      held: Boolean(stream),
+      live: stream ? stream.getTracks().some((t) => t.readyState === 'live') : false,
+    };
+  });
+  const placing = () => page.evaluate(() => Boolean(window.spatialScene()?.placing));
+
+  await page.locator('.ar-enter').click();
+  await page.waitForTimeout(2500);
+  check('the camera is live in AR', (await camera()).live);
+
+  await page.mouse.click(195, 620);
+  await page.waitForTimeout(600);
+  check('a tap places it and disarms placement', !(await placing()));
+
+  // In AR the overlay is a reference, not a model: a stray tap must not place a
+  // part or open an inspector over the guidance.
+  await page.mouse.click(195, 300);
+  await page.waitForTimeout(400);
+  const stray = await page.evaluate(() => {
+    const s = window.spatialStore.getState();
+    return {
+      placed: [...s.placements.values()].filter((p) => p.status !== 'ghost').length,
+      selected: s.selectedPartId ?? null,
+    };
+  });
+  check('a stray tap in AR does not place a part or open an inspector',
+    stray.placed === 0 && stray.selected === null, `placed=${stray.placed} selected=${stray.selected}`);
+
+  await page.locator('.ar-btn', { hasText: 'Move' }).click();
+  await page.waitForTimeout(700);
+  check('"Move" re-arms placement in a camera session', await placing());
+  await page.mouse.click(195, 640);
+  await page.waitForTimeout(600);
+  check('and the next tap re-places it', !(await placing()));
+
+  await page.locator('.ar-btn', { hasText: 'Exit' }).click();
+  await page.waitForTimeout(900);
+  check('Exit leaves AR', await page.locator('.ar-hud').count() === 0);
+  const released = await camera();
+  // Stopping the tracks is not enough: an element still holding the stream is
+  // what makes the next getUserMedia fail with NotReadableError on Android.
+  check('Exit hands the camera back to the system', !released.held && released.width === 0,
+    `held=${released.held} width=${released.width}`);
+
+  await page.locator('.ar-enter').click();
+  await page.waitForTimeout(2500);
+  check('and AR can be entered again afterwards', (await camera()).live);
+  await page.close();
+}
+
 // --- 4. Following a moving object between detections. ---------------------
 {
   const page = await context.newPage();

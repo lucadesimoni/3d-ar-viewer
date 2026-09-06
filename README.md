@@ -412,6 +412,16 @@ thumb-height HUD over the live view:
   someone touching the screen rather than a request to move the workpiece.
   Whether AR asks for a placement at all on entry is a setting: turn it off and
   it opens where you left it;
+Leaving AR hands the camera back to the system — the tracks are stopped *and*
+the `<video>` element is detached, because an element still holding a dead
+stream is enough for the next `getUserMedia` on Android to come back
+`NotReadableError: Could not start video source`. Teardown is fault-tolerant
+step by step, so nothing can leave the app convinced it is still in a session it
+has left. And in AR the overlay is a reference registered to a real workpiece,
+not a model to manipulate: dragging and selecting parts are off there, because a
+stray touch was quietly placing parts and opening an inspector over the
+guidance.
+
 When AR cannot start, the app says so. A denied camera used to make the button
 do nothing at all, which is indistinguishable from a broken build; now the
 reason is on screen, and the placement badge names which path is running —

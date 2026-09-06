@@ -15,10 +15,15 @@ export function Viewer({ transparent = false }: { transparent?: boolean }): JSX.
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { manager } = useSceneManager(canvasRef, { transparent, grid: !transparent });
   const selectPart = useStore((s) => s.selectPart);
+  // `transparent` is AR. There the overlay is a reference registered to a real
+  // workpiece, and a tap means "put it here" — not "pick this part up". Leaving
+  // drag and select live in AR meant a stray touch quietly placed a part and
+  // opened an inspector over the guidance.
+  const interactive = !transparent;
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !manager) return;
+    if (!canvas || !manager || !interactive) return;
     const onPick = (e: PointerEvent): void => {
       const rect = canvas.getBoundingClientRect();
       const id = manager.pickPartAt(e.clientX - rect.left, e.clientY - rect.top);
@@ -33,7 +38,7 @@ export function Viewer({ transparent = false }: { transparent?: boolean }): JSX.
       canvas.removeEventListener('pointerdown', onPick);
       stopDrag();
     };
-  }, [manager, selectPart]);
+  }, [manager, selectPart, interactive]);
 
   return <canvas ref={canvasRef} className="viewer-canvas" style={{ touchAction: 'none' }} />;
 }

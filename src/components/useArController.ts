@@ -51,6 +51,27 @@ type WakeLockNavigator = Navigator & {
 };
 
 /**
+ * Hand the camera back to the operating system.
+ *
+ * Stopping the tracks is not enough on its own: the `<video>` element keeps a
+ * reference to the stream, and on Android that is enough for the next
+ * `getUserMedia` to come back `NotReadableError: Could not start video source`
+ * — the camera looks busy because, as far as the platform is concerned, this
+ * page is still holding it. Detach the element too.
+ */
+function releaseVideo(video: HTMLVideoElement | null): void {
+  if (!video) return;
+  const stream = video.srcObject as MediaStream | null;
+  for (const track of stream?.getTracks() ?? []) {
+    try { track.stop(); } catch { /* already gone */ }
+  }
+  video.pause();
+  video.srcObject = null;
+  video.removeAttribute('src');
+  video.load();
+}
+
+/**
  * Hold the screen awake for the duration of an AR session.
  *
  * Guided assembly is exactly the case where the operator's hands are busy and
@@ -117,28 +138,39 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
   }, [setArMode]);
 
   const stop = useCallback(() => {
-    if (frameTimer.current) window.clearInterval(frameTimer.current);
-    if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
-    rafRef.current = undefined;
-    objectAnchor.current = undefined;
-    if (previewTimer.current) window.clearTimeout(previewTimer.current);
-    stopPlacement.current?.();
-    stopPlacement.current = undefined;
-    videoGeometryCleanup.current?.();
-    videoGeometryCleanup.current = undefined;
-    void xrSession.current?.end();
-    xrSession.current = undefined;
-    void wakeLock.current?.release().catch(() => undefined);
-    wakeLock.current = undefined;
-    markerRef.current?.stop();
-    trackerRef.current?.stop();
-    getActiveManager()?.setArMode(false);
-    trackerRef.current = undefined;
-    useStore.getState().setRecognition(undefined);
-    useStore.getState().setArPlacement('idle');
-    useStore.getState().setArSource(undefined);
+    // Leaving AR must be unconditional. Every step below is something that can
+    // throw on some device — a wake lock already released, an XR session that
+    // ended itself, a camera the OS took away — and one throw used to abort the
+    // rest, leaving the app convinced it was still in AR with a dead camera and
+    // an Exit button that did nothing.
+    const safely = (label: string, fn: () => void): void => {
+      try { fn(); } catch (err) { console.warn(`AR teardown: ${label} failed`, err); }
+    };
+
     setArActive(false);
-  }, []);
+    safely('frame loop', () => {
+      if (frameTimer.current) window.clearInterval(frameTimer.current);
+      if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
+      rafRef.current = undefined;
+      objectAnchor.current = undefined;
+      if (previewTimer.current) window.clearTimeout(previewTimer.current);
+    });
+    safely('placement', () => { stopPlacement.current?.(); stopPlacement.current = undefined; });
+    safely('video geometry', () => { videoGeometryCleanup.current?.(); videoGeometryCleanup.current = undefined; });
+    safely('xr session', () => { void xrSession.current?.end(); xrSession.current = undefined; });
+    safely('wake lock', () => { void wakeLock.current?.release().catch(() => undefined); wakeLock.current = undefined; });
+    safely('marker tracker', () => markerRef.current?.stop());
+    safely('camera tracker', () => trackerRef.current?.stop());
+    safely('camera element', () => releaseVideo(videoRef.current));
+    safely('scene', () => getActiveManager()?.setArMode(false));
+    trackerRef.current = undefined;
+    markerRef.current = undefined;
+
+    const store = useStore.getState();
+    store.setRecognition(undefined);
+    store.setArPlacement('idle');
+    store.setArSource(undefined);
+  }, [videoRef]);
 
   const enterAr = useCallback(async () => {
     if (arActive) { stop(); return; }
@@ -340,6 +372,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     objectAnchor.current?.reset();
     useStore.getState().setAnchor(undefined, 0, 'awaiting');
 
+    useStore.getState().setArPlacement('awaiting');
     if (xrSession.current) {
       // In a WebXR session the surface comes from the device, so re-arming is
       // all there is to do: the reticle reappears on the real floor.

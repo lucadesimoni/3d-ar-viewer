@@ -46,6 +46,9 @@ import {
   makeOverlayMaterial,
 } from './meshFactory';
 
+/** How long after arming placement the first tap is ignored, ms. */
+const PLACEMENT_ARM_DELAY_MS = 350;
+
 export interface SceneRenderState {
   placements: Map<string, PlacementState>;
   severityByPart: Map<string, Severity>;
@@ -223,6 +226,7 @@ export class SceneManager {
    * do not want once it is where it belongs.
    */
   private placementActive = false;
+  private placementArmedAtMs = 0;
 
   /**
    * Switch between the desktop orbit camera and the AR head camera.
@@ -328,6 +332,11 @@ export class SceneManager {
   /** Arm or disarm placement: the reticle and the tap-to-place gesture. */
   setPlacementActive(on: boolean): void {
     this.placementActive = on;
+    // A short deadline before the first tap counts. Arming placement is itself
+    // triggered by a tap ("Move"), and on a touch screen the release of that
+    // tap can reach the canvas as a fresh press — placing the assembly back
+    // where it already was, which reads as the button doing nothing at all.
+    this.placementArmedAtMs = on ? performance.now() : 0;
     if (!on) this.setReticle(undefined);
   }
 
@@ -478,7 +487,7 @@ export class SceneManager {
    */
   startGroundPlacement(eyeHeightM: number, onPlace: (pose: Pose) => void): () => void {
     this.placementEyeHeight = eyeHeightM;
-    this.placementActive = true;
+    this.setPlacementActive(true);
     const groundY = (): number =>
       (this.scene.activeCamera ?? this.camera).position.y - this.placementEyeHeight;
     // Aim down the screen until the ray meets the floor. With the phone held
@@ -501,6 +510,7 @@ export class SceneManager {
       this.setReticle(undefined);
     };
     this.scene.onPointerDown = () => {
+      if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) return;
       // Place where they tapped, falling back to the reticle if the tap missed
       // the floor plane (above the horizon).
       const hit = this.pickGround(this.scene.pointerX, this.scene.pointerY, groundY()) ?? aim();
@@ -538,6 +548,7 @@ export class SceneManager {
           // Placed already: a tap is someone touching the screen, not a request
           // to pick the assembly up and put it somewhere else.
           if (!this.placementActive) return;
+          if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) return;
           onPlace(this.placementPose(pose));
           this.setPlacementActive(false);
         },
