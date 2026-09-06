@@ -30,7 +30,10 @@ export function RecognitionOverlay(): JSX.Element | null {
   const assembly = useStore((s) => s.assembly);
   const [tags, setTags] = useState<Tag[]>([]);
   const rafRef = useRef(0);
-  const showBanner = useUiConfig().showRecognitionBanner;
+  // In AR the banner is rendered inside the HUD stack instead (see ArHud), so
+  // it can never end up behind the control bar that owns the bottom edge.
+  const inAr = useStore((s) => s.arSource) !== undefined;
+  const showBanner = useUiConfig().showRecognitionBanner && !inAr;
 
   // Project each affected part to screen space every frame so the tag tracks it.
   useEffect(() => {
@@ -74,7 +77,7 @@ export function RecognitionOverlay(): JSX.Element | null {
   );
 }
 
-function VerdictBanner(): JSX.Element | null {
+export function VerdictBanner(): JSX.Element | null {
   const recognition = useStore((s) => s.recognition);
   const assembly = useStore((s) => s.assembly);
   if (!recognition) return null;
@@ -92,7 +95,7 @@ function VerdictBanner(): JSX.Element | null {
   return (
     <div className="recognition-banner" style={{ borderColor: color, color }}>
       <span className="reco-dot" style={{ background: color }} />
-      {text}
+      <span className="reco-text">{text}</span>
     </div>
   );
 }

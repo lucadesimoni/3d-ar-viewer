@@ -116,7 +116,7 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
             <Viewer transparent={arActive} />
             {ui.showSteps && <StepAnnotations />}
             {ui.showRecognition && <RecognitionOverlay />}
-            {arActive && <PlacementHint capabilities={capabilities} />}
+            {arActive && <PlacementHint />}
             <div className="viewport-overlay">
               {ui.showInspector && <InspectorPanel />}
               {/* On a phone these live in the "More" sheet; floating over the

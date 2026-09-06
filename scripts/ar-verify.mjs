@@ -68,7 +68,7 @@ const state = (page) => page.evaluate(() => {
   const canvas = document.querySelector('canvas.viewer-canvas');
   const rect = canvas?.getBoundingClientRect();
   return {
-    placement: s.arPlacement, quality: s.anchorQuality,
+    placement: s.arPlacement, quality: s.anchorQuality, motion: s.arMotion,
     anchor: s.anchor ? s.anchor.position : null,
     rotation: s.anchor ? s.anchor.rotation : null,
     assembly: s.assembly.id, parts: s.assembly.parts.length,
@@ -122,6 +122,20 @@ const context = await browser.newContext({
   check('the operator is told what to do', Boolean(hint && /tap/i.test(hint)), hint?.trim());
 
   await page.screenshot({ path: `${OUT}/ar-awaiting.png` });
+
+  // A phone reports its attitude; without it the app cannot know where the
+  // floor is and deliberately falls back to placing straight ahead (checked
+  // separately below). Feed a device held upright and tilted 30 degrees down,
+  // which is how someone looks at the floor a couple of metres off.
+  await page.evaluate(() => {
+    setInterval(() => window.dispatchEvent(
+      new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 60, gamma: 0 })), 50);
+  });
+  await page.waitForTimeout(700);
+  check('the phone attitude reaches the app', (await state(page)).motion === true);
+  const hintWithMotion = await page.textContent('.placement-hint').catch(() => null);
+  check('and the hint switches to the aim-and-tap wording',
+    Boolean(hintWithMotion && !/no motion/i.test(hintWithMotion)), hintWithMotion?.trim());
 
   // Tap below the horizon: the ray must meet the ground plane.
   await page.mouse.click(195, 640);
@@ -482,6 +496,114 @@ const context = await browser.newContext({
   await page.waitForTimeout(4000);
   const s = await state(page);
   check('random camera noise never claims a recognition', s.placement !== 'recognized', `placement=${s.placement}`);
+  await page.close();
+}
+
+// --- 6. HUD chrome: nothing may cover the control bar. ---------------------
+// The verdict banner used to be pinned to the bottom of the viewport, which in
+// AR is the *screen* bottom — it landed behind the step buttons and hid them,
+// and its nowrap text ran past both edges of a 390 px phone.
+{
+  const page = await context.newPage();
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  await page.click('.ar-enter');
+  await page.waitForTimeout(2500);
+  // Force the longest verdict there is, so overflow shows up if it can.
+  await page.evaluate(() => {
+    const s = window.spatialStore.getState();
+    const parts = s.assembly.parts;
+    s.setRecognition({
+      objects: [], verdict: 'wrong', expectedLabels: parts.slice(0, 3).map((p) => p.id),
+      wrongLabel: parts[parts.length - 1].id, wrongName: parts[parts.length - 1].name,
+      ts: Date.now(),
+    });
+  });
+  await page.waitForTimeout(400);
+
+  const hud = await page.evaluate(() => {
+    const r = (sel) => { const e = document.querySelector(sel); return e ? e.getBoundingClientRect() : null; };
+    // Anything full-bleed (the camera image, the 3D canvas) is *under* the bar
+    // by design, so an intersecting rectangle proves nothing. What matters is
+    // what the finger actually hits: sample a grid over the bar and require the
+    // topmost element at every point to belong to the bar.
+    const bar = r('.ar-bar');
+    const barEl = document.querySelector('.ar-bar');
+    const overlapping = new Set();
+    if (bar) {
+      for (let iy = 1; iy < 8; iy++) {
+        for (let ix = 1; ix < 20; ix++) {
+          const top = document.elementFromPoint(
+            bar.left + (bar.width * ix) / 20, bar.top + (bar.height * iy) / 8);
+          if (top && !barEl.contains(top) && top !== barEl) {
+            overlapping.add(`${top.className || top.tagName}`);
+          }
+        }
+      }
+    }
+    // Every control must be the topmost element at its own centre.
+    const unreachable = [];
+    for (const b of document.querySelectorAll('.ar-bar .ar-btn')) {
+      const q = b.getBoundingClientRect();
+      const top = document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2);
+      if (!top || !(b.contains(top) || top === b)) unreachable.push(b.textContent.trim());
+    }
+    // Long verdicts are the ones that used to run off both edges. React may
+    // re-render over this within a frame, so write and measure in one go.
+    const banner = r('.recognition-banner');
+    let longest = null;
+    const text = document.querySelector('.recognition-banner .reco-text');
+    if (text) {
+      text.textContent = 'Wrong part: Left side panel, pre-drilled — expected Bottom board, Top board, Back panel';
+      const b = document.querySelector('.recognition-banner').getBoundingClientRect();
+      longest = [Math.round(b.left), Math.round(b.right)];
+    }
+    return {
+      longest,
+      overlapping: [...overlapping], unreachable, banner: banner && [Math.round(banner.left), Math.round(banner.right)],
+      bannerInHud: !!document.querySelector('.ar-hud .recognition-banner'),
+      width: innerWidth, docWidth: document.documentElement.scrollWidth,
+    };
+  });
+
+  check('the verdict banner is docked in the HUD, not floating over it', hud.bannerInHud);
+  check('nothing covers the AR control bar', hud.overlapping.length === 0, hud.overlapping.join(', '));
+  check('every AR button is the topmost element at its centre', hud.unreachable.length === 0, hud.unreachable.join(', '));
+  check('the banner stays inside the viewport',
+    !hud.banner || (hud.banner[0] >= 0 && hud.banner[1] <= hud.width),
+    hud.banner ? `x ${hud.banner[0]}..${hud.banner[1]} of ${hud.width}` : 'no banner');
+  check('even the longest verdict is clipped, not spilled',
+    !hud.longest || (hud.longest[0] >= 0 && hud.longest[1] <= hud.width),
+    hud.longest ? `x ${hud.longest[0]}..${hud.longest[1]} of ${hud.width}` : 'no banner');
+  check('the page never scrolls sideways', hud.docWidth <= hud.width, `${hud.docWidth} vs ${hud.width} px`);
+  await page.screenshot({ path: `${OUT}/ar-hud-banner.png` });
+  await page.close();
+}
+
+// --- 7. No motion sensor: place straight ahead rather than guess a floor. --
+// A tablet or a locked-down browser reports no attitude. The old build still
+// drew a reticle and intersected a level camera with the floor plane, which put
+// the assembly tens of metres away — "placed 60%, nothing visible". With no
+// attitude the honest answer is to put it at arm's length in front.
+{
+  const page = await context.newPage();
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  await page.click('.ar-enter');
+  await page.waitForTimeout(1500);
+  const before = await state(page);
+  check('a phone with no attitude reports no motion', before.motion === false);
+  const reticle = await page.evaluate(() => {
+    const m = window.spatialScene?.().scene.getMeshByName('ar-reticle');
+    return Boolean(m && m.isEnabled());
+  });
+  check('and no floor reticle is drawn that it cannot honour', reticle === false);
+
+  await page.mouse.click(195, 500);
+  await page.waitForTimeout(800);
+  const after = await state(page);
+  const dist = after.anchor ? Math.hypot(...after.anchor) : 0;
+  check('a tap still places the assembly', Boolean(after.anchor), `placement=${after.placement}`);
+  check('straight ahead, at a range it can actually be seen at', dist > 0.4 && dist < 6,
+    `${dist.toFixed(2)} m away`);
   await page.close();
 }
 

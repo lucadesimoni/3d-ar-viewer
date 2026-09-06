@@ -423,11 +423,20 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 .recognition-banner {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
   z-index: 4; display: inline-flex; align-items: center; gap: 8px;
-  font-size: 13px; font-weight: 650; white-space: nowrap;
+  /* A long verdict ("Wrong part: … — expected …") used to run past both edges
+     of a phone screen. Cap it at the viewport and clip the text instead. */
+  max-width: calc(100% - 24px);
+  font-size: 13px; font-weight: 650;
   background: rgba(9, 13, 18, 0.88); border: 1.5px solid; border-radius: 999px;
   padding: 8px 16px; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: var(--shadow);
 }
-.reco-dot { width: 9px; height: 9px; border-radius: 50%; animation: reco-pulse 1.4s ease-in-out infinite; }
+.reco-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* In AR the banner is a row of the HUD stack, above the step bar. */
+.ar-hud .recognition-banner {
+  position: static; transform: none; max-width: min(100%, 760px);
+  align-self: center; z-index: auto;
+}
+.reco-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; animation: reco-pulse 1.4s ease-in-out infinite; }
 @keyframes reco-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 /* ---------- Bill of materials ---------- */

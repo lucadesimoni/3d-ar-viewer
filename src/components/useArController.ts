@@ -288,6 +288,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
           useStore.getState().setAnchor(pose, 0.6, 'floor');
           stopPlacement.current = undefined;
         },
+        { floorIsGuesswork: () => !useStore.getState().arMotion },
       );
       // Safety net: if they have not placed it and nothing has been recognised,
       // show the assembly in front of them so the screen is not empty. Aiming
@@ -405,6 +406,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
         useStore.getState().setAnchor(pose, 0.6, 'floor');
         stopPlacement.current = undefined;
       },
+      { floorIsGuesswork: () => !useStore.getState().arMotion },
     );
   }, [arActive]);
 

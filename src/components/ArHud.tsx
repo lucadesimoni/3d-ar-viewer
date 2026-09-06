@@ -4,6 +4,8 @@ import { StepGuide } from './StepGuide';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { ModeBar } from './ModeBar';
 import { ArSettings } from './ArSettings';
+import { VerdictBanner } from './RecognitionOverlay';
+import { useUiConfig } from '../ui/UiConfigContext';
 import type { Capabilities } from '../engine/tracking/capabilities';
 
 type Sheet = 'steps' | 'errors' | 'view' | 'settings' | null;
@@ -27,6 +29,7 @@ export function ArHud({ onExit, onReplace, capabilities }: {
   capabilities?: Capabilities;
 }): JSX.Element {
   const [sheet, setSheet] = useState<Sheet>(null);
+  const showBanner = useUiConfig().showRecognitionBanner;
   const assembly = useStore((s) => s.assembly);
   const activeStepId = useStore((s) => s.activeStepId);
   const setActiveStep = useStore((s) => s.setActiveStep);
@@ -44,6 +47,11 @@ export function ArHud({ onExit, onReplace, capabilities }: {
 
   return (
     <div className="ar-hud">
+      {/* The recognition verdict belongs in the HUD stack, not floating against
+          the bottom of the viewport: pinned there it sat *behind* the control
+          bar and hid the step buttons. In the flow it always has its own row. */}
+      {showBanner && <VerdictBanner />}
+
       {sheet && (
         <div className="ar-sheet" role="dialog" aria-label={sheet}>
           {sheet === 'steps' && <StepGuide />}
