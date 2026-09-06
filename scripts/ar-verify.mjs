@@ -656,6 +656,54 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 9. Anchored, but nowhere to be seen. ---------------------------------
+// The report this exists for: "camera works but I don't see the objects
+// anywhere". Nothing is broken — you aim at the floor, tap, then raise the
+// phone to look forward, and a small assembly anchored 1.45 m below eye level
+// is far under the bottom edge of a 60-degree view. The app used to say
+// "Placed" and show an empty screen, which is indistinguishable from a bug.
+{
+  const page = await context.newPage();
+  await open(page, URL);
+  await page.click('.ar-enter');
+  await page.evaluate(() => {
+    window.__beta = 60;                                    // looking 30° down
+    setInterval(() => window.dispatchEvent(new DeviceOrientationEvent(
+      'deviceorientation', { alpha: 0, beta: window.__beta, gamma: 0 })), 50);
+  });
+  await page.waitForTimeout(1200);
+  await page.mouse.click(195, 640);
+  await page.waitForTimeout(600);
+
+  const view = () => page.evaluate(() => window.spatialScene().anchorViewState());
+  const placed = await view();
+  check('what was just placed is in view', placed.onScreen,
+    `x=${placed.x.toFixed(2)} y=${placed.y.toFixed(2)} at ${placed.distanceM.toFixed(2)} m`);
+  check('and nothing nags while it is', await page.locator('.offscreen-nudge').count() === 0);
+
+  // Raise the phone to look above the horizon, as anyone does after placing.
+  await page.evaluate(() => { window.__beta = 105; });
+  await page.waitForTimeout(800);
+  const lost = await view();
+  check('looking away takes it off screen — the real complaint', !lost.onScreen,
+    `${lost.direction}, ${lost.offScreenDeg.toFixed(0)}° outside the frame`);
+  const nudge = await page.textContent('.offscreen-nudge').catch(() => null);
+  check('and the operator is told where it went, not left guessing',
+    Boolean(nudge && /look down/i.test(nudge)), nudge?.replace(/\s+/g, ' ').trim());
+
+  await page.click('.offscreen-act');
+  await page.waitForTimeout(500);
+  const back = await view();
+  check('"Bring it here" puts it in the middle of the view', back.onScreen
+    && Math.abs(back.x - 0.5) < 0.15 && Math.abs(back.y - 0.5) < 0.2,
+    `x=${back.x.toFixed(2)} y=${back.y.toFixed(2)} at ${back.distanceM.toFixed(2)} m`);
+  check('at a distance a small assembly can be made out at', back.distanceM < 2.5,
+    `${back.distanceM.toFixed(2)} m`);
+  check('and the nudge goes away once it is back', await page.locator('.offscreen-nudge').count() === 0);
+  await page.screenshot({ path: `${OUT}/ar-brought-back.png` });
+  await page.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall checks passed');
 process.exit(failures.length ? 1 : 0);

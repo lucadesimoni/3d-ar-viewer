@@ -546,6 +546,25 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 .ar-toggle { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.35; }
 .ar-toggle input { width: 22px; height: 22px; flex: 0 0 auto; accent-color: var(--accent); }
 .ar-toggle .ar-set-help { display: block; font-style: normal; margin-top: 2px; }
+.offscreen-nudge {
+  display: flex; align-items: center; gap: 10px; align-self: center;
+  width: 100%; max-width: 760px;
+  background: rgba(9, 14, 20, 0.92); border: 1.5px solid var(--warn, #f5a524);
+  border-radius: 14px; padding: 8px 10px;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+.offscreen-arrow { font-size: 22px; line-height: 1; color: var(--warn, #f5a524); flex: 0 0 auto; }
+.offscreen-text { flex: 1; min-width: 0; font-size: 13px; font-weight: 650; line-height: 1.25; }
+.offscreen-text em {
+  display: block; font-style: normal; font-weight: 500;
+  font-size: 11.5px; color: var(--muted); margin-top: 1px;
+}
+.offscreen-act {
+  flex: 0 0 auto; min-height: 40px; padding: 0 12px; border-radius: 10px;
+  background: rgba(34, 211, 238, 0.18); border-color: transparent;
+  color: var(--accent); font-size: 12.5px; font-weight: 650;
+}
+
 .ar-chips { display: flex; gap: 6px; }
 .ar-chip {
   flex: 1 1 0; min-height: 40px; border-radius: 10px;

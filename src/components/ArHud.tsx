@@ -5,6 +5,7 @@ import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { ModeBar } from './ModeBar';
 import { ArSettings } from './ArSettings';
 import { VerdictBanner } from './RecognitionOverlay';
+import { OffscreenNudge } from './OffscreenNudge';
 import { useUiConfig } from '../ui/UiConfigContext';
 import type { Capabilities } from '../engine/tracking/capabilities';
 import type { PipelineStatus } from '../vision/pipeline';
@@ -24,9 +25,10 @@ type Sheet = 'steps' | 'errors' | 'view' | 'settings' | null;
  * Everything here is at least 48 px tall, which is the smallest target a gloved
  * finger reliably hits on a workshop tablet.
  */
-export function ArHud({ onExit, onReplace, capabilities, pipeline }: {
+export function ArHud({ onExit, onReplace, onBringInFront, capabilities, pipeline }: {
   onExit: () => void;
   onReplace: () => void;
+  onBringInFront: () => void;
   capabilities?: Capabilities;
   pipeline?: PipelineStatus;
 }): JSX.Element {
@@ -53,6 +55,10 @@ export function ArHud({ onExit, onReplace, capabilities, pipeline }: {
       {/* The recognition verdict belongs in the HUD stack, not floating against
           the bottom of the viewport: pinned there it sat *behind* the control
           bar and hid the step buttons. In the flow it always has its own row. */}
+      {/* Where the assembly is, when it is anchored somewhere off screen. This
+          is the difference between "AR is broken" and "look down". */}
+      <OffscreenNudge onBringInFront={onBringInFront} />
+
       {showBanner && <VerdictBanner />}
 
       {sheet && (

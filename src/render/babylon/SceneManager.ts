@@ -277,21 +277,26 @@ export class SceneManager {
    * The direction is read from the live camera's forward vector rather than
    * assumed from an axis convention, so it is correct either way.
    */
-  computeAnchorInFront(): Pose {
-    const cam = this.arCamera ?? this.camera;
-    const forward = cam.getDirection(Vector3.Forward());
+  computeAnchorInFront(opts: { centreInView?: boolean } = {}): Pose {
+    const cam = this.scene.activeCamera ?? this.arCamera ?? this.camera;
+    const view = cam.getDirection(Vector3.Forward());
     // Flatten to horizontal so the assembly sits level, not tilted with the head.
-    forward.y = 0;
+    const forward = opts.centreInView ? view.clone() : new Vector3(view.x, 0, view.z);
     if (forward.lengthSquared() < 1e-6) forward.set(0, 0, 1);
     forward.normalize();
 
     // Auto-frame: derive the distance from the assembly's own size so a 0.2 m
     // gearbox and a 2.2 m rack both fill a similar share of the view. A fixed
-    // distance made the small sample a speck at the bottom edge.
-    const radius = this.assemblyBounds().radius;
+    // distance made the small sample a speck at the bottom edge. Parts only:
+    // measured together with its bench and wall, a 0.26 m gearbox reads as a
+    // 0.7 m object and lands three times too far away to make out.
+    const radius = this.assemblyBounds(true).radius;
     const halfFov = ((this.visibleFovDeg * Math.PI) / 180) / 2;
     const distance = Math.min(5, Math.max(0.5, (radius / Math.tan(halfFov)) * 1.7));
-    const drop = Math.min(1.0, Math.max(0.1, radius * 0.5));
+    // Sitting it below the horizon reads as "on a bench" rather than floating at
+    // eye level — but when the operator has explicitly asked for it to be
+    // brought into view, centred in that view is what they asked for.
+    const drop = opts.centreInView ? 0 : Math.min(1.0, Math.max(0.1, radius * 0.5));
 
     // Target point for the assembly's CENTRE, then offset so the centre lands
     // there (the model's origin is a datum, not necessarily its middle).
@@ -964,6 +969,73 @@ export class SceneManager {
       this.camera.viewport.toGlobal(w, h),
     );
     return { x: p.x / w, y: p.y / h, onScreen: p.z > 0 && p.z < 1 && p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h };
+  }
+
+  /**
+   * Where the assembly is relative to what the camera can see.
+   *
+   * The failure this exists for: you tap the floor two metres ahead, then raise
+   * the phone to look forward — and the assembly, correctly anchored 1.45 m
+   * below you, is now 40 degrees under the bottom edge of a 60-degree view.
+   * Nothing is broken, nothing is on screen, and the app says "Placed". Without
+   * a readout the only available conclusion is "AR does not work".
+   *
+   * `offScreenDeg` is how far outside the frame it is, so the UI can stay quiet
+   * for a near miss and speak up when the operator is looking the wrong way.
+   */
+  anchorViewState(): {
+    onScreen: boolean;
+    behind: boolean;
+    distanceM: number;
+    /** Screen position in 0..1, outside that range when off screen. */
+    x: number;
+    y: number;
+    /** Direction to turn, in the operator's terms. */
+    direction: 'up' | 'down' | 'left' | 'right' | 'behind' | 'here';
+    offScreenDeg: number;
+  } | undefined {
+    const cam = this.scene.activeCamera;
+    if (!cam) return undefined;
+    const { centre } = this.assemblyBounds(true);
+    const w = this.engine.getRenderWidth();
+    const h = this.engine.getRenderHeight();
+    const p = Vector3.Project(
+      centre, Matrix.Identity(), this.scene.getTransformMatrix(), cam.viewport.toGlobal(w, h),
+    );
+    const toObject = centre.subtract(cam.position);
+    const distanceM = toObject.length();
+    const forward = cam.getDirection(Vector3.Forward());
+    const cos = distanceM > 1e-6 ? Vector3.Dot(toObject.normalize(), forward) : 1;
+    const angleDeg = (Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI;
+    const behind = cos < 0;
+    const x = p.x / w;
+    const y = p.y / h;
+    const onScreen = !behind && p.z > 0 && x >= 0 && x <= 1 && y >= 0 && y <= 1;
+
+    // How far past the edge, as an angle, so the number means the same thing on
+    // a phone and on a tablet.
+    const halfV = this.visibleFovDeg / 2;
+    const outY = Math.max(0, Math.abs(y - 0.5) * 2 - 1) * halfV;
+    const outX = Math.max(0, Math.abs(x - 0.5) * 2 - 1) * halfV * (w / Math.max(1, h));
+    const offScreenDeg = behind ? angleDeg : Math.max(outX, outY);
+
+    let direction: 'up' | 'down' | 'left' | 'right' | 'behind' | 'here';
+    if (onScreen) direction = 'here';
+    else if (behind) direction = 'behind';
+    else if (outY >= outX) direction = y > 0.5 ? 'down' : 'up';
+    else direction = x > 0.5 ? 'right' : 'left';
+
+    return { onScreen, behind, distanceM, x, y, direction, offScreenDeg };
+  }
+
+  /**
+   * Put the assembly where the operator is looking, without a tap.
+   *
+   * The escape hatch from "it is anchored somewhere I cannot see": one action
+   * that moves it into view and keeps it standing level.
+   */
+  bringInFront(): Pose {
+    return this.computeAnchorInFront({ centreInView: true });
   }
 
   /** World-space centre of a part's visible geometry. */
