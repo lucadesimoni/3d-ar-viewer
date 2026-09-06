@@ -10,7 +10,7 @@ import { detectPerfProfile } from '../render/perf';
 import { getActiveManager } from '../render/babylon/managerRegistry';
 import { toImageData } from '../vision/opencv';
 import { alignToMarker } from '../engine/alignment';
-import { useStore } from '../state/store';
+import { useStore, surfaceDrop } from '../state/store';
 import type { GridTargetDef } from '../engine/types';
 import type { SceneManager } from '../render/babylon/SceneManager';
 
@@ -283,7 +283,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     // by gravity and eye height, so the tap lands at a real distance.
     if (manager && armPlacement(manager, 'camera')) {
       stopPlacement.current = manager.startGroundPlacement(
-        useStore.getState().arSettings.eyeHeightM,
+        surfaceDrop(useStore.getState().arSettings),
         (pose) => {
           useStore.getState().setAnchor(pose, 0.6, 'floor');
           stopPlacement.current = undefined;
@@ -337,8 +337,16 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       rafRef.current = requestAnimationFrame(loop);
       if (video.readyState < 2) return;
       const anchorDue = objectAnchor.current !== undefined && now - lastTrack >= trackIntervalMs;
+      // No part-recognition model, no part recognition. Nothing is bundled and
+      // nothing is fine-tuned on these parts, so unless a deployment supplies
+      // VITE_DETECTOR_MODEL_URL there is no detector — and running the frame
+      // through an empty pipeline only produced an empty result, which the
+      // banner then reported as "Looking for Base plate…" forever. Claiming to
+      // search for something that can never be found is worse than silence.
       const pipeline = pipelineRef.current;
-      const pipelineDue = pipeline !== undefined && !pipelineBusy
+      const canRecognize = pipeline !== undefined
+        && (pipeline.status().detector || pipeline.status().classifier);
+      const pipelineDue = canRecognize && !pipelineBusy
         && now - lastPipeline >= perf.recognitionIntervalMs;
       if (!anchorDue && !pipelineDue) return;
 
@@ -401,7 +409,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       return;
     }
     stopPlacement.current = manager.startGroundPlacement(
-      useStore.getState().arSettings.eyeHeightM,
+      surfaceDrop(useStore.getState().arSettings),
       (pose) => {
         useStore.getState().setAnchor(pose, 0.6, 'floor');
         stopPlacement.current = undefined;

@@ -7,6 +7,7 @@ import { ArSettings } from './ArSettings';
 import { VerdictBanner } from './RecognitionOverlay';
 import { useUiConfig } from '../ui/UiConfigContext';
 import type { Capabilities } from '../engine/tracking/capabilities';
+import type { PipelineStatus } from '../vision/pipeline';
 
 type Sheet = 'steps' | 'errors' | 'view' | 'settings' | null;
 
@@ -23,10 +24,11 @@ type Sheet = 'steps' | 'errors' | 'view' | 'settings' | null;
  * Everything here is at least 48 px tall, which is the smallest target a gloved
  * finger reliably hits on a workshop tablet.
  */
-export function ArHud({ onExit, onReplace, capabilities }: {
+export function ArHud({ onExit, onReplace, capabilities, pipeline }: {
   onExit: () => void;
   onReplace: () => void;
   capabilities?: Capabilities;
+  pipeline?: PipelineStatus;
 }): JSX.Element {
   const [sheet, setSheet] = useState<Sheet>(null);
   const showBanner = useUiConfig().showRecognitionBanner;
@@ -35,6 +37,7 @@ export function ArHud({ onExit, onReplace, capabilities }: {
   const setActiveStep = useStore((s) => s.setActiveStep);
   const diagnostics = useStore((s) => s.diagnostics);
   const completed = useStore((s) => s.completedStepIds);
+  const placing = useStore((s) => s.arPlacement) === 'awaiting';
 
   const index = assembly.steps.findIndex((s) => s.id === activeStepId);
   const step = index >= 0 ? assembly.steps[index] : undefined;
@@ -57,7 +60,7 @@ export function ArHud({ onExit, onReplace, capabilities }: {
           {sheet === 'steps' && <StepGuide />}
           {sheet === 'errors' && <DiagnosticsPanel />}
           {sheet === 'view' && <ModeBar />}
-          {sheet === 'settings' && <ArSettings capabilities={capabilities} />}
+          {sheet === 'settings' && <ArSettings capabilities={capabilities} pipeline={pipeline} />}
         </div>
       )}
 
@@ -82,7 +85,15 @@ export function ArHud({ onExit, onReplace, capabilities }: {
         <button className={`ar-btn ${sheet === 'view' ? 'active' : ''}`} onClick={() => toggle('view')}>
           <span className="ar-btn-icon">❋</span>View
         </button>
-        <button className="ar-btn" onClick={() => { setSheet(null); onReplace(); }}>
+        {/* "Move" is how the operator says where this goes. It stays lit while
+            the tap is armed, so it is obvious that the next tap will be taken
+            as a placement rather than as a part selection. The label itself
+            never changes — a control that renames itself is hard to look for. */}
+        <button
+          className={`ar-btn ${placing ? 'active' : ''}`}
+          onClick={() => { setSheet(null); onReplace(); }}
+          aria-pressed={placing}
+        >
           <span className="ar-btn-icon">◎</span>Move
         </button>
         <button

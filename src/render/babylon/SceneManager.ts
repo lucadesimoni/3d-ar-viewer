@@ -211,7 +211,13 @@ export class SceneManager {
   /** Natural size of the passthrough video, once it is known. */
   private passthrough: { width: number; height: number } | undefined;
   /** Assumed height of the device above the floor during placement, metres. */
-  private placementEyeHeight = 1.45;
+  /**
+   * How far below the device the placement plane lies, metres.
+   *
+   * Eye height minus the height of the surface being placed on: 1.45 m for the
+   * floor when the phone is held at chest height, ~0.7 m for a work table.
+   */
+  private surfaceDropM = 1.45;
   /** Vertical FOV actually visible on screen, degrees — see `applyPassthroughFov`. */
   private visibleFovDeg = ASSUMED_CAMERA_FOV_DEG;
   /** Hardware scaling the device should render at when it can keep up. */
@@ -446,8 +452,9 @@ export class SceneManager {
    * dragging the slider moves the reticle under the finger — you can see the
    * ring settle onto the real floor instead of guessing a number.
    */
-  setEyeHeight(metres: number): void {
-    this.placementEyeHeight = metres;
+  /** Set the drop from the device to the surface being placed on, in metres. */
+  setSurfaceDrop(metres: number): void {
+    this.surfaceDropM = metres;
   }
 
   private applyPassthroughFov(): void {
@@ -522,7 +529,8 @@ export class SceneManager {
    * app used to guess. Returns a stop function.
    */
   startGroundPlacement(
-    eyeHeightM: number,
+    /** Drop from the device to the surface to place on: eye height above it. */
+    surfaceDropM: number,
     onPlace: (pose: Pose) => void,
     opts: {
       maxDistanceM?: number;
@@ -537,10 +545,10 @@ export class SceneManager {
     } = {},
   ): () => void {
     const maxDistanceM = opts.maxDistanceM ?? this.placementRange();
-    this.placementEyeHeight = eyeHeightM;
+    this.surfaceDropM = surfaceDropM;
     this.setPlacementActive(true);
     const groundY = (): number =>
-      (this.scene.activeCamera ?? this.camera).position.y - this.placementEyeHeight;
+      (this.scene.activeCamera ?? this.camera).position.y - this.surfaceDropM;
     // Aim down the screen until the ray meets the floor. With the phone held
     // level the centre of the screen is the horizon and picks nothing, which
     // left the operator staring at an empty view with no ring to aim; walking

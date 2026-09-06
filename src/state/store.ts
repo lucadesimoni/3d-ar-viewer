@@ -32,6 +32,15 @@ export interface ArSettings {
   cameraFovDeg: number;
   /** How high the device is being held, metres — defines the floor plane. */
   eyeHeightM: number;
+  /**
+   * Height of the surface being placed on, above the floor, in metres.
+   *
+   * Assemblies are not always built on the floor: a gearbox goes on a bench, a
+   * shelf carcass on a work table. Without this the tap always landed on the
+   * floor plane and the overlay sank through the table it was meant to sit on.
+   * 0 is the floor; a table is around 0.75 m.
+   */
+  surfaceHeightM: number;
   /** Let recognition of the object re-anchor the overlay automatically. */
   autoRecognize: boolean;
   /**
@@ -42,6 +51,16 @@ export interface ArSettings {
    * once a workpiece is where it belongs and the reticle is just in the way.
    */
   placeOnEntry: boolean;
+}
+
+/**
+ * Drop from the device to the surface being placed on, in metres.
+ *
+ * The one place the placement plane is defined: how high the phone is held,
+ * less how high the surface stands off the floor.
+ */
+export function surfaceDrop(s: ArSettings): number {
+  return s.eyeHeightM - s.surfaceHeightM;
 }
 
 /**
@@ -239,6 +258,7 @@ export const useStore = create<AppState>((set, get) => {
     arSettings: {
       cameraFovDeg: readFovOverride() ?? 60,
       eyeHeightM: 1.45,
+      surfaceHeightM: 0,
       autoRecognize: true,
       placeOnEntry: true,
     } as ArSettings,
@@ -296,6 +316,8 @@ export const useStore = create<AppState>((set, get) => {
       // and nobody holds a tablet below the knee or above their head.
       next.cameraFovDeg = Math.max(35, Math.min(110, next.cameraFovDeg));
       next.eyeHeightM = Math.max(0.4, Math.min(2.2, next.eyeHeightM));
+      // A surface above the device is not a surface you can put anything on.
+      next.surfaceHeightM = Math.max(0, Math.min(next.eyeHeightM - 0.2, next.surfaceHeightM));
       set({ arSettings: next });
     },
     setArMode(mode) {

@@ -15,6 +15,9 @@ error · **unverified** = correct as far as it can be tested here · **chore**.
   classification and segmentation; with no `VITE_DETECTOR_MODEL_URL` set it runs
   geometry-only and stays quiet. Pick a model with a redistributable licence,
   self-host it, ship its labels. `src/vision/defaultModels.ts`
+  Until then, *part* recognition is off and the UI says so — what still works
+  without any model is **shape** recognition of an assembly's `recognition`
+  target (the KALLAX facade lattice) and hand placement onto a chosen surface.
 - **chore — OpenCV.js is loaded from `docs.opencv.org`.** That is a
   documentation site, not a CDN: no SRI, ~8 MB, and a single point of failure
   behind a corporate firewall. Self-host it or pin a real CDN with an integrity

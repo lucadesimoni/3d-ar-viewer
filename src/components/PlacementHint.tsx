@@ -1,5 +1,12 @@
 import { useStore } from '../state/store';
 
+/** What the surface the operator is aiming at is called, from its height. */
+export function surfaceName(heightM: number): string {
+  if (heightM < 0.02) return 'floor';
+  if (heightM < 0.85) return 'table';
+  return 'bench';
+}
+
 /**
  * The one line of AR chrome that has to be there: what the app is waiting for.
  *
@@ -14,6 +21,7 @@ export function PlacementHint(): JSX.Element | null {
   const target = useStore((s) => s.assembly.recognition);
   const source = useStore((s) => s.arSource);
   const motion = useStore((s) => s.arMotion);
+  const surface = surfaceName(useStore((s) => s.arSettings.surfaceHeightM));
 
   if (placement === 'idle') return null;
 
@@ -31,20 +39,23 @@ export function PlacementHint(): JSX.Element | null {
           ? 'No motion sensor — tap to place it straight ahead'
           : source === 'webxr'
             ? `Move the phone to find a surface, then tap${looking}`
-            : `Tap the floor to place${looking}`}
+            : `Tap the ${surface} to place${looking}`}
       </div>
     );
   }
 
-  const sourceLabel =
-    placement === 'recognized' ? `Locked onto the ${target?.label ?? 'object'}`
-      : placement === 'marker' ? 'Locked onto the marker'
-        : placement === 'floor' ? 'Placed on the floor'
-          : 'Registered manually';
+  // A percentage is only meaningful where it measures a match. A placement the
+  // operator made by hand is exactly as good as their aim, and showing it as
+  // "60%" read like a progress bar that had stalled. Say what to do instead.
+  const placed = placement === 'recognized'
+    ? `Locked onto the ${target?.label ?? 'object'} · ${Math.round(quality * 100)}%`
+    : placement === 'marker' ? `Locked onto the marker · ${Math.round(quality * 100)}%`
+      : placement === 'floor' ? `Placed on the ${surface} — "Move" to reposition`
+        : 'Registered manually';
   return (
     <div className={`placement-hint placed ${blind ? 'warn' : ''}`}>
       <span className={`dot ${blind ? 'warn' : 'ok'}`} />
-      {sourceLabel} · {Math.round(quality * 100)}%
+      {placed}
       <span className="hint-mode">{blind ? 'no sensor' : source === 'webxr' ? 'WebXR' : 'Camera'}</span>
     </div>
   );
