@@ -386,6 +386,23 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
   }, [arActive, capabilities, assembly, setAnchor, stop, videoRef]);
 
   /**
+   * Move the assembly into view, now, without a placement gesture.
+   *
+   * The escape hatch for an anchor the operator cannot find: it lands in front
+   * of wherever they are looking, at a distance derived from its own size. Aim
+   * and tap still re-places it properly afterwards.
+   */
+  const bringInFront = useCallback(() => {
+    const manager = getActiveManager();
+    if (!manager || !arActive) return;
+    stopPlacement.current?.();
+    stopPlacement.current = undefined;
+    objectAnchor.current?.reset();
+    if (previewTimer.current) window.clearTimeout(previewTimer.current);
+    useStore.getState().setAnchor(manager.bringInFront(), 0.6, 'manual');
+  }, [arActive]);
+
+  /**
    * Put the assembly somewhere else: go back to aiming at the floor.
    *
    * Operators move. Without this the only way to correct a placement was to
@@ -453,7 +470,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
 
   useEffect(() => () => stop(), [stop]);
 
-  return { capabilities, pipelineStatus, arActive, enterAr, replaceAnchor };
+  return { capabilities, pipelineStatus, arActive, enterAr, replaceAnchor, bringInFront };
 }
 
 /**

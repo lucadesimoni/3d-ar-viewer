@@ -56,7 +56,8 @@ function SheetTab({ id, current, onPick, label, icon, count }: {
 export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
   const ui = useMemo(() => resolveUiConfig(config), [config]);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const { capabilities, pipelineStatus, arActive, enterAr, replaceAnchor } = useArController(videoRef);
+  const { capabilities, pipelineStatus, arActive, enterAr, replaceAnchor, bringInFront } =
+    useArController(videoRef);
   const [drawer, setDrawer] = useState<Drawer>(undefined);
   // On a phone/tablet the three-column desktop layout does not fit: the viewport
   // is the app, and the panels live in a collapsible sheet with one visible at a
@@ -182,7 +183,10 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
         </div>
 
         {ui.showModeBar && !isMobile && !arActive && <ModeBar />}
-        {arActive && <ArHud onExit={enterAr} onReplace={replaceAnchor} capabilities={capabilities} pipeline={pipelineStatus} />}
+        {arActive && <ArHud
+            onExit={enterAr} onReplace={replaceAnchor} onBringInFront={bringInFront}
+            capabilities={capabilities} pipeline={pipelineStatus}
+          />}
 
       </div>
     </UiConfigProvider>

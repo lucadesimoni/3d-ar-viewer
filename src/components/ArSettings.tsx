@@ -3,7 +3,7 @@ import { getActiveManager, getActiveRenderBackend } from '../render/babylon/mana
 import { MODE_LABELS, type Capabilities } from '../engine/tracking/capabilities';
 import type { PipelineStatus } from '../vision/pipeline';
 import { detectGpu, gpuLabel } from '../render/perf';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 /** Common working surfaces, so the height is one tap rather than a slider hunt. */
 const SURFACES: { label: string; height: number }[] = [
@@ -35,6 +35,13 @@ export function ArSettings({ capabilities, pipeline }: {
   const quality = useStore((s) => s.anchorQuality);
   const gpu = useMemo(() => detectGpu(), []);
   const shapeTarget = useStore((s) => s.assembly.recognition?.label);
+  // Sampled while the sheet is open; the sheet is not on screen long enough for
+  // a per-frame subscription to be worth it.
+  const [view, setView] = useState(() => getActiveManager()?.anchorViewState());
+  useEffect(() => {
+    const id = window.setInterval(() => setView(getActiveManager()?.anchorViewState()), 250);
+    return () => window.clearInterval(id);
+  }, []);
 
   const setFov = (v: number) => {
     setArSettings({ cameraFovDeg: v });
@@ -146,6 +153,17 @@ export function ArSettings({ capabilities, pipeline }: {
 
       <dl className="ar-facts">
         <div><dt>Anchor</dt><dd>{placement === 'idle' ? 'none' : `${placement} · ${Math.round(quality * 100)}%`}</dd></div>
+        {/* Answers "camera works, but I see nothing" without a debugger: either
+            the assembly is in view and the problem is rendering, or it is not
+            and the problem is where you are looking. */}
+        <div>
+          <dt>In view</dt>
+          <dd>
+            {!view ? '—'
+              : view.onScreen ? `yes · ${view.distanceM.toFixed(1)} m`
+                : `no · ${view.distanceM.toFixed(1)} m, ${view.direction}`}
+          </dd>
+        </div>
         <div><dt>Mode</dt><dd>{capabilities ? MODE_LABELS[capabilities.recommended] : '—'}</dd></div>
         <div><dt>Renderer</dt><dd>{getActiveRenderBackend() === 'webgpu' ? 'WebGPU' : gpuLabel(gpu)}</dd></div>
         {/* Say plainly whether part recognition can run at all. Silence here is
