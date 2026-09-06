@@ -102,6 +102,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
   const xrSession = useRef<{ end: () => Promise<void> } | undefined>(undefined);
   const rafRef = useRef<number | undefined>(undefined);
   const wakeLock = useRef<WakeLock | undefined>(undefined);
+  const cameraSuspended = useRef(false);
   const objectAnchor = useRef<ObjectAnchorTracker | undefined>(undefined);
   const videoGeometryCleanup = useRef<(() => void) | undefined>(undefined);
 
@@ -165,12 +166,58 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     safely('scene', () => getActiveManager()?.setArMode(false));
     trackerRef.current = undefined;
     markerRef.current = undefined;
+    cameraSuspended.current = false;
 
     const store = useStore.getState();
     store.setRecognition(undefined);
     store.setArPlacement('idle');
     store.setArSource(undefined);
+    store.setArMotion(false);
   }, [videoRef]);
+
+  /**
+   * Bring the camera up and wire it to the scene. Used both when entering AR
+   * and when resuming a session that was suspended while the tab was in the
+   * background, so the two cannot drift apart.
+   */
+  const startCamera = useCallback(async (video: HTMLVideoElement): Promise<boolean> => {
+    const tracker = new CameraTracker();
+    trackerRef.current = tracker;
+    await tracker.start(video);
+    if (tracker.state.error) {
+      // Say what happened. Doing nothing at all was indistinguishable from a
+      // broken build, and the commonest causes are things the operator can fix
+      // in two taps once they know what is being asked.
+      useStore.getState().setArError(tracker.state.error);
+      trackerRef.current = undefined;
+      return false;
+    }
+    useStore.getState().setArError(undefined);
+
+    const manager = getActiveManager();
+    // Tell the scene the camera image's shape so the overlay is drawn at the
+    // field of view actually visible after `object-fit: cover` crops it. On a
+    // tablet in landscape a 4:3 frame loses ~7% of its height, and rendering at
+    // the uncropped FOV makes the whole overlay that much too small.
+    const publishGeometry = (): void => {
+      if (video.videoWidth > 0) {
+        manager?.setPassthroughSource(
+          video.videoWidth, video.videoHeight,
+          useStore.getState().arSettings.cameraFovDeg,
+        );
+      }
+    };
+    publishGeometry();
+    video.addEventListener('loadedmetadata', publishGeometry);
+    videoGeometryCleanup.current?.();
+    videoGeometryCleanup.current = () => video.removeEventListener('loadedmetadata', publishGeometry);
+
+    tracker.subscribe((st) => {
+      getActiveManager()?.setDeviceOrientation(st.orientation);
+      useStore.getState().setArMotion(st.receivingMotion);
+    });
+    return true;
+  }, []);
 
   const enterAr = useCallback(async () => {
     if (arActive) { stop(); return; }
@@ -223,42 +270,14 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
 
     wakeLock.current = await takeWakeLock();
 
-    const tracker = new CameraTracker();
-    trackerRef.current = tracker;
-    await tracker.start(video);
-    if (tracker.state.error) {
-      // Say what happened. Doing nothing at all was indistinguishable from a
-      // broken build, and the commonest cause is a permission the operator can
-      // grant in two taps once they know that is what is being asked.
-      store.setArError(tracker.state.error);
-      trackerRef.current = undefined;
-      return;
-    }
-    useStore.getState().setArError(undefined);
+    if (!(await startCamera(video))) return;
     useStore.getState().setArSource('camera');
     setArActive(true);
 
     // Put the 3D scene into AR: transparent clear, head camera, orbit controls
-    // off — then drive that camera from the device's orientation.
+    // off — the camera itself is driven from the device's orientation inside
+    // `startCamera`, which is also what resuming after a tab switch replays.
     manager?.setArMode(true);
-    // Tell the scene the camera image's shape so the overlay is drawn at the
-    // field of view actually visible after `object-fit: cover` crops it. On a
-    // tablet in landscape a 4:3 frame loses ~7% of its height, and rendering at
-    // the uncropped FOV makes the whole overlay that much too small.
-    const publishGeometry = (): void => {
-      if (video.videoWidth > 0) {
-        manager?.setPassthroughSource(
-          video.videoWidth, video.videoHeight,
-          useStore.getState().arSettings.cameraFovDeg,
-        );
-      }
-    };
-    publishGeometry();
-    video.addEventListener('loadedmetadata', publishGeometry);
-    videoGeometryCleanup.current = () => video.removeEventListener('loadedmetadata', publishGeometry);
-    tracker.subscribe((st) => {
-      getActiveManager()?.setDeviceOrientation(st.orientation);
-    });
 
     // 4. Aim at the floor and tap. The reticle follows the ground plane implied
     // by gravity and eye height, so the tap lands at a real distance.
@@ -278,6 +297,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
           useStore.getState().setAnchor(manager.computeAnchorInFront(), 0.2, 'awaiting');
         }
       }, PREVIEW_FALLBACK_MS);
+
     }
 
     // 3. Marker re-registration: when the fiducial is in view, snap the anchor
@@ -292,7 +312,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
         setAnchor(anchor, quality, 'marker');
         stopPlacement.current?.();
         stopPlacement.current = undefined;
-        tracker.markRegistered();
+        trackerRef.current?.markRegistered();
       });
       markerRef.current = marker;
       marker.start(video);
@@ -388,18 +408,38 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     );
   }, [arActive]);
 
-  // The browser drops the wake lock when the page is hidden; take it again when
-  // the operator comes back to a still-running AR session.
+  /**
+   * Hand the camera back while the tab is in the background, and take it again
+   * on return.
+   *
+   * A hidden tab holding the camera is why the next one cannot have it: the
+   * operator switches away, opens the app again, and gets `NotReadableError`
+   * from a device their own first tab is still holding. The wake lock is
+   * dropped by the browser in the same situation and re-taken the same way.
+   */
   useEffect(() => {
     if (!arActive) return;
-    const onVisible = (): void => {
-      if (document.visibilityState !== 'visible') return;
-      if (wakeLock.current && !wakeLock.current.released) return;
-      void takeWakeLock().then((lock) => { wakeLock.current = lock; });
+    const onVisibility = (): void => {
+      const video = videoRef.current;
+      if (document.visibilityState === 'hidden') {
+        if (xrSession.current) return;   // an XR session manages its own lifecycle
+        trackerRef.current?.stop();
+        trackerRef.current = undefined;
+        releaseVideo(video);
+        cameraSuspended.current = true;
+        return;
+      }
+      if (wakeLock.current === undefined || wakeLock.current.released) {
+        void takeWakeLock().then((lock) => { wakeLock.current = lock; });
+      }
+      if (cameraSuspended.current && video) {
+        cameraSuspended.current = false;
+        void startCamera(video);
+      }
     };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [arActive]);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [arActive, startCamera, videoRef]);
 
   useEffect(() => () => stop(), [stop]);
 

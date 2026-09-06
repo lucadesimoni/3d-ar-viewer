@@ -361,14 +361,29 @@ export class SceneManager {
    * matches what is on screen. Returns undefined at or above the horizon, where
    * a ground intersection would be meaningless.
    */
-  pickGround(screenX: number, screenY: number, groundY: number): Pose | undefined {
+  pickGround(screenX: number, screenY: number, groundY: number, maxDistance = 25): Pose | undefined {
     const cam = this.scene.activeCamera;
     if (!cam) return undefined;
     const ray = this.scene.createPickingRay(screenX, screenY, Matrix.Identity(), cam);
     if (Math.abs(ray.direction.y) < 1e-4) return undefined;
     const t = (groundY - ray.origin.y) / ray.direction.y;
-    if (!Number.isFinite(t) || t <= 0 || t > 25) return undefined;
+    if (!Number.isFinite(t) || t <= 0) return undefined;
     const p = ray.origin.add(ray.direction.scale(t));
+
+    // Aim closer to the horizon and the intersection runs away towards it.
+    // Refusing the tap would be worse than answering it: pull the point back
+    // along the same bearing to the furthest distance this assembly can still
+    // be seen at, and keep it on the floor.
+    const dx = p.x - ray.origin.x;
+    const dz = p.z - ray.origin.z;
+    const horizontal = Math.hypot(dx, dz);
+    if (horizontal > maxDistance && horizontal > 1e-6) {
+      const k = maxDistance / horizontal;
+      return {
+        position: [ray.origin.x + dx * k, p.y, ray.origin.z + dz * k],
+        rotation: [0, 0, 0, 1],
+      };
+    }
     return { position: [p.x, p.y, p.z], rotation: [0, 0, 0, 1] };
   }
 
@@ -389,6 +404,27 @@ export class SceneManager {
     this.passthrough = { width, height };
     if (fovDeg && fovDeg > 1 && fovDeg < 179) this.cameraFovDeg = fovDeg;
     this.applyPassthroughFov();
+  }
+
+  /**
+   * How far away it still makes sense to put this assembly, metres.
+   *
+   * A tap near the horizon meets the estimated ground plane tens of metres out,
+   * and a 300 mm gearbox placed 20 m away is a few pixels of nothing — the
+   * badge said "placed" and the screen showed empty floor. Bounding the range by
+   * the object's own size keeps a mis-aimed tap inside the room.
+   */
+  placementRange(): number {
+    // Eight radii puts the object at roughly 14 degrees of the view — small,
+    // but unmistakably there. Measured on the parts alone: a 300 mm gearbox
+    // sharing a root with its bench looked twice its size and was allowed twice
+    // the distance.
+    return Math.min(8, Math.max(1.2, this.assemblyBounds(true).radius * 8));
+  }
+
+  /** Bounding radius of the built assembly, metres. */
+  assemblyRadiusM(): number {
+    return this.assemblyBounds().radius;
   }
 
   /** Vertical FOV currently on screen, degrees — use this for intrinsics too. */
@@ -485,7 +521,11 @@ export class SceneManager {
    * intersection gives a true metric position instead of the fixed standoff the
    * app used to guess. Returns a stop function.
    */
-  startGroundPlacement(eyeHeightM: number, onPlace: (pose: Pose) => void): () => void {
+  startGroundPlacement(
+    eyeHeightM: number,
+    onPlace: (pose: Pose) => void,
+    maxDistanceM = this.placementRange(),
+  ): () => void {
     this.placementEyeHeight = eyeHeightM;
     this.setPlacementActive(true);
     const groundY = (): number =>
@@ -497,7 +537,7 @@ export class SceneManager {
     const aim = (): Pose | undefined => {
       const { x, y } = this.screenCentre();
       for (const f of [1, 1.3, 1.6, 1.8]) {
-        const hit = this.pickGround(x, y * f, groundY());
+        const hit = this.pickGround(x, y * f, groundY(), maxDistanceM);
         if (hit) return hit;
       }
       return undefined;
@@ -513,7 +553,7 @@ export class SceneManager {
       if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) return;
       // Place where they tapped, falling back to the reticle if the tap missed
       // the floor plane (above the horizon).
-      const hit = this.pickGround(this.scene.pointerX, this.scene.pointerY, groundY()) ?? aim();
+      const hit = this.pickGround(this.scene.pointerX, this.scene.pointerY, groundY(), maxDistanceM) ?? aim();
       if (!hit) return;
       onPlace(this.placementPose(hit));
       stop();
@@ -840,8 +880,15 @@ export class SceneManager {
    * anywhere on a part, so origins alone under-report a 1.5 m shelf by half its
    * height. Falls back to the origins if nothing is built yet.
    */
-  private assemblyBounds(): { centre: Vector3; radius: number } {
-    const meshes = this.assemblyRoot.getChildMeshes(false, (n) => n.getClassName().includes('Mesh'));
+  private assemblyBounds(partsOnly = false): { centre: Vector3; radius: number } {
+    // The bench, the wall and the keep-out volumes hang off the same root and
+    // are what you want *framed*; they are not what you are placing. A gearbox
+    // measured together with its bench is twice the radius, and everything
+    // derived from that — the standoff, the placement range — comes out too far.
+    const meshes = this.assemblyRoot.getChildMeshes(
+      false,
+      (n) => n.getClassName().includes('Mesh') && (!partsOnly || n.name.startsWith('mesh-')),
+    );
     if (meshes.length > 0) {
       let min = meshes[0].getBoundingInfo().boundingBox.minimumWorld.clone();
       let max = meshes[0].getBoundingInfo().boundingBox.maximumWorld.clone();

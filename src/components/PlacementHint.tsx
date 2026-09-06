@@ -14,17 +14,25 @@ export function PlacementHint({ capabilities }: { capabilities?: Capabilities })
   const quality = useStore((s) => s.anchorQuality);
   const target = useStore((s) => s.assembly.recognition);
   const source = useStore((s) => s.arSource);
+  const motion = useStore((s) => s.arMotion);
 
   if (placement === 'idle') return null;
+
+  // Worth saying out loud: without orientation the overlay cannot follow the
+  // phone, and the floor plane a placement rests on is a guess. The instruction
+  // still stands — tapping puts the assembly in front of the operator.
+  const blind = source === 'camera' && !motion;
 
   if (placement === 'awaiting') {
     const looking = target ? ' — or point it at the shelf' : '';
     return (
-      <div className="placement-hint">
-        <span className="dot" />
-        {capabilities?.immersiveAr
-          ? `Move the phone to find a surface, then tap${looking}`
-          : `Tap the floor to place${looking}`}
+      <div className={`placement-hint ${blind ? 'warn' : ''}`}>
+        <span className={`dot ${blind ? 'warn' : ''}`} />
+        {blind
+          ? 'No motion sensor — tap to place it straight ahead'
+          : capabilities?.immersiveAr
+            ? `Move the phone to find a surface, then tap${looking}`
+            : `Tap the floor to place${looking}`}
       </div>
     );
   }
@@ -35,10 +43,10 @@ export function PlacementHint({ capabilities }: { capabilities?: Capabilities })
         : placement === 'floor' ? 'Placed on the floor'
           : 'Registered manually';
   return (
-    <div className="placement-hint placed">
-      <span className="dot ok" />
+    <div className={`placement-hint placed ${blind ? 'warn' : ''}`}>
+      <span className={`dot ${blind ? 'warn' : 'ok'}`} />
       {sourceLabel} · {Math.round(quality * 100)}%
-      <span className="hint-mode">{source === 'webxr' ? 'WebXR' : 'Camera'}</span>
+      <span className="hint-mode">{blind ? 'no sensor' : source === 'webxr' ? 'WebXR' : 'Camera'}</span>
     </div>
   );
 }

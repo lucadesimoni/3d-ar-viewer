@@ -336,6 +336,70 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 3d-bis. A mis-aimed tap must not put the assembly across the street. --
+{
+  const page = await context.newPage();
+  // The gearbox is 300 mm across. A tap near the horizon meets the estimated
+  // ground plane tens of metres out, and at that range it is a few pixels of
+  // nothing — the badge said "placed" and the screen showed empty floor.
+  await open(page, `${URL}?assembly=bench-gearbox`);
+  await page.locator('.ar-enter').click();
+  await page.waitForTimeout(2000);
+  const size = await page.viewportSize();
+  await page.mouse.click(size.width / 2, size.height * 0.53);   // just below the horizon
+  await page.waitForTimeout(700);
+  const far = await page.evaluate(() => {
+    const a = window.spatialStore.getState().anchor;
+    return a ? Math.hypot(a.position[0], a.position[2]) : null;
+  });
+  check('a small assembly is never placed further away than it can be seen',
+    far === null || far <= 3.2, far === null ? 'not placed' : `${far.toFixed(2)} m`);
+  await page.close();
+}
+
+// --- 3e. A camera that is busy the first time, and one that stays busy. ----
+{
+  const page = await context.newPage();
+  // `NotReadableError: Could not start video source` almost never means broken
+  // hardware. It means something else holds the camera — another tab of this
+  // same app, a video call — or that the device had not finished releasing it.
+  // The second case clears in a fraction of a second and is worth one retry.
+  await page.addInitScript(() => {
+    const real = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    let calls = 0;
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      calls++;
+      if (calls === 1) throw new DOMException('busy', 'NotReadableError');
+      return real(constraints);
+    };
+  });
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  await page.locator('.ar-enter').click();
+  await page.waitForTimeout(3500);
+  const recovered = await page.evaluate(() => {
+    const v = document.querySelector('video.passthrough');
+    return { width: v?.videoWidth ?? 0, error: window.spatialStore.getState().arError ?? null };
+  });
+  check('a camera that is busy for a moment is retried, not given up on',
+    recovered.width > 0 && !recovered.error, `width=${recovered.width} error=${recovered.error}`);
+  await page.close();
+}
+{
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    navigator.mediaDevices.getUserMedia = async () => {
+      throw new DOMException('busy', 'NotReadableError');
+    };
+  });
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  await page.locator('.ar-enter').click();
+  await page.waitForTimeout(4000);
+  const message = await page.textContent('.ar-error').catch(() => null);
+  check('a camera that stays busy is explained, not left silent',
+    Boolean(message && /busy|another tab/i.test(message)), message?.replace(/\s+/g, ' ').trim());
+  await page.close();
+}
+
 // --- 4. Following a moving object between detections. ---------------------
 {
   const page = await context.newPage();

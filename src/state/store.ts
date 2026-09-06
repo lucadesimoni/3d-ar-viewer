@@ -76,6 +76,14 @@ export interface AppState {
   arError: string | undefined;
   /** Which path AR actually took — the honest answer to "is this real AR?". */
   arSource: 'webxr' | 'camera' | undefined;
+  /**
+   * Whether the device is actually reporting its orientation.
+   *
+   * Without it the overlay cannot follow the phone and the floor plane is a
+   * guess, so the operator needs to know rather than wonder why the assembly
+   * sits still while they move.
+   */
+  arMotion: boolean;
   arMode: ArMode;
   viewMode: ViewMode;
   explodeFactor: number;
@@ -106,6 +114,7 @@ export interface AppState {
   setArSettings(patch: Partial<ArSettings>): void;
   setArError(message: string | undefined): void;
   setArSource(source: 'webxr' | 'camera' | undefined): void;
+  setArMotion(receiving: boolean): void;
   setArMode(mode: ArMode): void;
   setViewMode(mode: ViewMode): void;
   setExplodeFactor(f: number): void;
@@ -226,6 +235,7 @@ export const useStore = create<AppState>((set, get) => {
     arPlacement: 'idle' as ArPlacement,
     arError: undefined,
     arSource: undefined,
+    arMotion: false,
     arSettings: {
       cameraFovDeg: readFovOverride() ?? 60,
       eyeHeightM: 1.45,
@@ -276,6 +286,9 @@ export const useStore = create<AppState>((set, get) => {
     },
     setArSource(source) {
       set({ arSource: source });
+    },
+    setArMotion(receiving) {
+      if (get().arMotion !== receiving) set({ arMotion: receiving });
     },
     setArSettings(patch) {
       const next = { ...get().arSettings, ...patch };

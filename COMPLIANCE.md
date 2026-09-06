@@ -2,7 +2,7 @@
 
 Traceability from the original request (and its follow-up stack decisions) to
 where each requirement is implemented and how it is verified. Every row is
-backed by code that ships in this repo; the test suite is 161 passing tests, plus a 20-check browser run over the AR
+backed by code that ships in this repo; the test suite is 161 passing tests, plus a 42-check browser run over the AR
 anchoring, tracking and HUD on phone and tablet viewports (`npm run ar:verify`).
 
 ## Original brief

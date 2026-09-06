@@ -581,3 +581,5 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase;
   color: var(--muted); border-left: 1px solid var(--edge); padding-left: 8px; margin-left: 2px;
 }
+.placement-hint.warn { border-color: rgba(245, 158, 11, 0.5); }
+.placement-hint .dot.warn { background: var(--warn); }

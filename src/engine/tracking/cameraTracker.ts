@@ -63,6 +63,88 @@ export function orientationToQuaternion(
   return q.normalize();
 }
 
+
+/**
+ * Camera constraints, best first.
+ *
+ * A phone that refuses 1080p from the rear camera will often hand over the
+ * front one, or an unspecified one, without complaint — and a picture from the
+ * wrong camera beats no AR at all, which is what a single rigid request gets
+ * you when the device is busy or the resolution is unavailable.
+ */
+const CAMERA_ATTEMPTS: MediaStreamConstraints[] = [
+  {
+    video: {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+    },
+    audio: false,
+  },
+  { video: { facingMode: { ideal: 'environment' } }, audio: false },
+  { video: true, audio: false },
+];
+
+/** How long to wait before trying again after a busy device, ms. */
+const RETRY_DELAY_MS = 450;
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Open the camera, or explain in a sentence why not.
+ *
+ * `NotReadableError: Could not start video source` is the one worth handling
+ * properly: it almost never means broken hardware, it means something else has
+ * the camera — another tab of this same app, a video call, the system camera —
+ * or that the device had not finished releasing it from the previous session.
+ * The second case clears in a fraction of a second, so it is worth one retry
+ * before troubling the operator; the first needs a message that says which
+ * thing to go and close.
+ */
+async function openCamera(): Promise<MediaStream | string> {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+    return 'This browser exposes no camera API. AR needs a secure (HTTPS) context.';
+  }
+
+  let last: unknown;
+  for (let attempt = 0; attempt < CAMERA_ATTEMPTS.length; attempt++) {
+    for (const wait of [0, RETRY_DELAY_MS]) {
+      if (wait) await sleep(wait);
+      try {
+        return await navigator.mediaDevices.getUserMedia(CAMERA_ATTEMPTS[attempt]);
+      } catch (err) {
+        last = err;
+        const name = err instanceof Error ? err.name : '';
+        // A refusal and a missing device will not change on a retry.
+        if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'NotFoundError') {
+          return describeCameraError(err);
+        }
+        // Anything else is worth one more go, then the next constraint set.
+        if (wait) break;
+      }
+    }
+  }
+  return describeCameraError(last);
+}
+
+function describeCameraError(err: unknown): string {
+  const name = err instanceof Error ? err.name : '';
+  switch (name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return 'Camera access was denied. Allow it for this site in the browser\u2019s address-bar permissions, then try again.';
+    case 'NotReadableError':
+    case 'AbortError':
+      return 'The camera is busy. Something else is using it \u2014 most often another tab with this app open, or a video call. Close it and try again.';
+    case 'NotFoundError':
+      return 'No camera found on this device.';
+    case 'OverconstrainedError':
+      return 'This camera cannot provide a usable video mode.';
+    default:
+      return `Camera unavailable: ${String(err)}`;
+  }
+}
+
 export class CameraTracker {
   state: CameraTrackerState = {
     running: false,
@@ -115,32 +197,28 @@ export class CameraTracker {
 
   /** Open the rear camera and start listening to the motion sensors. */
   async start(video: HTMLVideoElement): Promise<void> {
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-        audio: false,
-      });
-    } catch (err) {
-      this.state.error =
-        err instanceof Error && err.name === 'NotAllowedError'
-          ? 'Camera access was denied. Enable it in Settings ▸ Safari ▸ Camera.'
-          : `Camera unavailable: ${String(err)}`;
+    const stream = await openCamera();
+    if (typeof stream === 'string') {
+      this.state.error = stream;
       this.state.running = false;
       this.emit();
       return;
     }
+    this.stream = stream;
 
     video.srcObject = this.stream;
     video.setAttribute('playsinline', 'true'); // iOS fullscreens the video without this
     video.muted = true;
     await video.play().catch(() => undefined);
 
+    // Two event names, because Android is split on which one it fires: Chrome
+    // and Samsung Internet deliver `deviceorientationabsolute` on many devices
+    // and nothing at all on the plain name. Listening only for the plain one
+    // left the scene camera level while the phone pointed at the floor — the
+    // overlay was then placed correctly and rendered somewhere off screen.
     this.listener = (e: DeviceOrientationEvent) => this.onOrientation(e);
     window.addEventListener('deviceorientation', this.listener, true);
+    window.addEventListener('deviceorientationabsolute', this.listener, true);
     this.state.running = true;
     this.state.error = undefined;
     this.emit();
@@ -205,7 +283,10 @@ export class CameraTracker {
   }
 
   stop(): void {
-    if (this.listener) window.removeEventListener('deviceorientation', this.listener, true);
+    if (this.listener) {
+      window.removeEventListener('deviceorientation', this.listener, true);
+      window.removeEventListener('deviceorientationabsolute', this.listener, true);
+    }
     this.listener = undefined;
     for (const track of this.stream?.getTracks() ?? []) track.stop();
     this.stream = undefined;
