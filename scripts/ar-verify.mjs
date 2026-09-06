@@ -607,6 +607,55 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 8. Choosing the surface, and not claiming to recognise what it cannot. -
+// "Looking for Base plate…" ran forever on the live build: no detector model is
+// deployed, so the pipeline returned nothing and the banner reported that as an
+// eternal search. And the tap always landed on the floor, so a bench assembly
+// sank through the bench.
+{
+  const page = await context.newPage();
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  await page.click('.ar-enter');
+  await page.evaluate(() => {
+    setInterval(() => window.dispatchEvent(
+      new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 60, gamma: 0 })), 50);
+  });
+  await page.waitForTimeout(2500);
+
+  check('no part-recognition claim without a model',
+    await page.locator('.recognition-banner').count() === 0,
+    await page.locator('.recognition-banner').first().textContent().catch(() => ''));
+
+  await page.mouse.click(195, 640);
+  await page.waitForTimeout(600);
+  const onFloor = (await state(page)).anchor;
+  const hint = await page.textContent('.placement-hint');
+  check('a hand-made placement is not reported as a percentage',
+    !/%/.test(hint) && /move/i.test(hint), hint.trim());
+
+  // Switch to a table and re-place at the same screen point.
+  await page.click('.ar-btn:has-text("Settings")');
+  await page.click('.ar-chip:has-text("Table")');
+  await page.click('.ar-btn:has-text("Settings")');
+  await page.click('.ar-btn:has-text("Move")');
+  await page.waitForTimeout(500);
+  const aimingAt = await page.textContent('.placement-hint');
+  check('the hint names the surface being aimed at', /table/i.test(aimingAt), aimingAt.trim());
+  await page.mouse.click(195, 640);
+  await page.waitForTimeout(600);
+  const onTable = (await state(page)).anchor;
+
+  const rise = onTable[1] - onFloor[1];
+  check('placing on a table lands a table-height above the floor',
+    Math.abs(rise - 0.75) < 0.02, `${rise.toFixed(3)} m higher`);
+  // Same plane, same aim: it must land nearer, not just higher.
+  const near = Math.hypot(onTable[0], onTable[2]) < Math.hypot(onFloor[0], onFloor[2]);
+  check('and nearer, because the ray meets the higher plane sooner', near,
+    `${Math.hypot(onTable[0], onTable[2]).toFixed(2)} m vs ${Math.hypot(onFloor[0], onFloor[2]).toFixed(2)} m`);
+  await page.screenshot({ path: `${OUT}/ar-surface-table.png` });
+  await page.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall checks passed');
 process.exit(failures.length ? 1 : 0);

@@ -546,6 +546,13 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 .ar-toggle { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.35; }
 .ar-toggle input { width: 22px; height: 22px; flex: 0 0 auto; accent-color: var(--accent); }
 .ar-toggle .ar-set-help { display: block; font-style: normal; margin-top: 2px; }
+.ar-chips { display: flex; gap: 6px; }
+.ar-chip {
+  flex: 1 1 0; min-height: 40px; border-radius: 10px;
+  background: rgba(255,255,255,0.05); border-color: transparent;
+  font-size: 13px; font-weight: 600;
+}
+.ar-chip.active { background: rgba(34, 211, 238, 0.2); color: var(--accent); border-color: var(--accent); }
 .ar-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 2px 0 0; }
 .ar-facts div { background: rgba(255,255,255,0.04); border-radius: 10px; padding: 8px 10px; }
 .ar-facts dt { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }

@@ -182,7 +182,7 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
         </div>
 
         {ui.showModeBar && !isMobile && !arActive && <ModeBar />}
-        {arActive && <ArHud onExit={enterAr} onReplace={replaceAnchor} capabilities={capabilities} />}
+        {arActive && <ArHud onExit={enterAr} onReplace={replaceAnchor} capabilities={capabilities} pipeline={pipelineStatus} />}
 
       </div>
     </UiConfigProvider>
