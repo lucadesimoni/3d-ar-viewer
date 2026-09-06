@@ -107,7 +107,17 @@ export interface PartDef {
    * engine checks for them explicitly.
    */
   mirrorGroup?: string;
-  /** Direction the part is brought in from, assembly frame. Drives the animation. */
+  /**
+   * Where the part is brought in *from*, as a unit vector in the assembly frame
+   * pointing away from the installed position — the direction you would pull it
+   * back out. A board dropped from above is `[0, 1, 0]`; a cover pushed on from
+   * the front is `[0, 0, 1]`.
+   *
+   * Stated this precisely because the opposite reading (the direction the part
+   * travels) is just as natural and produces animations that fly parts in
+   * through the assembly, and exploded views that push them into it. Defaults
+   * to `[0, 1, 0]`.
+   */
   approach?: Vec3;
   /**
    * Parts this one may legitimately overlap. Interference is detected with

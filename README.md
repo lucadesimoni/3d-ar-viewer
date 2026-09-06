@@ -356,6 +356,31 @@ milliseconds of plain JavaScript, deterministic, and it needs no model download.
 The facade must be roughly square-on (within ~20°), which is how you stand in
 front of a shelf anyway.
 
+## What the guidance looks like
+
+The step card tells you what to fit; the 3D view has to tell you *which parts*,
+and the two must not have to be read against each other:
+
+- The active step's parts are highlighted and every other part is dimmed to a
+  ghost.
+- Each highlighted part carries **its own name, pinned to it** and projected
+  every frame. Four identical shelves in a row would produce four overlapping
+  labels, so a tag is dropped when it would land on one already placed and the
+  remainder is reported as a count.
+- **Show me** plays that step's parts flying in along their approach direction,
+  staggered in the order they go in — which is what shows *how* a part goes in
+  and which way round it is. It is a demonstration: placements are untouched and
+  the view returns to exactly what it was.
+
+`npm run steps:check` asserts all three against every step of every bundled
+assembly: that each label belongs to the step it is shown for, that "Show me"
+moves the step's own parts and no others, and that it changes nothing.
+
+> A part's `approach` is **where it is brought in from** — a board dropped from
+> above is `[0, 1, 0]`. The opposite reading is just as natural and was in half
+> the sample data, which is why parts used to fly in *through* the assembly and
+> the exploded view pushed them into it. The type carries the definition now.
+
 ## The AR view on a phone or tablet
 
 In AR the camera image *is* the interface, so the desktop layout is put away
@@ -382,6 +407,11 @@ stays under the thumb on a 13-inch iPad, and the canvas takes `touch-action:
 none` so a tap places the assembly instead of scrolling the page. The screen is
 held awake for the session — a tablet that dims mid-step drops the camera feed
 and the anchor with it.
+
+Outside AR a phone gets **one** bottom bar — steps, errors, view modes, the
+register/collaborate/BOM drawers, and the way into AR — each opening the same
+sheet. It used to be three stacked bars plus floating drawer tabs over the
+model, which left the 3D view a letterbox on a 390 px screen.
 
 Two layout rules exist specifically because of iOS Safari:
 

@@ -1,6 +1,7 @@
 import { useStore } from '../state/store';
 import { ASSEMBLIES } from '../data';
 import { useUiConfig } from '../ui/UiConfigContext';
+import { useStepPreview } from './useStepPreview';
 
 /** Left rail: the ordered build steps with live status, and the active card. */
 export function StepGuide(): JSX.Element {
@@ -10,7 +11,7 @@ export function StepGuide(): JSX.Element {
   const setActiveStep = useStore((s) => s.setActiveStep);
   const completeStep = useStore((s) => s.completeStep);
   const reopenStep = useStore((s) => s.reopenStep);
-  const autoPlace = useStore((s) => s.autoPlaceActiveStep);
+  const preview = useStepPreview();
   const ui = useUiConfig();
 
   const active = sequence.steps.find((s) => s.step.id === activeStepId);
@@ -74,7 +75,7 @@ export function StepGuide(): JSX.Element {
             <p className="blocked">Blocked until earlier steps are complete.</p>
           )}
           <div className="active-actions">
-            <button className="ghost" onClick={autoPlace}>Show me</button>
+            <button className="ghost" onClick={preview.play}>▶ Show me</button>
             {active.status === 'complete' ? (
               <button className="secondary" onClick={() => reopenStep(active.step.id)}>Re-open</button>
             ) : (

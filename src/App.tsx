@@ -12,12 +12,16 @@ import { useArController } from './components/useArController';
 import { QuickLookButton } from './components/QuickLookButton';
 import { RecognitionOverlay } from './components/RecognitionOverlay';
 import { PlacementHint } from './components/PlacementHint';
+import { StepAnnotations } from './components/StepAnnotations';
 import { ArHud } from './components/ArHud';
 import { UiConfigProvider } from './ui/UiConfigContext';
 import { resolveUiConfig, type UiConfig } from './ui/config';
 import { useMediaQuery } from './ui/useMediaQuery';
+import { useStore } from './state/store';
 
 type Drawer = 'register' | 'collab' | 'bom' | undefined;
+/** What the phone's bottom sheet is showing. */
+type Sheet = 'steps' | 'errors' | 'view' | 'more' | null;
 
 /**
  * Application shell. Its layout flexes from a full workstation down to a bare
@@ -27,6 +31,28 @@ type Drawer = 'register' | 'collab' | 'bom' | undefined;
  * host such as the Mendix widget, or parsed from URL params) is all it takes to
  * reshape the UI — there is no separate embed build.
  */
+/** One tab in the phone's bottom bar. Tapping the open one closes the sheet. */
+function SheetTab({ id, current, onPick, label, icon, count }: {
+  id: Exclude<Sheet, null>;
+  current: Sheet;
+  onPick: (s: Sheet) => void;
+  label: string;
+  icon: string;
+  count?: number;
+}): JSX.Element {
+  const active = current === id;
+  return (
+    <button
+      role="tab" aria-selected={active} className={active ? 'active' : ''}
+      onClick={() => onPick(active ? null : id)}
+    >
+      <span className="sheet-tab-icon" aria-hidden="true">{icon}</span>
+      {label}
+      {count ? <span className="sheet-tab-count">{count}</span> : null}
+    </button>
+  );
+}
+
 export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
   const ui = useMemo(() => resolveUiConfig(config), [config]);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -36,7 +62,9 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
   // is the app, and the panels live in a collapsible sheet with one visible at a
   // time. In AR the sheet starts collapsed so nothing covers the camera.
   const isMobile = useMediaQuery('(max-width: 1024px)');
-  const [sheet, setSheet] = useState<'steps' | 'errors' | null>('steps');
+  const errorCount = useStore((s) => s.diagnostics.filter((d) => d.severity === 'error').length);
+  const [sheet, setSheet] = useState<Sheet>('steps');
+  const [notesOpen, setNotesOpen] = useState(true);
   const mobileSheet = arActive ? null : sheet;
 
   const rootClass = [
@@ -64,15 +92,25 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
         )}
         {ui.showRecognition && !arActive && <QuickLookButton capabilities={capabilities} />}
 
+        {ui.showHeader && notesOpen && capabilities && capabilities.notes.length > 0 && !arActive && !isMobile && (
+          <div className="capability-notes" role="status">
+            <button className="notes-close" onClick={() => setNotesOpen(false)} aria-label="Dismiss">✕</button>
+            {capabilities.notes.map((n) => <p key={n}>ℹ {n}</p>)}
+          </div>
+        )}
+
         <div className="stage">
           {ui.showSteps && !arActive && (!isMobile || mobileSheet === 'steps') && <StepGuide />}
           <main className="viewport">
             <Viewer transparent={arActive} />
+            {ui.showSteps && <StepAnnotations />}
             {ui.showRecognition && <RecognitionOverlay />}
             {arActive && <PlacementHint capabilities={capabilities} />}
             <div className="viewport-overlay">
               {ui.showInspector && <InspectorPanel />}
-              {ui.showDrawers && !arActive && (
+              {/* On a phone these live in the "More" sheet; floating over the
+                  viewport they covered the top third of the model. */}
+              {ui.showDrawers && !isMobile && !arActive && (
                 <>
                   <div className="drawer-tabs">
                     <button className={drawer === 'register' ? 'active' : ''} onClick={() => setDrawer(drawer === 'register' ? undefined : 'register')}>Register</button>
@@ -91,21 +129,38 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
             </div>
           </main>
           {ui.showDiagnostics && !arActive && (!isMobile || mobileSheet === 'errors') && <DiagnosticsPanel />}
+
+          {/* A phone gets one sheet, not three stacked bars: the view modes and
+              the register/collaborate/BOM drawers live in it too, reached from
+              the same row of tabs as the steps and the errors. */}
+          {isMobile && !arActive && mobileSheet === 'view' && ui.showModeBar && (
+            <div className="panel mobile-sheet"><ModeBar /></div>
+          )}
+          {isMobile && !arActive && mobileSheet === 'more' && ui.showDrawers && (
+            <div className="panel mobile-sheet">
+              <div className="drawer-tabs">
+                <button className={drawer === 'register' ? 'active' : ''} onClick={() => setDrawer('register')}>Register</button>
+                <button className={drawer === 'collab' ? 'active' : ''} onClick={() => setDrawer('collab')}>Collaborate</button>
+                <button className={drawer === 'bom' ? 'active' : ''} onClick={() => setDrawer('bom')}>BOM</button>
+              </div>
+              {drawer === 'collab' ? <CollabPanel /> : drawer === 'bom' ? <BomPanel /> : <RegistrationPanel />}
+            </div>
+          )}
+
           {isMobile && !arActive && (
             <nav className="sheet-tabs" role="tablist">
               {ui.showSteps && (
-                <button role="tab" aria-selected={mobileSheet === 'steps'}
-                  className={mobileSheet === 'steps' ? 'active' : ''}
-                  onClick={() => setSheet(sheet === 'steps' ? null : 'steps')}>Steps</button>
+                <SheetTab id="steps" current={mobileSheet} onPick={setSheet} label="Steps" icon="☰" />
               )}
               {ui.showDiagnostics && (
-                <button role="tab" aria-selected={mobileSheet === 'errors'}
-                  className={mobileSheet === 'errors' ? 'active' : ''}
-                  onClick={() => setSheet(sheet === 'errors' ? null : 'errors')}>Errors</button>
+                <SheetTab id="errors" current={mobileSheet} onPick={setSheet} label="Errors" icon="⚠"
+                  count={errorCount} />
               )}
-              {(ui.showSteps || ui.showDiagnostics) && (
-                <button className="sheet-collapse" onClick={() => setSheet(null)}
-                  aria-label="Hide panel">▾</button>
+              {ui.showModeBar && (
+                <SheetTab id="view" current={mobileSheet} onPick={setSheet} label="View" icon="❋" />
+              )}
+              {ui.showDrawers && (
+                <SheetTab id="more" current={mobileSheet} onPick={setSheet} label="More" icon="⋯" />
               )}
               {/* Always last, always there: the way into AR on a phone. */}
               <button className="ar-enter sheet-ar" onClick={enterAr}>
@@ -115,14 +170,9 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
           )}
         </div>
 
-        {ui.showModeBar && !arActive && <ModeBar />}
+        {ui.showModeBar && !isMobile && !arActive && <ModeBar />}
         {arActive && <ArHud onExit={enterAr} onReplace={replaceAnchor} capabilities={capabilities} />}
 
-        {ui.showHeader && capabilities && capabilities.notes.length > 0 && !arActive && (
-          <div className="capability-notes">
-            {capabilities.notes.map((n) => <p key={n}>ℹ {n}</p>)}
-          </div>
-        )}
       </div>
     </UiConfigProvider>
   );

@@ -48,6 +48,16 @@ button.ghost { background: transparent; }
 h2, h3 { margin: 0 0 6px; font-weight: 640; letter-spacing: 0.01em; }
 code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px; font-size: 0.85em; }
 
+/* Keyboard focus has to be obvious — the app is used with gloves on a tablet
+   and with a keyboard at a desk, and `outline: none` somewhere in a reset is
+   how the second case quietly breaks. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+:focus:not(:focus-visible) { outline: none; }
+
 /* ---------- Layout ---------- */
 .app { display: flex; flex-direction: column; height: 100%; height: -webkit-fill-available; height: 100dvh; position: relative; overflow: hidden; }
 .passthrough {
@@ -274,8 +284,32 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 .participants .role { color: var(--muted); font-size: 11px; margin-left: 4px; }
 
 /* Notes */
-.capability-notes { position: absolute; bottom: 74px; left: 12px; max-width: 420px; background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; padding: 8px 12px; font-size: 11.5px; color: var(--muted); z-index: 2; }
-.capability-notes p { margin: 3px 0; }
+/* Informational, so it sits in the flow under the header rather than floating
+   over the step card — where it used to cover "Show me" and "Sign off". */
+.capability-notes {
+  position: relative; display: flex; flex-direction: column; gap: 2px;
+  margin: 8px 12px 0; padding: 8px 34px 8px 12px;
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 10px;
+  font-size: 11.5px; color: var(--muted);
+}
+.capability-notes p { margin: 0; }
+.notes-close {
+  position: absolute; top: 4px; right: 4px;
+  min-height: 28px; padding: 2px 8px; font-size: 12px;
+  background: transparent; border: none; color: var(--muted);
+}
+
+/* The header must stay one line: wrapped badges and a two-line tagline added
+   140 px of chrome above the thing people are actually looking at. */
+@media (max-width: 1279px) {
+  .brand .tagline { display: none; }
+}
+@media (max-width: 1024px) {
+  .status-bar { padding: 6px 12px; gap: 10px; }
+  .badges { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .badges::-webkit-scrollbar { display: none; }
+  .badge { white-space: nowrap; }
+}
 
 /* ---------- Responsive: tablet portrait & phone ---------- */
 /* ---------- Mobile: the viewport IS the app ----------
@@ -299,17 +333,34 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   }
   .app.mobile.sheet-collapsed .viewport { min-height: 60dvh; }
 
+  /* One bar, always last in the column: steps, errors, view, more, and the way
+     into AR. A phone had three stacked bars before this — a tab row, a mode bar
+     and the browser's own chrome — which left the 3D view a letterbox. */
   .sheet-tabs {
-    display: flex; gap: 6px; align-items: center;
+    order: 3;
+    display: flex; gap: 6px; align-items: stretch;
     background: var(--panel); border: 1px solid var(--edge);
     border-radius: var(--radius); padding: 5px;
+    padding-bottom: max(5px, env(safe-area-inset-bottom));
   }
+  .mobile-sheet { order: 2; max-height: 46dvh; overflow: auto; overscroll-behavior: contain; }
+  .mobile-sheet .mode-bar { background: transparent; border: none; padding: 4px 0; }
+  .mobile-sheet .drawer-tabs { margin-bottom: 10px; }
+  .mobile-sheet .drawer { width: auto; background: transparent; border: none; padding: 0; }
   .sheet-tabs button {
-    flex: 1; min-height: 42px; border: none; background: transparent;
-    font-size: 13px; border-radius: 9px;
+    position: relative; flex: 1 1 0; min-width: 0; min-height: 48px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    border: none; background: transparent; color: var(--text);
+    font-size: 11.5px; font-weight: 600; border-radius: 10px;
+  }
+  .sheet-tab-icon { font-size: 16px; line-height: 1; }
+  .sheet-tab-count {
+    position: absolute; top: 3px; right: calc(50% - 24px);
+    min-width: 17px; padding: 0 4px; border-radius: 999px;
+    background: var(--error); color: #fff; font-size: 10px; line-height: 17px; font-weight: 700;
   }
   .sheet-tabs button.active { background: rgba(34, 211, 238, 0.18); color: var(--accent); }
-  .sheet-tabs .sheet-collapse { flex: 0 0 44px; }
+  .sheet-tabs .sheet-ar { flex: 1.4 1 0; }
 
   /* Overlay drawers must not cover the whole small screen. */
   .viewport-overlay { max-width: 70vw; }
@@ -428,9 +479,8 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
    hardest place to reach one-handed. On mobile the entry point moves into the
    bottom nav, which is already the thumb's home. */
 .sheet-tabs .sheet-ar {
-  flex: 0 0 auto; background: linear-gradient(180deg, var(--accent), var(--accent-2));
-  color: #04141a; font-weight: 700; border: none; padding: 0 14px; gap: 6px;
-  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  color: #04141a; font-weight: 700; border: none; padding: 0 12px;
 }
 
 /* Floating AR button used when the header is hidden. */
@@ -491,3 +541,27 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 .ar-facts div { background: rgba(255,255,255,0.04); border-radius: 10px; padding: 8px 10px; }
 .ar-facts dt { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 .ar-facts dd { margin: 2px 0 0; font-size: 13px; font-weight: 600; }
+
+/* ---------- Step annotations, pinned to the parts they name ---------- */
+.step-annotations { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+.step-tag {
+  position: absolute; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+}
+.step-tag-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.22);
+  flex: 0 0 auto;
+}
+.step-tag-label {
+  font-size: 11.5px; font-weight: 620; letter-spacing: 0.01em;
+  padding: 3px 8px; border-radius: 999px;
+  background: rgba(6, 12, 18, 0.78); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  border: 1px solid rgba(34, 211, 238, 0.35); color: #e8f7fb;
+}
+.step-tag-more {
+  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+  font-size: 11px; color: var(--muted);
+  background: rgba(6, 12, 18, 0.7); padding: 4px 10px; border-radius: 999px;
+}

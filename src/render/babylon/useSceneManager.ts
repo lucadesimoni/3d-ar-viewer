@@ -84,7 +84,9 @@ export function useSceneManager(
         selectedPartId: s.selectedPartId,
         activePartIds: new Set(step?.partIds ?? []),
         explodeFactor: s.explodeFactor,
-        timeline: s.viewMode === 'animate' ? s.animationTimeline : undefined,
+        // Whenever a timeline exists, not only in Animate mode: the per-step
+        // "Show me" plays one transiently from the guide.
+        timeline: s.animationTimeline,
         timelineT: s.animationT,
         showBackground: true,
         showGhosts: s.viewMode === 'guide' || s.viewMode === 'explore',

@@ -51,7 +51,7 @@ const parts: PartDef[] = [
     mesh: { type: 'plate', size: [PLATE.w, PLATE.t, PLATE.d] },
     material: { color: '#5b6472', metalness: 0.6, roughness: 0.4 },
     targetPose: { position: [0, PLATE_Y, 0], rotation: I },
-    approach: [0, -1, 0], massKg: 1.8, connectors: [],
+    approach: [0, 1, 0], massKg: 1.8, connectors: [],
   },
   {
     id: 'housing', name: 'Gear housing', sku: 'GBX-200',

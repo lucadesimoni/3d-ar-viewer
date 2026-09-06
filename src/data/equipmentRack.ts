@@ -155,7 +155,7 @@ function buildRack(): AssemblyDef {
     mesh: { type: 'plate', size: [W + 0.06, 0.03, D + 0.06] },
     material: { color: '#3f4854', metalness: 0.6, roughness: 0.5 },
     targetPose: { position: [0, 0.015, 0], rotation: I },
-    approach: [0, -1, 0],
+    approach: [0, 1, 0],
     massKg: 9,
   });
 

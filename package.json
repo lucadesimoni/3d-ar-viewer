@@ -15,6 +15,7 @@
     "screenshots": "node scripts/screenshots.mjs",
     "ar:verify": "node scripts/ar-verify.mjs",
     "deploy:check": "node scripts/deploy-check.mjs",
+    "steps:check": "node scripts/steps-check.mjs",
     "start": "npm run build && node server/serve.mjs",
     "serve": "node server/serve.mjs"
   },

@@ -56,7 +56,7 @@ const parts: PartDef[] = [
     mesh: { type: 'box', size: [W, T, D] },
     material: BOARD,
     targetPose: { position: [0, boardY(0), 0], rotation: I },
-    approach: [0, -1, 0], massKg: 4.6, connectors: [],
+    approach: [0, 1, 0], massKg: 4.6, connectors: [],
   },
   {
     id: 'side-l', name: 'Side panel, left', sku: 'KLX-S141', mirrorGroup: 'side',
@@ -64,7 +64,7 @@ const parts: PartDef[] = [
     mesh: { type: 'box', size: [T, INNER_H, D] },
     material: BOARD,
     targetPose: { position: [panelX(0), T + INNER_H / 2, 0], rotation: I },
-    approach: [0, -1, 0], massKg: 4.4, connectors: [],
+    approach: [0, 1, 0], massKg: 4.4, connectors: [],
   },
   {
     id: 'side-r', name: 'Side panel, right', sku: 'KLX-S141', mirrorGroup: 'side',
@@ -72,7 +72,7 @@ const parts: PartDef[] = [
     mesh: { type: 'box', size: [T, INNER_H, D] },
     material: BOARD,
     targetPose: { position: [panelX(COLS), T + INNER_H / 2, 0], rotation: I },
-    approach: [0, -1, 0], massKg: 4.4, connectors: [],
+    approach: [0, 1, 0], massKg: 4.4, connectors: [],
   },
   ...dividerIds.map((id, k) => ({
     id, name: `Divider ${k + 1}`, sku: 'KLX-D141',
@@ -80,7 +80,7 @@ const parts: PartDef[] = [
     mesh: { type: 'box' as const, size: [T, INNER_H, D] as Vec3 },
     material: BOARD,
     targetPose: { position: [panelX(k + 1), T + INNER_H / 2, 0] as Vec3, rotation: I },
-    approach: [0, -1, 0] as Vec3, massKg: 4.4, connectors: [],
+    approach: [0, 1, 0] as Vec3, massKg: 4.4, connectors: [],
   })),
   // Three rows of four short shelves. In a KALLAX the verticals run the full
   // height and the shelves are the short cross pieces, not the other way round.
@@ -91,7 +91,7 @@ const parts: PartDef[] = [
       mesh: { type: 'box' as const, size: [CUBE, T, D] as Vec3 },
       material: BOARD,
       targetPose: { position: [cubeX(c), boardY(r), 0] as Vec3, rotation: I },
-      approach: [0, -1, 0] as Vec3, massKg: 1.1, connectors: [],
+      approach: [0, 1, 0] as Vec3, massKg: 1.1, connectors: [],
     })),
   ),
   {
@@ -100,7 +100,7 @@ const parts: PartDef[] = [
     mesh: { type: 'box', size: [W, T, D] },
     material: BOARD,
     targetPose: { position: [0, boardY(ROWS), 0], rotation: I },
-    approach: [0, -1, 0], massKg: 4.6, connectors: [],
+    approach: [0, 1, 0], massKg: 4.6, connectors: [],
   },
   {
     id: 'back', name: 'Back panel', sku: 'KLX-BP147',

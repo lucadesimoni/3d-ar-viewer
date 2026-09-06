@@ -42,7 +42,6 @@ import {
   buildMesh,
   makeMaterial,
   makeOverlayMaterial,
-  vec3,
 } from './meshFactory';
 
 export interface SceneRenderState {
@@ -277,7 +276,7 @@ export class SceneManager {
     // Auto-frame: derive the distance from the assembly's own size so a 0.2 m
     // gearbox and a 2.2 m rack both fill a similar share of the view. A fixed
     // distance made the small sample a speck at the bottom edge.
-    const radius = this.assemblyRadius();
+    const radius = this.assemblyBounds().radius;
     const halfFov = ((this.visibleFovDeg * Math.PI) / 180) / 2;
     const distance = Math.min(5, Math.max(0.5, (radius / Math.tan(halfFov)) * 1.7));
     const drop = Math.min(1.0, Math.max(0.1, radius * 0.5));
@@ -794,9 +793,56 @@ export class SceneManager {
   }
 
   /** World-space bounding sphere radius, for framing the camera. */
+  /**
+   * Put the whole assembly on screen, whatever its size and whatever shape the
+   * viewport is.
+   *
+   * This used to target the first part and sit 0.7 m away, which happens to
+   * suit a bench gearbox and puts the camera *inside* a 1.5 m shelf — the view
+   * was a wall of one board with no way to tell what you were looking at. The
+   * distance now comes from the real bounding sphere and the narrower of the
+   * two field-of-view angles, so a tall assembly on a narrow phone is framed by
+   * the width and a wide one on a laptop by the height.
+   */
   frameCamera(): void {
-    this.camera.setTarget(vec3(this.assembly.parts[0]?.targetPose.position ?? [0, 0, 0]));
-    this.camera.radius = 0.7;
+    const { centre, radius } = this.assemblyBounds();
+    this.camera.setTarget(centre);
+
+    const halfVertical = this.camera.fov / 2;
+    const aspect = this.engine.getAspectRatio(this.camera) || 1;
+    const halfHorizontal = Math.atan(Math.tan(halfVertical) * aspect);
+    const half = Math.max(0.1, Math.min(halfVertical, halfHorizontal));
+
+    const distance = (radius / Math.sin(half)) * 1.15;   // 15% air around it
+    this.camera.radius = Math.min(60, Math.max(0.3, distance));
+    // Let the operator get close without falling through the far side.
+    this.camera.lowerRadiusLimit = Math.max(0.15, radius * 0.35);
+    this.camera.upperRadiusLimit = distance * 4;
+  }
+
+  /**
+   * Centre and bounding radius of the built assembly, in world units.
+   *
+   * Measured from the meshes rather than from part origins: a datum can sit
+   * anywhere on a part, so origins alone under-report a 1.5 m shelf by half its
+   * height. Falls back to the origins if nothing is built yet.
+   */
+  private assemblyBounds(): { centre: Vector3; radius: number } {
+    const meshes = this.assemblyRoot.getChildMeshes(false, (n) => n.getClassName().includes('Mesh'));
+    if (meshes.length > 0) {
+      let min = meshes[0].getBoundingInfo().boundingBox.minimumWorld.clone();
+      let max = meshes[0].getBoundingInfo().boundingBox.maximumWorld.clone();
+      for (const mesh of meshes) {
+        const box = mesh.getBoundingInfo().boundingBox;
+        min = Vector3.Minimize(min, box.minimumWorld);
+        max = Vector3.Maximize(max, box.maximumWorld);
+      }
+      const centre = min.add(max).scale(0.5);
+      const radius = Math.max(0.05, max.subtract(min).length() / 2);
+      return { centre, radius };
+    }
+    const c = this.centroid;
+    return { centre: new Vector3(c.x, c.y, c.z), radius: this.assemblyRadius() };
   }
 
   addGroundGrid(): void {
