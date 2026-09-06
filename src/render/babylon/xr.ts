@@ -104,7 +104,10 @@ export async function startImmersiveAr(scene: Scene, overlayRoot: HTMLElement, h
   try {
     await xr.baseExperience.enterXRAsync('immersive-ar', 'local-floor', xr.renderTarget);
   } catch (err) {
+    // Leave the scene exactly as it was found, so the camera fallback starts
+    // from a known state rather than from half an XR session.
     await xr.baseExperience.exitXRAsync().catch(() => undefined);
+    scene.onPointerDown = undefined;
     xr.dispose();
     return undefined;   // the caller falls back to camera passthrough
   }

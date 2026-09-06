@@ -136,12 +136,22 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     trackerRef.current = undefined;
     useStore.getState().setRecognition(undefined);
     useStore.getState().setArPlacement('idle');
+    useStore.getState().setArSource(undefined);
     setArActive(false);
   }, []);
 
   const enterAr = useCallback(async () => {
     if (arActive) { stop(); return; }
-    if (!capabilities) return;
+    const store = useStore.getState();
+    store.setArError(undefined);
+    if (!capabilities) {
+      store.setArError('Still checking what this device can do — try again in a moment.');
+      return;
+    }
+    if (!capabilities.secureContext) {
+      store.setArError('AR needs HTTPS. Open this page over a secure connection.');
+      return;
+    }
     const manager = getActiveManager();
 
     // 1. A device with real AR: let WebXR find the floor and place on a tap.
@@ -155,6 +165,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       );
       if (session) {
         xrSession.current = session;
+        useStore.getState().setArSource('webxr');
         wakeLock.current = await takeWakeLock();
         armPlacement(manager, 'webxr');
         setArActive(true);
@@ -166,7 +177,14 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     }
 
     const video = videoRef.current;
-    if (!video) return;
+    if (!video) {
+      store.setArError('The camera surface is missing — reload the page.');
+      return;
+    }
+    if (!capabilities.camera) {
+      store.setArError('This browser exposes no camera. AR falls back to the 3D preview.');
+      return;
+    }
 
     // iOS gates motion behind a user gesture — this call is inside the click.
     if (capabilities.motionNeedsPermission) await CameraTracker.requestMotionPermission();
@@ -176,7 +194,16 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     const tracker = new CameraTracker();
     trackerRef.current = tracker;
     await tracker.start(video);
-    if (tracker.state.error) return;
+    if (tracker.state.error) {
+      // Say what happened. Doing nothing at all was indistinguishable from a
+      // broken build, and the commonest cause is a permission the operator can
+      // grant in two taps once they know that is what is being asked.
+      store.setArError(tracker.state.error);
+      trackerRef.current = undefined;
+      return;
+    }
+    useStore.getState().setArError(undefined);
+    useStore.getState().setArSource('camera');
     setArActive(true);
 
     // Put the 3D scene into AR: transparent clear, head camera, orbit controls

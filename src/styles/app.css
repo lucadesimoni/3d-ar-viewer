@@ -565,3 +565,19 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   font-size: 11px; color: var(--muted);
   background: rgba(6, 12, 18, 0.7); padding: 4px 10px; border-radius: 999px;
 }
+
+/* AR could not start — shown on every screen size, because the alternative is
+   a button that appears to do nothing. */
+.ar-error {
+  position: relative; display: flex; align-items: flex-start; gap: 8px;
+  margin: 8px 12px 0; padding: 10px 34px 10px 12px;
+  background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 10px; color: #ffd9d9; font-size: 12.5px; line-height: 1.4;
+}
+.ar-error p { margin: 0; }
+/* Which AR path is running — the difference between real tracking and a
+   camera with sensors is worth one word on screen. */
+.placement-hint .hint-mode {
+  font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted); border-left: 1px solid var(--edge); padding-left: 8px; margin-left: 2px;
+}

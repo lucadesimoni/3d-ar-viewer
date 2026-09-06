@@ -12,6 +12,7 @@ export function StepGuide(): JSX.Element {
   const completeStep = useStore((s) => s.completeStep);
   const reopenStep = useStore((s) => s.reopenStep);
   const preview = useStepPreview();
+  const placeStep = useStore((s) => s.placeActiveStepFromStandoff);
   const ui = useUiConfig();
 
   const active = sequence.steps.find((s) => s.step.id === activeStepId);
@@ -76,6 +77,7 @@ export function StepGuide(): JSX.Element {
           )}
           <div className="active-actions">
             <button className="ghost" onClick={preview.play}>▶ Show me</button>
+            <button className="secondary" onClick={placeStep}>⤓ Place</button>
             {active.status === 'complete' ? (
               <button className="secondary" onClick={() => reopenStep(active.step.id)}>Re-open</button>
             ) : (

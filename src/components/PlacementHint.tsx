@@ -13,6 +13,7 @@ export function PlacementHint({ capabilities }: { capabilities?: Capabilities })
   const placement = useStore((s) => s.arPlacement);
   const quality = useStore((s) => s.anchorQuality);
   const target = useStore((s) => s.assembly.recognition);
+  const source = useStore((s) => s.arSource);
 
   if (placement === 'idle') return null;
 
@@ -28,7 +29,7 @@ export function PlacementHint({ capabilities }: { capabilities?: Capabilities })
     );
   }
 
-  const source =
+  const sourceLabel =
     placement === 'recognized' ? `Locked onto the ${target?.label ?? 'object'}`
       : placement === 'marker' ? 'Locked onto the marker'
         : placement === 'floor' ? 'Placed on the floor'
@@ -36,7 +37,8 @@ export function PlacementHint({ capabilities }: { capabilities?: Capabilities })
   return (
     <div className="placement-hint placed">
       <span className="dot ok" />
-      {source} · {Math.round(quality * 100)}%
+      {sourceLabel} · {Math.round(quality * 100)}%
+      <span className="hint-mode">{source === 'webxr' ? 'WebXR' : 'Camera'}</span>
     </div>
   );
 }

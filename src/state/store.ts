@@ -4,7 +4,7 @@ import { runDiagnostics, severityByPart, type Diagnostic, type Severity } from '
 import { buildSequenceView, suggestNextStep, type SequenceView } from '../engine/sequencer';
 import { clonePose } from '../engine/math';
 import { bestSnap, findSnapCandidates, type MateResidual } from '../engine/snapping';
-import type { Timeline } from '../engine/animation';
+import { stagedPose, type Timeline } from '../engine/animation';
 import type { RecognitionState } from '../vision/verdict';
 import type { AssemblyDef, PlacementState, Pose } from '../engine/types';
 import { gearbox } from '../data';
@@ -66,6 +66,16 @@ export interface AppState {
   /** Where the anchor came from — drives the AR prompt and the status bar. */
   arPlacement: ArPlacement;
   arSettings: ArSettings;
+  /**
+   * Why AR could not start, in the operator's words.
+   *
+   * Silence was the worst part of the old behaviour: a denied camera made the
+   * button do nothing at all, with no way to tell a refused permission from a
+   * broken build.
+   */
+  arError: string | undefined;
+  /** Which path AR actually took — the honest answer to "is this real AR?". */
+  arSource: 'webxr' | 'camera' | undefined;
   arMode: ArMode;
   viewMode: ViewMode;
   explodeFactor: number;
@@ -94,6 +104,8 @@ export interface AppState {
   setAnchor(pose: Pose | undefined, quality: number, placement?: ArPlacement): void;
   setArPlacement(placement: ArPlacement): void;
   setArSettings(patch: Partial<ArSettings>): void;
+  setArError(message: string | undefined): void;
+  setArSource(source: 'webxr' | 'camera' | undefined): void;
   setArMode(mode: ArMode): void;
   setViewMode(mode: ViewMode): void;
   setExplodeFactor(f: number): void;
@@ -113,6 +125,11 @@ export interface AppState {
   reopenStep(id: string): void;
   /** Snap every part of the active step to nominal — the "show me" affordance. */
   autoPlaceActiveStep(): void;
+  /**
+   * Place the active step's parts the way an operator would: bring each one in
+   * from its standoff and let the snap solver seat it.
+   */
+  placeActiveStepFromStandoff(): void;
   reset(): void;
 }
 
@@ -207,6 +224,8 @@ export const useStore = create<AppState>((set, get) => {
     anchor: undefined,
     anchorQuality: 0,
     arPlacement: 'idle' as ArPlacement,
+    arError: undefined,
+    arSource: undefined,
     arSettings: {
       cameraFovDeg: readFovOverride() ?? 60,
       eyeHeightM: 1.45,
@@ -251,6 +270,12 @@ export const useStore = create<AppState>((set, get) => {
     },
     setArPlacement(placement) {
       set({ arPlacement: placement });
+    },
+    setArError(message) {
+      set({ arError: message });
+    },
+    setArSource(source) {
+      set({ arSource: source });
     },
     setArSettings(patch) {
       const next = { ...get().arSettings, ...patch };
@@ -335,6 +360,29 @@ export const useStore = create<AppState>((set, get) => {
       set({ completedStepIds, activeStepId: id, ...derive({ ...get(), completedStepIds }) });
     },
 
+    placeActiveStepFromStandoff() {
+      const { assembly, activeStepId } = get();
+      const step = assembly.steps.find((s) => s.id === activeStepId);
+      if (!step) return;
+      // One at a time and through `placePart`, so each part snaps against what
+      // is already there — which is the order a joint actually goes together in,
+      // and the only way the residuals mean anything.
+      for (const partId of step.partIds) {
+        const part = assembly.parts.find((p) => p.id === partId);
+        if (!part) continue;
+        get().placePart(partId, stagedPose(part, 0.02));
+
+        // The first part of an assembly has nothing to snap to — no mate has a
+        // placed counterpart yet — so it would simply stay 20 mm off where it
+        // was released. This is an assist, not a hand movement: if nothing
+        // caught it, put it where it belongs.
+        const landed = get().placements.get(partId);
+        const snapped = get().lastSnap?.partId === partId;
+        if (!snapped && landed) {
+          get().placePart(partId, clonePose(part.targetPose));
+        }
+      }
+    },
     autoPlaceActiveStep() {
       const { assembly, activeStepId } = get();
       const step = assembly.steps.find((s) => s.id === activeStepId);

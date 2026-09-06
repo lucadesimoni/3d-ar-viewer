@@ -356,6 +356,22 @@ milliseconds of plain JavaScript, deterministic, and it needs no model download.
 The facade must be roughly square-on (within ~20°), which is how you stand in
 front of a shelf anyway.
 
+## Placing a part, and the snap
+
+Drag a part in the 3D view and let go: the drag runs on a plane through the
+part's centre facing the camera, and only the release is committed, so the snap
+solver sees one decision rather than sixty intermediate ones. Within capture
+range (60 mm / 35°) the part seats itself on the joint; outside it, the part
+stays where it was dropped and the diagnostics say why — that is the difference
+between an assist and a lie. The step card's **Place** does the same thing for
+the whole step at once, from each part's standoff, so the residuals mean
+something; the first part of an assembly has nothing to snap to and is simply
+put where it belongs.
+
+`npm run place:check` drives this with a real pointer: a part released 38 mm off
+its joint must end at 0 mm from nominal with a recorded snap, and one dropped
+140 mm out must stay out and raise `NOT_ENGAGED`.
+
 ## What the guidance looks like
 
 The step card tells you what to fit; the 3D view has to tell you *which parts*,
@@ -396,6 +412,11 @@ thumb-height HUD over the live view:
   someone touching the screen rather than a request to move the workpiece.
   Whether AR asks for a placement at all on entry is a setting: turn it off and
   it opens where you left it;
+When AR cannot start, the app says so. A denied camera used to make the button
+do nothing at all, which is indistinguishable from a broken build; now the
+reason is on screen, and the placement badge names which path is running —
+WebXR, or the camera fallback.
+
 - **Settings** holds the placement behaviour above and the two numbers the
   browser will not tell us — the camera's
   field of view and how high the device is being held. Both are live: drag the

@@ -13,6 +13,8 @@ import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { Matrix, Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Plane } from '@babylonjs/core/Maths/math.plane';
+import { PointerEventTypes } from '@babylonjs/core/Events/pointerEvents';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
@@ -890,6 +892,90 @@ export class SceneManager {
     }
     if (!min || !max) return visual.root.getAbsolutePosition();
     return min.add(max).scale(0.5);
+  }
+
+  /**
+   * Drag a part with a finger, and let it snap when it is let go.
+   *
+   * Until now nothing in the app could move a part: the snap solver, the
+   * tolerance bands and the whole fit-verification story were reachable only
+   * from tests. This is the gesture that makes them real — press a part, slide
+   * it, release. The drag runs on a plane through the part's centre facing the
+   * camera, which is the interpretation a person expects from a 2D gesture on a
+   * 3D object, and the pose is only committed on release so the solver sees one
+   * decision rather than sixty intermediate ones.
+   *
+   * Returns a stop function. While AR placement is armed the gesture is off:
+   * a tap then means "put the assembly here", and the two must not fight.
+   */
+  startPartDragging(handlers: {
+    onMove: (partId: string, pose: Pose) => void;
+    onDrop: (partId: string, pose: Pose) => void;
+    canDrag?: (partId: string) => boolean;
+  }): () => void {
+    let dragging: { partId: string; plane: Plane; grabOffset: Vector3; startPose: Pose } | undefined;
+
+    const pointOnPlane = (plane: Plane): Vector3 | undefined => {
+      const ray = this.scene.createPickingRay(
+        this.scene.pointerX, this.scene.pointerY, Matrix.Identity(), this.scene.activeCamera,
+      );
+      const distance = ray.intersectsPlane(plane);
+      return distance === null ? undefined : ray.origin.add(ray.direction.scale(distance));
+    };
+
+    const observer = this.scene.onPointerObservable.add((info) => {
+      if (this.placementActive) return;
+
+      if (info.type === PointerEventTypes.POINTERDOWN) {
+        const partId = this.pickPartAt(this.scene.pointerX, this.scene.pointerY);
+        if (!partId || handlers.canDrag?.(partId) === false) return;
+        const visual = this.parts.get(partId);
+        const cam = this.scene.activeCamera;
+        if (!visual || !cam) return;
+
+        const centre = this.visualCentre(visual);
+        const normal = cam.position.subtract(centre).normalize();
+        const plane = Plane.FromPositionAndNormal(centre, normal);
+        const grabbed = pointOnPlane(plane);
+        if (!grabbed) return;
+
+        const root = visual.root;
+        const q = root.rotationQuaternion ?? Quaternion.Identity();
+        dragging = {
+          partId,
+          plane,
+          grabOffset: root.position.subtract(grabbed),
+          startPose: { position: [root.position.x, root.position.y, root.position.z], rotation: [q.x, q.y, q.z, q.w] },
+        };
+        // The camera must not orbit while a part is being moved.
+        this.camera.detachControl();
+      } else if (info.type === PointerEventTypes.POINTERMOVE && dragging) {
+        const here = pointOnPlane(dragging.plane);
+        if (!here) return;
+        const next = here.add(dragging.grabOffset);
+        handlers.onMove(dragging.partId, {
+          position: [next.x, next.y, next.z],
+          rotation: dragging.startPose.rotation,
+        });
+      } else if (
+        (info.type === PointerEventTypes.POINTERUP || info.type === PointerEventTypes.POINTERPICK)
+        && dragging
+      ) {
+        const visual = this.parts.get(dragging.partId);
+        const root = visual?.root;
+        const pose: Pose = root
+          ? { position: [root.position.x, root.position.y, root.position.z], rotation: dragging.startPose.rotation }
+          : dragging.startPose;
+        handlers.onDrop(dragging.partId, pose);
+        dragging = undefined;
+        if (!this.arMode) this.camera.attachControl(true);
+      }
+    });
+
+    return () => {
+      this.scene.onPointerObservable.remove(observer);
+      dragging = undefined;
+    };
   }
 
   pickPartAt(x: number, y: number): string | undefined {

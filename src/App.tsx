@@ -63,6 +63,7 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
   // time. In AR the sheet starts collapsed so nothing covers the camera.
   const isMobile = useMediaQuery('(max-width: 1024px)');
   const errorCount = useStore((s) => s.diagnostics.filter((d) => d.severity === 'error').length);
+  const arError = useStore((s) => s.arError);
   const [sheet, setSheet] = useState<Sheet>('steps');
   const [notesOpen, setNotesOpen] = useState(true);
   const mobileSheet = arActive ? null : sheet;
@@ -91,6 +92,16 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
             arActive={arActive} showEnterAr={!isMobile} />
         )}
         {ui.showRecognition && !arActive && <QuickLookButton capabilities={capabilities} />}
+
+        {/* AR refused to start: say so, on every screen size. */}
+        {arError && (
+          <div className="ar-error" role="alert">
+            <span aria-hidden="true">⚠</span>
+            <p>{arError}</p>
+            <button className="notes-close" onClick={() => useStore.getState().setArError(undefined)}
+              aria-label="Dismiss">✕</button>
+          </div>
+        )}
 
         {ui.showHeader && notesOpen && capabilities && capabilities.notes.length > 0 && !arActive && !isMobile && (
           <div className="capability-notes" role="status">
