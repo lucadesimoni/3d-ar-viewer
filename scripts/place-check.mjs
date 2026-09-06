@@ -9,9 +9,9 @@
  *   npm run build && npm run place:check
  */
 import { chromium } from 'playwright';
+import { launchOptions } from './chrome.mjs';
 
 const URL_BASE = process.env.PREVIEW_URL ?? 'http://localhost:8080/';
-const CHROME = process.env.CHROME_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 const failures = [];
 const check = (name, ok, detail) => {
@@ -19,10 +19,7 @@ const check = (name, ok, detail) => {
   if (!ok) failures.push(name);
 };
 
-const browser = await chromium.launch({
-  executablePath: CHROME, headless: true,
-  args: ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--no-sandbox'],
-});
+const browser = await chromium.launch(launchOptions());
 const page = await browser.newPage({ viewport: { width: 1100, height: 800 }, deviceScaleFactor: 1 });
 await page.goto(`${URL_BASE}?assembly=bench-gearbox`, { waitUntil: 'networkidle' });
 await page.waitForSelector('canvas.viewer-canvas');

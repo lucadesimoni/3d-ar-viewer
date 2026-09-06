@@ -14,21 +14,12 @@
  * Usage: node scripts/ar-verify.mjs   (with the app served on PREVIEW_URL)
  */
 import { chromium } from 'playwright';
+import { launchOptions, FAKE_CAMERA } from './chrome.mjs';
 
 const URL = process.env.PREVIEW_URL ?? 'http://localhost:4173/';
-const CHROME = process.env.CHROME_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const OUT = process.argv[2] ?? '/tmp/ar-verify';
 
-const browser = await chromium.launch({
-  executablePath: CHROME,
-  headless: true,
-  args: [
-    '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader',
-    '--ignore-gpu-blocklist', '--enable-webgl', '--no-sandbox',
-    '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream',
-    '--autoplay-policy=no-user-gesture-required',
-  ],
-});
+const browser = await chromium.launch(launchOptions(FAKE_CAMERA));
 
 const failures = [];
 const check = (name, ok, detail) => {

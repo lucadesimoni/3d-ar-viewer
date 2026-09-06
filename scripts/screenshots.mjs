@@ -10,19 +10,12 @@
  *   node scripts/screenshots.mjs ./shots
  */
 import { chromium } from 'playwright';
+import { launchOptions } from './chrome.mjs';
 
 const OUT = process.argv[2] ?? './shots';
 const URL = process.env.PREVIEW_URL ?? 'http://localhost:4173/';
-const CHROME = process.env.CHROME_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
-const browser = await chromium.launch({
-  executablePath: CHROME,
-  headless: true,
-  args: [
-    '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader',
-    '--ignore-gpu-blocklist', '--enable-webgl', '--no-sandbox',
-  ],
-});
+const browser = await chromium.launch(launchOptions());
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await page.goto(URL, { waitUntil: 'networkidle' });
 await page.waitForSelector('canvas.viewer-canvas', { timeout: 15000 });

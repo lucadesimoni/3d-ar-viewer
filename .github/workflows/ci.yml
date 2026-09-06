@@ -3,16 +3,59 @@ on:
   push:
     branches: [main]
   pull_request:
+
 jobs:
+  # Fast gate: types, unit tests, production build.
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Node 22, not 20: jsdom 30 bundles an undici that calls
+          # `webidl.util.markAsUncloneable`, which does not exist before Node
+          # 21.7 — on Node 20 every test file fails to even start its worker.
+          node-version: '22'
           cache: npm
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 3
+
+  # The checks that drive a real browser: AR anchoring and the HUD, the step
+  # guidance, placing and snapping, and the deployed-app behaviours a static
+  # host has to satisfy. These are where the regressions in this app actually
+  # show up, so CI runs them rather than trusting that someone ran them locally.
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Serve the build
+        run: |
+          node server/serve.mjs &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/healthz > /dev/null && break
+            sleep 1
+          done
+      - run: npm run ar:verify
+        env:
+          PREVIEW_URL: http://localhost:8080/
+      - run: npm run steps:check
+        env:
+          PREVIEW_URL: http://localhost:8080/
+      - run: npm run place:check
+        env:
+          PREVIEW_URL: http://localhost:8080/
+      - run: npm run deploy:check

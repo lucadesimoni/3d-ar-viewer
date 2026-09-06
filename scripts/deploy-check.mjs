@@ -18,11 +18,11 @@
  */
 import { createServer } from 'node:http';
 import { chromium } from 'playwright';
+import { launchOptions } from './chrome.mjs';
 import { cp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { extname, join } from 'node:path';
 
-const CHROME = process.env.CHROME_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const PORT = Number(process.env.PORT ?? 4319);
 const WORK = '/tmp/deploy-check';
 const MIME = {
@@ -72,10 +72,7 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(PORT, r));
 const URL_BASE = `http://localhost:${PORT}/`;
 
-const browser = await chromium.launch({
-  executablePath: CHROME, headless: true,
-  args: ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--no-sandbox'],
-});
+const browser = await chromium.launch(launchOptions());
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
 const page = await context.newPage();
 
