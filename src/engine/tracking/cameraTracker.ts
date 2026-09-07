@@ -45,6 +45,52 @@ type MotionCtor = typeof DeviceOrientationEvent & {
 type WebkitOrientationEvent = DeviceOrientationEvent & { webkitCompassHeading?: number };
 
 const DEG = Math.PI / 180;
+
+/**
+ * A step larger than this is not followed until it is confirmed.
+ *
+ * It is deliberately small. My first attempt set it at 15 degrees, reasoning
+ * that nothing faster than 900 degrees a second can be a hand — true, but
+ * beside the point: an indoor magnetometer's noise is mostly *below* that, and
+ * every one of those readings sailed through. Hand tremor moves a phone by
+ * well under two degrees between samples, so anything past five is either a
+ * real turn, which will be confirmed immediately, or noise, which will not.
+ */
+const JUMP_LIMIT_DEG = 5;
+/**
+ * …but a real fast turn looks exactly the same for a moment. So a big jump is
+ * not rejected outright, it is held as a candidate: accepted once this many
+ * consecutive samples *agree with it*. An isolated glitch never gets a second
+ * vote; a genuine turn has one within about fifty milliseconds. Counting
+ * rejections instead — as I first wrote it — accepts the glitch after N
+ * samples and then treats the return to reality as another jump, which turns
+ * one hiccup into a permanent oscillation.
+ */
+const CONFIRMATIONS = 3;
+
+/** How closely to follow once a turn is established: responsive, not instant. */
+const TURN_SMOOTHING = 0.45;
+
+/** If the chosen event source goes quiet this long, listen to the other one. */
+const SOURCE_SILENCE_MS = 1000;
+
+/**
+ * How hard to smooth, given how far the reading moved since the last one.
+ *
+ * A single fixed factor cannot serve both ends: enough smoothing to hold a
+ * hand-held phone still is far too much to follow a deliberate turn, and
+ * enough to follow the turn lets every tremor through. Small steps are damped
+ * hard, large ones followed almost directly.
+ */
+export function smoothingFactor(stepDeg: number): number {
+  return Math.max(0.05, Math.min(0.25, stepDeg / 40));
+}
+
+/** Angle between two orientations, in degrees. */
+export function angleBetweenDeg(a: Quaternion, b: Quaternion): number {
+  const dot = Math.abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w);
+  return (2 * Math.acos(Math.min(1, dot))) / DEG;
+}
 /** Maps the device frame (Z out of the screen) to a camera looking down -Z. */
 const SCREEN_TO_CAMERA = new Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2);
 
@@ -175,6 +221,12 @@ export class CameraTracker {
   private stream: MediaStream | undefined;
   private smoothed = new Quaternion();
   private firstHeading: number | undefined;
+  /** Which of the two event names this session listens to. */
+  private source: string | undefined;
+  private lastSourceMs = 0;
+  private pending: Quaternion | undefined;
+  private confirmations = 0;
+  private turning = false;
   private listener: ((e: DeviceOrientationEvent) => void) | undefined;
   private subscribers = new Set<(s: CameraTrackerState) => void>();
 
@@ -244,6 +296,27 @@ export class CameraTracker {
 
   private onOrientation(e: DeviceOrientationEvent): void {
     if (e.alpha === null || e.beta === null || e.gamma === null) return;
+    // Android fires *both* event names, and their alpha references differ — one
+    // is gyro-relative, the other magnetometer-absolute. Feeding both into one
+    // filter makes it chase two different answers, several degrees apart, sixty
+    // times a second. Choose a source and ignore the other; prefer the absolute
+    // one, because an anchor fixed to the room needs a reference fixed to the
+    // room.
+    const now = performance.now();
+    if (this.source === undefined) {
+      this.source = e.type;
+    } else if (this.source !== e.type) {
+      // Adopt the absolute reference if it appears — an anchor fixed to the
+      // room needs a reference fixed to the room — and adopt anything at all
+      // if the chosen source has fallen silent, because locking onto a stream
+      // that then stops is a camera frozen for the rest of the session.
+      const silent = now - this.lastSourceMs > SOURCE_SILENCE_MS;
+      if (e.type !== 'deviceorientationabsolute' && !silent) return;
+      this.source = e.type;
+      this.state.receivingMotion = false;   // re-seed rather than slerp across
+    }
+    this.lastSourceMs = now;
+
     const screenAngle = (window.screen?.orientation?.angle ?? 0) as number;
     const target = orientationToQuaternion(e.alpha, e.beta, e.gamma, screenAngle);
 
@@ -251,7 +324,32 @@ export class CameraTracker {
       this.smoothed.copy(target);
       this.state.receivingMotion = true;
     } else {
-      this.smoothed.slerp(target, this.options.smoothing);
+      const step = angleBetweenDeg(this.smoothed, target);
+      if (step <= JUMP_LIMIT_DEG) {
+        // Ordinary hand movement: damp it, and stop treating anything as a turn.
+        this.turning = false;
+        this.pending = undefined;
+        this.confirmations = 0;
+        this.smoothed.slerp(target, smoothingFactor(step));
+      } else if (this.turning) {
+        // Already established that the operator is turning; keep up with them.
+        this.smoothed.slerp(target, TURN_SMOOTHING);
+      } else {
+        // A big step, out of nowhere. Hold it as a candidate and see whether
+        // the samples that follow agree with it. An isolated glitch never gets
+        // its second vote; a real turn has one within about a tenth of a second.
+        if (this.pending && angleBetweenDeg(this.pending, target) < JUMP_LIMIT_DEG * 3) {
+          this.confirmations++;
+        } else {
+          this.pending = target.clone();
+          this.confirmations = 1;
+        }
+        if (this.confirmations < CONFIRMATIONS) return;
+        this.turning = true;
+        this.pending = undefined;
+        this.confirmations = 0;
+        this.smoothed.slerp(target, TURN_SMOOTHING);
+      }
     }
 
     const heading = (e as WebkitOrientationEvent).webkitCompassHeading;
@@ -306,6 +404,12 @@ export class CameraTracker {
       window.removeEventListener('deviceorientationabsolute', this.listener, true);
     }
     this.listener = undefined;
+    // The next session re-chooses its source: a device can change which name it
+    // fires between sessions, and a stale choice would mute it entirely.
+    this.source = undefined;
+    this.pending = undefined;
+    this.confirmations = 0;
+    this.turning = false;
     for (const track of this.stream?.getTracks() ?? []) track.stop();
     this.stream = undefined;
     this.state.running = false;
