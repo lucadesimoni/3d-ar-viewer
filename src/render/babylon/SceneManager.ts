@@ -1034,6 +1034,50 @@ export class SceneManager {
   }
 
   /**
+   * What fraction of the canvas the overlay actually painted, 0..1.
+   *
+   * The end of a long guessing game. Every other number here is about what
+   * *should* be on screen: where the anchor is, how many meshes are active,
+   * what the projection says. None of them prove a pixel reached the display,
+   * and on a device I cannot hold, "I see nothing" and "it is drawn but not
+   * composited" look identical.
+   *
+   * This reads the drawing buffer back. In AR the clear is transparent, so any
+   * non-zero alpha is overlay. Roughly 10% is a well-placed assembly; 0% with
+   * meshes active and a sane projection means the canvas is rendering into a
+   * layer the browser is not showing — a different fault, in a different place,
+   * that no amount of moving the anchor will fix.
+   *
+   * Costs a full pixel read, so it is called on demand from the settings sheet,
+   * never per frame.
+   */
+  paintedFraction(): number | undefined {
+    const gl = (this.engine as unknown as { _gl?: WebGLRenderingContext })._gl;
+    if (!gl) return undefined;                       // WebGPU: no readback here
+    const w = this.engine.getRenderWidth();
+    const h = this.engine.getRenderHeight();
+    if (w < 1 || h < 1) return undefined;
+    // Sample rather than read every pixel: a 3 Mpx buffer on a phone is 12 MB
+    // and a visible hitch. A 128-wide grid is plenty to tell 0% from 10%.
+    const step = Math.max(1, Math.floor(w / 128));
+    try {
+      const px = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      let lit = 0;
+      let seen = 0;
+      for (let y = 0; y < h; y += step) {
+        for (let x = 0; x < w; x += step) {
+          seen++;
+          if (px[(y * w + x) * 4 + 3] > 8) lit++;
+        }
+      }
+      return seen ? lit / seen : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * Project a part's centre to normalised screen coordinates (0..1), so a small
    * on-part label can be pinned to it. `onScreen` is false when the part is
    * behind the camera or off-frame.

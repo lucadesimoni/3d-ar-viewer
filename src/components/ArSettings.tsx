@@ -23,9 +23,11 @@ const SURFACES: { label: string; height: number }[] = [
  * shelf is visibly bigger than the real one) and this is where they correct it,
  * live, with the camera running.
  */
-export function ArSettings({ capabilities, pipeline }: {
+export function ArSettings({ capabilities, pipeline, onDismiss }: {
   capabilities?: Capabilities;
   pipeline?: PipelineStatus;
+  /** Close the sheet — the marker is behind it otherwise. */
+  onDismiss?: () => void;
 }): JSX.Element {
   const settings = useStore((s) => s.arSettings);
   const setArSettings = useStore((s) => s.setArSettings);
@@ -39,18 +41,25 @@ export function ArSettings({ capabilities, pipeline }: {
   // a per-frame subscription to be worth it.
   const [view, setView] = useState(() => getActiveManager()?.anchorViewState());
   const [stats, setStats] = useState(() => getActiveManager()?.renderStats());
+  const [painted, setPainted] = useState<number | undefined>(() => getActiveManager()?.paintedFraction());
   useEffect(() => {
     const id = window.setInterval(() => {
       const m = getActiveManager();
       setView(m?.anchorViewState());
       setStats(m?.renderStats());
     }, 250);
-    return () => window.clearInterval(id);
+    // The pixel readback is expensive, so it runs on its own slower beat.
+    const paint = window.setInterval(() => setPainted(getActiveManager()?.paintedFraction()), 1000);
+    return () => { window.clearInterval(id); window.clearInterval(paint); };
   }, []);
   const [marker, setMarker] = useState(false);
   const toggleMarker = (on: boolean) => {
     setMarker(on);
     getActiveManager()?.setTestMarker(on);
+    // The marker sits in the middle of the view, which is behind this sheet.
+    // Switching it on and staying here shows you a covered marker and no
+    // answer — the exact false negative it exists to rule out.
+    if (on) onDismiss?.();
   };
 
   const setFov = (v: number) => {
@@ -203,7 +212,23 @@ export function ArSettings({ capabilities, pipeline }: {
         <div><dt>Drawn</dt><dd>{stats ? `${stats.activeMeshes} of ${stats.meshes} · ${stats.partMeshes} parts` : '—'}</dd></div>
         <div><dt>Canvas</dt><dd>{stats ? `${stats.cssSize.join('×')} → ${stats.bufferSize.join('×')}` : '—'}</dd></div>
         <div><dt>Effective FOV</dt><dd>{stats ? `${stats.fovDeg.toFixed(1)}°` : '—'}</dd></div>
+        {/* The only number here that proves a pixel reached the screen. */}
+        <div>
+          <dt>Overlay painted</dt>
+          <dd>{painted === undefined ? '—' : `${(painted * 100).toFixed(1)}% of the view`}</dd>
+        </div>
       </dl>
+
+      {/* Two numbers disagreeing is a diagnosis, so say it rather than leaving
+          it to be inferred: meshes are being drawn, the assembly is in view,
+          and no pixels are reaching the screen. */}
+      {painted !== undefined && painted < 0.001 && view?.onScreen && (stats?.activeMeshes ?? 0) > 0 && (
+        <p className="ar-set-help ar-diagnosis" role="status">
+          The overlay is rendering ({stats?.activeMeshes} meshes, assembly in view) but no
+          pixels are reaching the screen. That is a compositing fault, not a placement one —
+          moving the assembly will not help. Try reloading the page.
+        </p>
+      )}
     </div>
   );
 }
