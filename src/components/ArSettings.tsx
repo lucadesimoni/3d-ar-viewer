@@ -212,6 +212,17 @@ export function ArSettings({ capabilities, pipeline, onDismiss }: {
         <div><dt>Drawn</dt><dd>{stats ? `${stats.activeMeshes} of ${stats.meshes} · ${stats.partMeshes} parts` : '—'}</dd></div>
         <div><dt>Canvas</dt><dd>{stats ? `${stats.cssSize.join('×')} → ${stats.bufferSize.join('×')}` : '—'}</dd></div>
         <div><dt>Effective FOV</dt><dd>{stats ? `${stats.fovDeg.toFixed(1)}°` : '—'}</dd></div>
+        {/* Is the renderer alive at all? A stopped loop, a lost context and a
+            failing frame all look identical from the outside: a blank canvas. */}
+        <div>
+          <dt>Frames</dt>
+          <dd>
+            {!stats ? '—'
+              : stats.contextLost ? 'context lost'
+                : `${Math.round(stats.fps)} fps · ${stats.frames}`}
+          </dd>
+        </div>
+        <div><dt>Camera</dt><dd>{stats?.camera ?? '—'}</dd></div>
         {/* The only number here that proves a pixel reached the screen. */}
         <div>
           <dt>Overlay painted</dt>
@@ -219,14 +230,18 @@ export function ArSettings({ capabilities, pipeline, onDismiss }: {
         </div>
       </dl>
 
-      {/* Two numbers disagreeing is a diagnosis, so say it rather than leaving
-          it to be inferred: meshes are being drawn, the assembly is in view,
-          and no pixels are reaching the screen. */}
-      {painted !== undefined && painted < 0.001 && view?.onScreen && (stats?.activeMeshes ?? 0) > 0 && (
+      {/* An empty overlay has exactly three causes, and they need different
+          fixes. Say which one it is rather than leaving it to be inferred. */}
+      {painted !== undefined && painted < 0.001 && (stats?.activeMeshes ?? 0) > 0 && (
         <p className="ar-set-help ar-diagnosis" role="status">
-          The overlay is rendering ({stats?.activeMeshes} meshes, assembly in view) but no
-          pixels are reaching the screen. That is a compositing fault, not a placement one —
-          moving the assembly will not help. Try reloading the page.
+          <strong>Nothing is being drawn.</strong>{' '}
+          {stats?.contextLost
+            ? 'The graphics context was lost — the browser took the GPU back. Reload the page.'
+            : stats?.renderError
+              ? `Every frame is failing: ${stats.renderError}`
+              : (stats?.fps ?? 0) < 1
+                ? `The render loop has stopped after ${stats?.frames ?? 0} frames. Reload the page.`
+                : `The renderer is running (${Math.round(stats?.fps ?? 0)} fps, ${stats?.activeMeshes} meshes) but no pixels reach the screen — a compositing fault, not a placement one. Moving the assembly will not help.`}
         </p>
       )}
     </div>
