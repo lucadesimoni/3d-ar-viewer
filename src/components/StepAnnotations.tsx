@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../state/store';
 import { getActiveManager } from '../render/babylon/managerRegistry';
+import { arChromeTop } from './arChrome';
 
 /**
  * Names the parts the current step is about, pinned to those parts.
@@ -11,10 +12,11 @@ import { getActiveManager } from '../render/babylon/managerRegistry';
  * close it: each active part carries its own name, projected onto it every
  * frame, so the instruction and the geometry cannot be read apart.
  *
- * Two rules keep it from becoming clutter, which is what usually kills on-object
- * labels: a tag is dropped when it would sit on top of one already placed —
- * four identical shelves in a row need one label, not four overlapping ones —
- * and the remainder is reported as a count rather than drawn.
+ * Three rules keep it from becoming clutter, which is what usually kills
+ * on-object labels: a tag is dropped when it would sit on top of one already
+ * placed — four identical shelves in a row need one label, not four overlapping
+ * ones — dropped when it would fall behind the AR HUD, and the remainder is
+ * reported as a count rather than drawn.
  */
 
 interface Tag {
@@ -47,10 +49,13 @@ export function StepAnnotations(): JSX.Element | null {
       const manager = getActiveManager();
       const next: Tag[] = [];
       let dropped = 0;
+      // In AR the bottom of the screen is the HUD; a label there is a fragment
+      // sticking out from behind the control bar, not an annotation.
+      const limit = arChromeTop();
       if (manager) {
         for (const partId of step.partIds) {
           const p = manager.projectPart(partId);
-          if (!p || !p.onScreen) { dropped++; continue; }
+          if (!p || !p.onScreen || p.y > limit) { dropped++; continue; }
           const crowded = next.some((t) => Math.hypot(t.x - p.x, t.y - p.y) < MIN_SEPARATION);
           if (crowded || next.length >= MAX_TAGS) { dropped++; continue; }
           next.push({ partId, name: names.get(partId) ?? partId, x: p.x, y: p.y });
