@@ -39,6 +39,10 @@ export interface XrController {
  * the settings sheet shows it.
  */
 export let lastXrError: string | undefined;
+/** Which reference space the running session actually got. */
+export let referenceSpace: string | undefined;
+/** Features the browser actually granted, as reported by the session. */
+export let grantedFeatures: string[] = [];
 export const clearXrError = (): void => { lastXrError = undefined; };
 const noteXrError = (stage: string, err: unknown): undefined => {
   const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err ?? 'no reason given');
@@ -100,9 +104,21 @@ export async function prepareImmersiveAr(
 
   let reticle: Pose | undefined;
   try {
+    // `required: false` — the fifth argument, and it defaults to *true*.
+    //
+    // Babylon adds every enabled feature to the session request, and a required
+    // one that the device cannot provide makes the browser refuse the whole
+    // session. Asking for hit-test with two arguments therefore said "no AR at
+    // all unless this phone can do surface detection", and on Android that
+    // depends on Google Play Services for AR being installed and current. The
+    // session was refused, the app fell back to the camera, and what the
+    // operator saw was an overlay that would not stay on the bench.
+    //
+    // Hit-test is worth having and not worth losing a session over: without it
+    // the app still places by tap on its own estimated plane, which is what the
+    // camera path does anyway.
     const hitTest = xr.baseExperience.featuresManager.enableFeature(
-      WebXRFeatureName.HIT_TEST,
-      'latest',
+      WebXRFeatureName.HIT_TEST, 'latest', {}, true, false,
     ) as InstanceType<typeof WebXRHitTest>;
 
     hitTest.onHitTestResultObservable.add((results) => {
@@ -142,19 +158,36 @@ export async function prepareImmersiveAr(
   };
 
   const enter = async (): Promise<XrController | undefined> => {
-    try {
-      await xr.baseExperience.enterXRAsync('immersive-ar', 'local-floor', xr.renderTarget);
-    } catch (err) {
-      // Leave the scene exactly as it was found, so the camera fallback starts
-      // from a known state rather than from half an XR session.
-      noteXrError('entering the session', err);
+    // Reference spaces, best first. `local-floor` gives a floor at y = 0, which
+    // is what a placement on the ground wants; but a device that cannot
+    // establish one refuses the session outright rather than downgrading, and
+    // an AR session measured from the headset is still an AR session — real
+    // positional tracking, which is the whole point. Losing all of it over the
+    // origin's height would be a poor trade.
+    const spaces: XRReferenceSpaceType[] = ['local-floor', 'local', 'viewer'];
+    for (const space of spaces) {
+      try {
+        await xr.baseExperience.enterXRAsync('immersive-ar', space, xr.renderTarget);
+      } catch (err) {
+        noteXrError(`entering the session (${space})`, err);
+        await xr.baseExperience.exitXRAsync().catch(() => undefined);
+        continue;
+      }
+      if (xr.baseExperience.state === WebXRState.IN_XR) {
+        clearXrError();
+        referenceSpace = space;
+        const session = xr.baseExperience.sessionManager.session as XRSession & {
+          enabledFeatures?: string[];
+        };
+        grantedFeatures = [...(session?.enabledFeatures ?? [])];
+        break;
+      }
+      lastXrError = `entering the session (${space}) — ended in state ${xr.baseExperience.state}`;
       await xr.baseExperience.exitXRAsync().catch(() => undefined);
-      scene.onPointerDown = undefined;
-      return undefined;   // the caller falls back to camera passthrough
     }
     if (xr.baseExperience.state !== WebXRState.IN_XR) {
-      lastXrError = `entering the session — ended in state ${xr.baseExperience.state}`;
-      return undefined;
+      scene.onPointerDown = undefined;
+      return undefined;   // the caller falls back to camera passthrough
     }
     return {
       experience: xr,

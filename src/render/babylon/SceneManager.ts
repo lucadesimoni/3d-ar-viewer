@@ -966,6 +966,16 @@ export class SceneManager {
     }
   }
 
+  /** What a running session actually got: reference space and granted features. */
+  async xrSessionInfo(): Promise<{ space?: string; features: string[] }> {
+    try {
+      const { referenceSpace, grantedFeatures } = await import('./xr');
+      return { space: referenceSpace, features: grantedFeatures };
+    } catch {
+      return { features: [] };
+    }
+  }
+
   /**
    * Take a pose measured in the camera's own frame — as the vision pipeline
    * reports it — into world space.

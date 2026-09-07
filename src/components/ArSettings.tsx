@@ -44,8 +44,10 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
   const [stats, setStats] = useState(() => getActiveManager()?.renderStats());
   const [painted, setPainted] = useState<number | undefined>(() => getActiveManager()?.paintedFraction());
   const [xrWhy, setXrWhy] = useState<string>();
+  const [xrInfo, setXrInfo] = useState<{ space?: string; features: string[] }>();
   useEffect(() => {
     void getActiveManager()?.xrFailure().then(setXrWhy);
+    void getActiveManager()?.xrSessionInfo().then(setXrInfo);
   }, []);
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -257,13 +259,19 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
           </dd>
         </div>
         <div><dt>Camera</dt><dd>{stats?.camera ?? '—'}</dd></div>
+        {source === 'webxr' && (
+          <div>
+            <dt>XR features</dt>
+            <dd>{xrInfo?.features.length ? xrInfo.features.join(', ') : 'none granted'}</dd>
+          </div>
+        )}
         {/* Whether real AR was even possible, and if not, why. This is the
             difference between an overlay that stays on the bench and one that
             walks with you, so it does not belong in a console. */}
         <div>
           <dt>WebXR</dt>
           <dd>
-            {source === 'webxr' ? 'in session'
+            {source === 'webxr' ? `in session${xrInfo?.space ? ` · ${xrInfo.space}` : ''}`
               : !capabilities?.webxrSupported ? 'not in this browser'
                 : capabilities.immersiveAr ? 'supported, not running'
                   : 'no immersive-ar'}
