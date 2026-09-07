@@ -32,6 +32,7 @@ export function ArSettings({ capabilities, pipeline }: {
   const snapEnabled = useStore((s) => s.snapEnabled);
   const setSnapEnabled = useStore((s) => s.setSnapEnabled);
   const placement = useStore((s) => s.arPlacement);
+  const source = useStore((s) => s.arSource);
   const quality = useStore((s) => s.anchorQuality);
   const gpu = useMemo(() => detectGpu(), []);
   const shapeTarget = useStore((s) => s.assembly.recognition?.label);
@@ -40,6 +41,10 @@ export function ArSettings({ capabilities, pipeline }: {
   const [view, setView] = useState(() => getActiveManager()?.anchorViewState());
   const [stats, setStats] = useState(() => getActiveManager()?.renderStats());
   const [painted, setPainted] = useState<number | undefined>(() => getActiveManager()?.paintedFraction());
+  const [xrWhy, setXrWhy] = useState<string>();
+  useEffect(() => {
+    void getActiveManager()?.xrFailure().then(setXrWhy);
+  }, []);
   useEffect(() => {
     const id = window.setInterval(() => {
       const m = getActiveManager();
@@ -250,6 +255,18 @@ export function ArSettings({ capabilities, pipeline }: {
           </dd>
         </div>
         <div><dt>Camera</dt><dd>{stats?.camera ?? '—'}</dd></div>
+        {/* Whether real AR was even possible, and if not, why. This is the
+            difference between an overlay that stays on the bench and one that
+            walks with you, so it does not belong in a console. */}
+        <div>
+          <dt>WebXR</dt>
+          <dd>
+            {source === 'webxr' ? 'in session'
+              : !capabilities?.webxrSupported ? 'not in this browser'
+                : capabilities.immersiveAr ? 'supported, not running'
+                  : 'no immersive-ar'}
+          </dd>
+        </div>
         {/* The only number here that proves a pixel reached the screen. */}
         <div>
           <dt>Overlay painted</dt>
@@ -262,6 +279,16 @@ export function ArSettings({ capabilities, pipeline }: {
           The condition deliberately does not require a pixel measurement: the
           readback can legitimately be unavailable, and gating the whole report
           on it is how a stalled render loop stayed unreported. */}
+      {/* Informational, not a fault: the camera path works, it simply cannot
+          track walking. Kept distinct from the renderer diagnosis so that each
+          says one thing. */}
+      {source !== 'webxr' && xrWhy && (
+        <p className="ar-set-help ar-xr-note" role="status">
+          <strong>Real AR tracking was tried and refused.</strong> {xrWhy}
+          {' '}Without it the overlay turns with you but does not stay put when you walk.
+        </p>
+      )}
+
       {fault && (
         <p className="ar-set-help ar-diagnosis" role="status">
           <strong>{fault.title}</strong> {fault.detail}

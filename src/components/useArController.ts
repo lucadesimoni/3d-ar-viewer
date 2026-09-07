@@ -234,7 +234,16 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     const manager = getActiveManager();
 
     // 1. A device with real AR: let WebXR find the floor and place on a tap.
-    if (capabilities.immersiveAr && manager) {
+    //
+    // Attempted whenever the browser has `navigator.xr` at all, not only when
+    // `isSessionSupported('immersive-ar')` said yes. That probe runs at page
+    // load, before any gesture, and on Android it answers for the state of
+    // Google Play Services for AR at that moment — requesting a session is
+    // what prompts the user to install it. Taking its "no" as final means a
+    // phone that could do real six-degree tracking silently gets an overlay
+    // that walks along with the operator. The attempt costs a moment and falls
+    // through on failure, which the camera path handles anyway.
+    if ((capabilities.immersiveAr || capabilities.webxrSupported) && manager) {
       const session = await manager.startWebXr(
         (pose) => useStore.getState().setAnchor(pose, 0.9, 'floor'),
         // Leaving the session (the system back gesture, or the headset's own
