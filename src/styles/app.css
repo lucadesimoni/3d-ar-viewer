@@ -63,15 +63,6 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
 .passthrough {
   position: fixed; inset: 0; width: 100%; height: 100%;
   object-fit: cover; z-index: 0; display: none; background: #000;
-  /* Android promotes an inline <video> to a hardware overlay plane, and an
-     overlay plane is composited outside the normal painting order — it can end
-     up above content that z-index says is in front of it. Both the video and
-     the 3D canvas are therefore given their own composited layers explicitly,
-     so the browser orders them as layers rather than deciding for itself.
-     Symptom when it goes wrong: camera and HTML chrome visible, the WebGL
-     overlay never, on a phone, while every desktop browser looks correct. */
-  transform: translateZ(0);
-  will-change: transform;
 }
 .app.ar .passthrough { display: block; }
 /* AR: everything behind the 3D canvas must be see-through, and the viewport
@@ -85,12 +76,14 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
 .app.ar .viewport {
   position: fixed; inset: 0; z-index: 1;
   background: transparent; border: none; border-radius: 0;
-  /* See `.passthrough`: the canvas gets its own layer so it composites above
-     the video's overlay plane instead of behind it. */
-  transform: translateZ(0);
-  isolation: isolate;
 }
-.app.ar .viewer-canvas { transform: translateZ(0); }
+/* No layer-promotion hints here on purpose. A `transform: translateZ(0)` on
+   these three elements was added to force the canvas above the video's
+   compositing layer, on the strength of a "0.0% painted" reading — a reading
+   later shown to be the measurement failing, not the app. Promoting three
+   full-screen layers is not free on a phone: it is exactly the kind of extra
+   GPU memory pressure that ends in a lost context and a permanently blank
+   canvas. The justification went away, so the change went with it. */
 .app.ar .status-bar, .app.ar .mode-bar { position: relative; z-index: 4; }
 .app.ar .viewport-overlay { z-index: 5; }
 .app.ar .stage { padding: 0; gap: 0; grid-template-columns: 1fr; }
@@ -637,6 +630,7 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   margin: 0; padding: 10px 12px; border-radius: 10px; line-height: 1.4;
   background: rgba(239, 68, 68, 0.12); border: 1px solid var(--error); color: var(--text);
 }
+.ar-restart { display: block; margin-top: 8px; min-height: 40px; width: 100%; }
 
 /* ---------- Step annotations, pinned to the parts they name ---------- */
 .step-annotations { position: absolute; inset: 0; pointer-events: none; z-index: 4; }

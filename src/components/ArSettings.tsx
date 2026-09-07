@@ -23,11 +23,9 @@ const SURFACES: { label: string; height: number }[] = [
  * shelf is visibly bigger than the real one) and this is where they correct it,
  * live, with the camera running.
  */
-export function ArSettings({ capabilities, pipeline, onDismiss }: {
+export function ArSettings({ capabilities, pipeline }: {
   capabilities?: Capabilities;
   pipeline?: PipelineStatus;
-  /** Close the sheet — the marker is behind it otherwise. */
-  onDismiss?: () => void;
 }): JSX.Element {
   const settings = useStore((s) => s.arSettings);
   const setArSettings = useStore((s) => s.setArSettings);
@@ -52,14 +50,38 @@ export function ArSettings({ capabilities, pipeline, onDismiss }: {
     const paint = window.setInterval(() => setPainted(getActiveManager()?.paintedFraction()), 1000);
     return () => { window.clearInterval(id); window.clearInterval(paint); };
   }, []);
-  const [marker, setMarker] = useState(false);
+  // What is wrong, if anything — in the order the causes have to be ruled out.
+  const fault = (() => {
+    if (!stats) return undefined;
+    if (stats.contextLost) {
+      return { title: 'The graphics context was lost.', detail: 'The browser took the GPU back. Restarting rebuilds it; a page reload always works.' };
+    }
+    if (stats.renderError) {
+      return { title: 'Every frame is failing.', detail: stats.renderError };
+    }
+    if (stats.frames > 0 && stats.fps < 1) {
+      return { title: 'The render loop has stopped.', detail: `${stats.frames} frames drawn, then nothing. Nothing will appear over the camera until it runs again.` };
+    }
+    if (stats.frames === 0) {
+      return { title: 'No frame has ever been drawn.', detail: 'The renderer started but produced nothing.' };
+    }
+    if (painted !== undefined && painted < 0.001 && stats.activeMeshes > 0 && view?.onScreen) {
+      return { title: 'Nothing reaches the screen.', detail: `The renderer is running (${Math.round(stats.fps)} fps, ${stats.activeMeshes} meshes, assembly in view) but no pixels are painted — a compositing fault, not a placement one. Moving the assembly will not help.` };
+    }
+    return undefined;
+  })();
+  const restart = () => {
+    getActiveManager()?.restartRenderLoop();
+    setPainted(undefined);
+  };
+
+  // Read from the scene, not from a fresh local default: the sheet is unmounted
+  // every time it closes, and a switch that forgets what it did reads as a
+  // switch that cannot be operated at all.
+  const [marker, setMarker] = useState(() => getActiveManager()?.hasTestMarker() ?? false);
   const toggleMarker = (on: boolean) => {
     setMarker(on);
     getActiveManager()?.setTestMarker(on);
-    // The marker sits in the middle of the view, which is behind this sheet.
-    // Switching it on and staying here shows you a covered marker and no
-    // answer — the exact false negative it exists to rule out.
-    if (on) onDismiss?.();
   };
 
   const setFov = (v: number) => {
@@ -178,9 +200,9 @@ export function ArSettings({ capabilities, pipeline, onDismiss }: {
         <span>
           Show a test marker
           <em className="ar-set-help">
-            A spinning cube pinned 1 m in front of the camera. If you cannot see
-            this, nothing is being drawn over the camera at all — and moving the
-            assembly will not help.
+            A spinning cube pinned 1 m in front of the camera, above this sheet.
+            If you cannot see it, nothing is being drawn over the camera at all —
+            and moving the assembly will not help.
           </em>
         </span>
       </label>
@@ -219,7 +241,7 @@ export function ArSettings({ capabilities, pipeline, onDismiss }: {
           <dd>
             {!stats ? '—'
               : stats.contextLost ? 'context lost'
-                : `${Math.round(stats.fps)} fps · ${stats.frames}`}
+                : `${Math.round(stats.fps)} fps · ${stats.frames}${stats.stalls ? ` · ${stats.stalls} restarts` : ''}`}
           </dd>
         </div>
         <div><dt>Camera</dt><dd>{stats?.camera ?? '—'}</dd></div>
@@ -230,18 +252,15 @@ export function ArSettings({ capabilities, pipeline, onDismiss }: {
         </div>
       </dl>
 
-      {/* An empty overlay has exactly three causes, and they need different
-          fixes. Say which one it is rather than leaving it to be inferred. */}
-      {painted !== undefined && painted < 0.001 && (stats?.activeMeshes ?? 0) > 0 && (
+      {/* An empty overlay has causes that need different fixes, and they look
+          identical from outside. Name whichever one it is.
+          The condition deliberately does not require a pixel measurement: the
+          readback can legitimately be unavailable, and gating the whole report
+          on it is how a stalled render loop stayed unreported. */}
+      {fault && (
         <p className="ar-set-help ar-diagnosis" role="status">
-          <strong>Nothing is being drawn.</strong>{' '}
-          {stats?.contextLost
-            ? 'The graphics context was lost — the browser took the GPU back. Reload the page.'
-            : stats?.renderError
-              ? `Every frame is failing: ${stats.renderError}`
-              : (stats?.fps ?? 0) < 1
-                ? `The render loop has stopped after ${stats?.frames ?? 0} frames. Reload the page.`
-                : `The renderer is running (${Math.round(stats?.fps ?? 0)} fps, ${stats?.activeMeshes} meshes) but no pixels reach the screen — a compositing fault, not a placement one. Moving the assembly will not help.`}
+          <strong>{fault.title}</strong> {fault.detail}
+          <button className="secondary ar-restart" onClick={restart}>Restart the renderer</button>
         </p>
       )}
     </div>

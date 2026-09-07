@@ -832,6 +832,39 @@ const context = await browser.newContext({
   });
   check('the render loop is alive and says so', health.advanced > 0,
     `${health.advanced} frames in 500 ms`);
+
+  // A render loop is a requestAnimationFrame chain, and a chain ends the moment
+  // one link fails to schedule the next — a frozen tab, a lost context, an
+  // engine that gave up. What is left is a permanently transparent canvas and
+  // an app with no idea. Kill it the way a browser would and require recovery.
+  await page.evaluate(() => window.spatialScene().engine.stopRenderLoop());
+  await page.waitForTimeout(1200);
+  const down = await page.evaluate(() => {
+    const m = window.spatialScene();
+    m.renderStats();
+    return new Promise((r) => setTimeout(() => r(m.renderStats()), 400));
+  });
+  check('a stopped loop is noticed, not silently endured', down.fps < 1,
+    `${Math.round(down.fps)} fps after stopping`);
+  const fault = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('.ar-btn')].find((b) => b.textContent.includes('Settings'));
+    btn.click();
+    return new Promise((r) => setTimeout(() => r(document.querySelector('.ar-diagnosis')?.textContent ?? null), 700));
+  });
+  check('and it is reported in words, not left to be inferred',
+    Boolean(fault && /render loop has stopped/i.test(fault)), fault?.slice(0, 60));
+  await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('.ar-btn')].find((b) => b.textContent.includes('Settings'));
+    btn.click();
+  });
+  await page.waitForTimeout(5000);                      // two watchdog beats
+  const back = await page.evaluate(() => {
+    const m = window.spatialScene();
+    m.renderStats();
+    return new Promise((r) => setTimeout(() => r(m.renderStats()), 400));
+  });
+  check('and the watchdog brings it back on its own', back.fps > 1 && back.stalls > 0,
+    `${Math.round(back.fps)} fps after ${back.stalls} restart(s)`);
   check('no frame is failing silently', !health.err, health.err);
   check('the graphics context is held', !health.contextLost);
   check('an AR camera is the one rendering', health.camera === 'arcam', health.camera);
@@ -839,16 +872,36 @@ const context = await browser.newContext({
   // The marker is the diagnostic offered to the operator; it has to work, and
   // it has to be *looked at* — switching it on from the sheet used to leave the
   // sheet covering the middle of the view, where the marker is.
+  const markerBox = () => page.locator('.ar-toggle', { hasText: 'test marker' }).locator('input');
   await page.locator('.ar-btn', { hasText: 'Settings' }).click();
   await page.waitForTimeout(600);
-  await page.locator('.ar-toggle', { hasText: 'test marker' }).locator('input').click();
+  await markerBox().click();
   await page.waitForTimeout(700);
-  check('turning the marker on gets the sheet out of the way',
-    await page.locator('.ar-sheet').count() === 0);
+  // A switch that does not stay switched reads as a switch that cannot be
+  // operated: the state lives in the scene, not in a component that is
+  // unmounted every time the sheet closes.
+  check('the marker switch stays on when tapped', await markerBox().isChecked());
+  check('and the sheet stays put, so the tap is not a disappearing act',
+    await page.locator('.ar-sheet').count() === 1);
+  // Measured with the sheet still open, which is the situation the operator is
+  // actually in when they tick the box: the marker has to add visible pixels
+  // *there*, not only once the sheet is dismissed.
   const withMarker = await painted();
-  check('and it paints, one metre ahead whatever else is wrong',
+  check('and it paints, above the sheet, one metre ahead whatever else is wrong',
     withMarker > coverage + 0.03, `${(withMarker * 100).toFixed(1)}% of pixels drawn`);
-  await page.evaluate(() => window.spatialScene().setTestMarker(false));
+
+  // Close and reopen: it has to remember.
+  await page.locator('.ar-btn', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(400);
+  await page.locator('.ar-btn', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(600);
+  check('and it remembers across closing the sheet', await markerBox().isChecked());
+  await markerBox().click();
+  await page.waitForTimeout(400);
+  check('and switches off again',
+    !(await markerBox().isChecked()) && !(await page.evaluate(() => window.spatialScene().hasTestMarker())));
+  await page.locator('.ar-btn', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(400);
   await page.screenshot({ path: `${OUT}/ar-painted.png` });
   await page.close();
 }
