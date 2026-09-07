@@ -154,6 +154,8 @@ export const gearbox: AssemblyDef = {
     { id: 'output-clearance', name: 'Output shaft service gap', mesh: { type: 'box', size: [mm(60), mm(80), mm(60)] },
       pose: { position: [mm(155), mm(60), mm(30)], rotation: I }, role: 'keepOut' },
   ],
+  // Built on a workbench, not on the floor — see `workSurfaceM`.
+  workSurfaceM: 0.9,
   tools: [
     { id: 't-hex5', name: '5 mm hex key', note: 'For the M6 housing bolts — 9 Nm.' },
     { id: 't-press', name: 'Arbor press', note: 'Seat the bearing caps square; do not hammer.' },
