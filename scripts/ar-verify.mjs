@@ -741,25 +741,24 @@ const context = await browser.newContext({
   }, HELD_LOOKING_DOWN);
   await page.waitForTimeout(1200);
 
-  // Read the canvas back: with a transparent clear, any non-zero alpha is
-  // geometry drawn over the camera. A projection can be right while nothing is
-  // painted, and scenery can be painted while the parts are not.
-  const painted = (sel) => page.evaluate((s) => {
-    const c = document.querySelector(s);
-    const gl = c.getContext('webgl2', { preserveDrawingBuffer: true })
-      ?? c.getContext('webgl', { preserveDrawingBuffer: true });
-    if (!gl) return -1;
-    const px = new Uint8Array(c.width * c.height * 4);
-    gl.readPixels(0, 0, c.width, c.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    let lit = 0;
-    for (let i = 3; i < px.length; i += 4) if (px[i] > 8) lit++;
-    return lit / (c.width * c.height);
-  }, sel);
+  // How much of the view the overlay actually painted.
+  //
+  // Read from *inside* the frame, via the app's own sampler. Reading the canvas
+  // from outside — after the browser has composited it — needs
+  // `preserveDrawingBuffer`, which is a trap on mobile GPUs and is no longer
+  // set; without it such a read quietly returns a buffer of zeros. That is the
+  // worst possible failure for an instrument: "0.0% painted" is exactly the
+  // conclusion someone acts on, and it can be a lie. Arm, then collect.
+  const painted = async () => {
+    await page.evaluate(() => window.spatialScene().paintedFraction());
+    await page.waitForTimeout(350);
+    return page.evaluate(() => window.spatialScene().paintedFraction());
+  };
 
   // Entering AR used to put the operator *inside* the assembly: unanchored, it
   // sits at the world origin, which is the head. Half the screen was the
   // translucent insides of a gearbox.
-  const beforePlacing = await painted('canvas.viewer-canvas');
+  const beforePlacing = await painted();
   check('AR opens on the real world, not inside the model', beforePlacing < 0.02,
     `${(beforePlacing * 100).toFixed(1)}% drawn before anything is placed`);
   await page.mouse.click(195, 640);
@@ -774,7 +773,7 @@ const context = await browser.newContext({
     `${stats.cssSize.join('x')} css → ${stats.bufferSize.join('x')} buffer`);
 
 
-  const coverage = await painted('canvas.viewer-canvas');
+  const coverage = await painted();
   // Not "is it drawn" but "can it be seen". A bench gearbox placed on the floor
   // is 1.9 m from a standing operator and covers 1.7% of a phone screen — a
   // grey smudge behind its own label, which is exactly what "I still don't see
@@ -804,7 +803,7 @@ const context = await browser.newContext({
     m.scene.meshes.filter((x) => x.name.startsWith('mesh-')).forEach((x) => x.setEnabled(false));
   });
   await page.waitForTimeout(400);
-  const scenery = await painted('canvas.viewer-canvas');
+  const scenery = await painted();
   check('nothing but the parts paints over the camera', scenery < 0.02,
     `${(scenery * 100).toFixed(1)}% of the camera covered by scenery`);
   await page.evaluate(() => {
@@ -816,9 +815,26 @@ const context = await browser.newContext({
   // The app has to be able to answer this question about itself: the readout in
   // the settings sheet is the only number that proves a pixel reached the
   // screen, and it is what a report of "I see nothing" now turns into.
-  const selfReport = await page.evaluate(() => window.spatialScene().paintedFraction());
-  check('the app can measure its own overlay', Math.abs(selfReport - coverage) < 0.03,
-    `reports ${(selfReport * 100).toFixed(1)}%, canvas says ${(coverage * 100).toFixed(1)}%`);
+  // The measurement has to be stable, or a phone reading it once gets noise.
+  const second = await painted();
+  check('the measurement is stable between frames', Math.abs(second - coverage) < 0.02,
+    `${(coverage * 100).toFixed(1)}% then ${(second * 100).toFixed(1)}%`);
+
+  // A blank overlay has three causes that look identical from outside: a dead
+  // render loop, a lost graphics context, and a frame that throws every time.
+  // All three are reported, so a phone can say which one it is.
+  const health = await page.evaluate(async () => {
+    const m = window.spatialScene();
+    const before = m.renderStats().frames;
+    await new Promise((r) => setTimeout(r, 500));
+    const s = m.renderStats();
+    return { advanced: s.frames - before, contextLost: s.contextLost, err: s.renderError, camera: s.camera };
+  });
+  check('the render loop is alive and says so', health.advanced > 0,
+    `${health.advanced} frames in 500 ms`);
+  check('no frame is failing silently', !health.err, health.err);
+  check('the graphics context is held', !health.contextLost);
+  check('an AR camera is the one rendering', health.camera === 'arcam', health.camera);
 
   // The marker is the diagnostic offered to the operator; it has to work, and
   // it has to be *looked at* — switching it on from the sheet used to leave the
@@ -829,7 +845,7 @@ const context = await browser.newContext({
   await page.waitForTimeout(700);
   check('turning the marker on gets the sheet out of the way',
     await page.locator('.ar-sheet').count() === 0);
-  const withMarker = await painted('canvas.viewer-canvas');
+  const withMarker = await painted();
   check('and it paints, one metre ahead whatever else is wrong',
     withMarker > coverage + 0.03, `${(withMarker * 100).toFixed(1)}% of pixels drawn`);
   await page.evaluate(() => window.spatialScene().setTestMarker(false));

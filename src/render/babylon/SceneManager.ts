@@ -126,7 +126,6 @@ export class SceneManager {
       this.renderBackend = injected.kind;
     } else {
       this.engine = new Engine(canvas, this.perf.antialias, {
-        preserveDrawingBuffer: true,
         stencil: true,
         antialias: this.perf.antialias,
         powerPreference: 'high-performance',
@@ -185,7 +184,31 @@ export class SceneManager {
     this.freezeStatic();
     this.startAdaptiveOptimizer();
 
-    this.engine.runRenderLoop(() => this.scene.render());
+    // Render defensively and keep a record.
+    //
+    // A frame that throws — an unsupported extension, a shader that will not
+    // compile on this GPU — leaves the canvas exactly as transparent as one
+    // that was never drawn, and Babylon swallows it into the console of a
+    // phone nobody can open. Counting frames and keeping the first error is
+    // the difference between "the overlay is invisible" and knowing which of
+    // the three possible reasons it is.
+    this.engine.runRenderLoop(() => {
+      try {
+        this.scene.render();
+        this.frames++;
+        if (this.paintSampleWanted) {
+          this.paintSampleWanted = false;
+          this.lastPainted = this.samplePainted();
+        }
+      } catch (err) {
+        this.renderError ??= String((err as Error)?.message ?? err).slice(0, 200);
+      }
+    });
+    // WebGL contexts are lost on a phone far more readily than on a desktop:
+    // memory pressure, the camera claiming GPU resources, the tab going to the
+    // background. A lost context renders nothing, silently, for ever.
+    this.canvas.addEventListener('webglcontextlost', this.onContextLost);
+    this.canvas.addEventListener('webglcontextrestored', this.onContextRestored);
     window.addEventListener('resize', this.onResize);
     // A `resize` event only fires when the *window* changes. The canvas changes
     // size for other reasons that matter more here: entering AR hides the side
@@ -241,6 +264,21 @@ export class SceneManager {
   private baseScalingLevel = 1;
   private reticle: Mesh | undefined;
   private showBackground = true;
+  /** Frames actually rendered — a loop that has stopped shows up here first. */
+  private frames = 0;
+  private renderError: string | undefined;
+  private contextLost = false;
+  private paintSampleWanted = false;
+  private lastPainted: number | undefined;
+  private lastStatsAtMs = 0;
+  private lastStatsFrames = 0;
+  private onContextLost = (e: Event): void => {
+    // Preventing the default is what allows the browser to restore the context
+    // at all; without it the canvas is dead until the page reloads.
+    e.preventDefault();
+    this.contextLost = true;
+  };
+  private onContextRestored = (): void => { this.contextLost = false; };
   /** Set once the operator orbits or zooms: their framing outranks any auto-fit. */
   private cameraTouched = false;
   /** True while `frameCamera` moves the camera, so it is not read as input. */
@@ -1052,6 +1090,12 @@ export class SceneManager {
    * never per frame.
    */
   paintedFraction(): number | undefined {
+    this.paintSampleWanted = true;      // taken at the end of the next frame
+    return this.lastPainted;
+  }
+
+  /** The readback itself, valid only immediately after `scene.render()`. */
+  private samplePainted(): number | undefined {
     const gl = (this.engine as unknown as { _gl?: WebGLRenderingContext })._gl;
     if (!gl) return undefined;                       // WebGPU: no readback here
     const w = this.engine.getRenderWidth();
@@ -1062,7 +1106,13 @@ export class SceneManager {
     const step = Math.max(1, Math.floor(w / 128));
     try {
       const px = new Uint8Array(w * h * 4);
+      while (gl.getError() !== gl.NO_ERROR) { /* drain, so the next read is ours */ }
       gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      // A refused read returns a buffer of zeros, which is indistinguishable
+      // from a genuinely empty canvas — and "nothing is drawn" is exactly the
+      // conclusion someone would act on. Report nothing rather than a zero we
+      // cannot stand behind.
+      if (gl.getError() !== gl.NO_ERROR) return undefined;
       let lit = 0;
       let seen = 0;
       for (let y = 0; y < h; y += step) {
@@ -1228,9 +1278,26 @@ export class SceneManager {
     bufferSize: [number, number];
     scaling: number;
     cameraY: number;
+    /** Frames rendered since start: not advancing means the loop is dead. */
+    frames: number;
+    fps: number;
+    contextLost: boolean;
+    renderError: string | undefined;
+    camera: string;
   } {
     const rect = this.canvas.getBoundingClientRect();
+    const now = performance.now();
+    const fps = this.lastStatsAtMs
+      ? ((this.frames - this.lastStatsFrames) * 1000) / Math.max(1, now - this.lastStatsAtMs)
+      : 0;
+    this.lastStatsAtMs = now;
+    this.lastStatsFrames = this.frames;
     return {
+      frames: this.frames,
+      fps,
+      contextLost: this.contextLost,
+      renderError: this.renderError,
+      camera: this.scene.activeCamera?.name ?? 'none',
       backend: this.renderBackend,
       meshes: this.scene.meshes.length,
       activeMeshes: this.scene.getActiveMeshes().length,
@@ -1386,6 +1453,8 @@ export class SceneManager {
     this.optimizer?.stop();
     this.optimizer?.dispose?.();
     window.removeEventListener('resize', this.onResize);
+    this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
+    this.canvas.removeEventListener('webglcontextrestored', this.onContextRestored);
     this.resizeObserver?.disconnect();
     this.engine.stopRenderLoop();
     this.scene.dispose();

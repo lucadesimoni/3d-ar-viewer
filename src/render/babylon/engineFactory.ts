@@ -35,8 +35,12 @@ export async function createBestEngine(
   }
 
   const engine = new Engine(canvas, opts.antialias, {
-    preserveDrawingBuffer: true,
-    stencil: true,
+    // No `preserveDrawingBuffer`. On the tile-based GPUs in phones (Adreno,
+    // Mali) preserving the buffer forces a resolve and a copy every frame, and
+    // it is the kind of rarely-exercised path where a driver quietly renders
+    // nothing at all. It was only ever needed to read pixels back, and that is
+    // now done inside the frame, before compositing, where it is valid anyway.
+    stencil: true,                                   // outlines need it
     antialias: opts.antialias,
     powerPreference: 'high-performance',
     adaptToDeviceRatio: true,
