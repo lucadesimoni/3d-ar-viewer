@@ -47,6 +47,9 @@ import {
   makeOverlayMaterial,
 } from './meshFactory';
 
+/** How often to check that the render loop is still producing frames, ms. */
+const WATCHDOG_INTERVAL_MS = 2000;
+
 /** How long after arming placement the first tap is ignored, ms. */
 const PLACEMENT_ARM_DELAY_MS = 350;
 
@@ -192,18 +195,8 @@ export class SceneManager {
     // phone nobody can open. Counting frames and keeping the first error is
     // the difference between "the overlay is invisible" and knowing which of
     // the three possible reasons it is.
-    this.engine.runRenderLoop(() => {
-      try {
-        this.scene.render();
-        this.frames++;
-        if (this.paintSampleWanted) {
-          this.paintSampleWanted = false;
-          this.lastPainted = this.samplePainted();
-        }
-      } catch (err) {
-        this.renderError ??= String((err as Error)?.message ?? err).slice(0, 200);
-      }
-    });
+    this.engine.runRenderLoop(this.renderFrame);
+    this.watchdog = window.setInterval(this.checkRenderLoop, WATCHDOG_INTERVAL_MS);
     // WebGL contexts are lost on a phone far more readily than on a desktop:
     // memory pressure, the camera claiming GPU resources, the tab going to the
     // background. A lost context renders nothing, silently, for ever.
@@ -268,6 +261,10 @@ export class SceneManager {
   private frames = 0;
   private renderError: string | undefined;
   private contextLost = false;
+  private watchdog = 0;
+  private watchdogFrames = -1;
+  /** How many times the loop had to be restarted — reported, not hidden. */
+  private stalls = 0;
   private paintSampleWanted = false;
   private lastPainted: number | undefined;
   private lastStatsAtMs = 0;
@@ -278,7 +275,45 @@ export class SceneManager {
     e.preventDefault();
     this.contextLost = true;
   };
-  private onContextRestored = (): void => { this.contextLost = false; };
+  private onContextRestored = (): void => {
+    this.contextLost = false;
+    this.restartRenderLoop();
+  };
+
+  /**
+   * Restart the render loop if it has stopped while the page is on screen.
+   *
+   * `runRenderLoop` is a requestAnimationFrame chain, and a chain ends the
+   * moment one link fails to schedule the next: a throttled tab, a context
+   * loss, an engine that gave up. What is left is a permanently transparent
+   * canvas and an app with no idea anything is wrong — which is exactly what
+   * "0 fps, nothing visible" is. This runs on a timer rather than on rAF, so a
+   * dead rAF chain cannot take the watchdog down with it.
+   */
+  private checkRenderLoop = (): void => {
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      this.watchdogFrames = this.frames;      // hidden: stopping is correct
+      return;
+    }
+    if (this.frames === this.watchdogFrames) {
+      this.stalls++;
+      this.restartRenderLoop();
+    }
+    this.watchdogFrames = this.frames;
+  };
+
+  private renderFrame = (): void => {
+    try {
+      this.scene.render();
+      this.frames++;
+      if (this.paintSampleWanted) {
+        this.paintSampleWanted = false;
+        this.lastPainted = this.samplePainted();
+      }
+    } catch (err) {
+      this.renderError ??= String((err as Error)?.message ?? err).slice(0, 200);
+    }
+  };
   /** Set once the operator orbits or zooms: their framing outranks any auto-fit. */
   private cameraTouched = false;
   /** True while `frameCamera` moves the camera, so it is not read as input. */
@@ -1072,6 +1107,25 @@ export class SceneManager {
   }
 
   /**
+   * Start the render loop again after it has stopped.
+   *
+   * `runRenderLoop` is a `requestAnimationFrame` chain, and a chain has exactly
+   * one way to end: a frame that does not schedule the next one. A browser that
+   * throttles rAF while the page is backgrounded, a context loss, an engine
+   * that decided it was done — any of them leave a canvas that is permanently
+   * transparent and an app with no way to say so. Restarting is cheap and
+   * idempotent: Babylon replaces the loop rather than stacking a second one.
+   */
+  restartRenderLoop(): void {
+    this.engine.stopRenderLoop();
+    this.renderError = undefined;
+    this.engine.runRenderLoop(this.renderFrame);
+    this.watchdog = window.setInterval(this.checkRenderLoop, WATCHDOG_INTERVAL_MS);
+    // Sizes go stale while nothing is drawing; a restart is also a re-measure.
+    this.onResize();
+  }
+
+  /**
    * What fraction of the canvas the overlay actually painted, 0..1.
    *
    * The end of a long guessing game. Every other number here is about what
@@ -1235,6 +1289,11 @@ export class SceneManager {
    * fault is in rendering or compositing, and no amount of moving the anchor
    * will help.
    */
+  /** Whether the test marker is currently on — the switch has to tell the truth. */
+  hasTestMarker(): boolean {
+    return this.marker !== undefined;
+  }
+
   setTestMarker(on: boolean): void {
     if (!on) {
       if (this.markerObserver) this.scene.onBeforeRenderObservable.remove(this.markerObserver);
@@ -1256,7 +1315,11 @@ export class SceneManager {
     this.markerObserver = this.scene.onBeforeRenderObservable.add(() => {
       const cam = this.scene.activeCamera;
       if (!cam || !this.marker) return;
-      this.marker.position = cam.position.add(cam.getDirection(Vector3.Forward()).scale(1));
+      // High in the view, not dead centre: the settings sheet the switch lives
+      // in covers the bottom half, and a marker behind it answers nothing.
+      this.marker.position = cam.position
+        .add(cam.getDirection(Vector3.Forward()).scale(1))
+        .add(cam.getDirection(Vector3.Up()).scale(0.25));
       this.marker.rotation.y += 0.02;      // spinning: alive, not a frozen frame
     });
   }
@@ -1281,6 +1344,8 @@ export class SceneManager {
     /** Frames rendered since start: not advancing means the loop is dead. */
     frames: number;
     fps: number;
+    /** Times the watchdog had to restart a stalled loop. */
+    stalls: number;
     contextLost: boolean;
     renderError: string | undefined;
     camera: string;
@@ -1292,10 +1357,12 @@ export class SceneManager {
       : 0;
     this.lastStatsAtMs = now;
     this.lastStatsFrames = this.frames;
+    const babylonLost = (this.engine as unknown as { _contextWasLost?: boolean })._contextWasLost;
     return {
       frames: this.frames,
       fps,
-      contextLost: this.contextLost,
+      stalls: this.stalls,
+      contextLost: this.contextLost || babylonLost === true,
       renderError: this.renderError,
       camera: this.scene.activeCamera?.name ?? 'none',
       backend: this.renderBackend,
@@ -1450,6 +1517,7 @@ export class SceneManager {
   }
 
   dispose(): void {
+    window.clearInterval(this.watchdog);
     this.optimizer?.stop();
     this.optimizer?.dispose?.();
     window.removeEventListener('resize', this.onResize);

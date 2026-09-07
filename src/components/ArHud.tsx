@@ -66,12 +66,7 @@ export function ArHud({ onExit, onReplace, onBringInFront, capabilities, pipelin
           {sheet === 'steps' && <StepGuide />}
           {sheet === 'errors' && <DiagnosticsPanel />}
           {sheet === 'view' && <ModeBar />}
-          {sheet === 'settings' && (
-            <ArSettings
-              capabilities={capabilities} pipeline={pipeline}
-              onDismiss={() => setSheet(null)}
-            />
-          )}
+          {sheet === 'settings' && <ArSettings capabilities={capabilities} pipeline={pipeline} />}
         </div>
       )}
 

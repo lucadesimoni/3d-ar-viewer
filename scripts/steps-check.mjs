@@ -36,11 +36,19 @@ for (const assemblyId of ['kallax-4x4', 'bench-gearbox', 'equipment-rack']) {
     const bad = [];
     let steps = 0;
     let tagged = 0;
+    const read = () => [...document.querySelectorAll('.step-tag-label')].map((e) => e.textContent);
     for (const step of s().assembly.steps) {
       s().setActiveStep(step.id);
-      await new Promise((r) => setTimeout(r, 260));
-      const shown = [...document.querySelectorAll('.step-tag-label')].map((e) => e.textContent);
       const expected = step.partIds.map((id) => names.get(id));
+      // The labels are redrawn on an animation frame, so wait for them to
+      // settle rather than guessing a delay. A fixed sleep made this check
+      // fail about one run in three on a software renderer — and a flaky
+      // check is worse than no check, because it teaches you to ignore it.
+      let shown = read();
+      for (let i = 0; i < 40 && shown.some((n) => !expected.includes(n)); i++) {
+        await new Promise((r) => setTimeout(r, 25));
+        shown = read();
+      }
       steps++;
       tagged += shown.length;
       const wrong = shown.filter((n) => !expected.includes(n));
