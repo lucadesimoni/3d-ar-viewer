@@ -2,18 +2,18 @@ import { Engine } from '@babylonjs/core/Engines/engine';
 import type { AbstractEngine } from '@babylonjs/core/Engines/abstractEngine';
 
 /**
- * Create the best available render engine: WebGPU when the device and browser
- * support it, otherwise WebGL2.
+ * Create the render engine: WebGL2 by default, WebGPU on request.
  *
- * WebGPU (Safari 26+, modern Chrome/Edge/Android) gives lower CPU overhead and
- * better throughput on heavy scenes than WebGL. It is not universal, so this
- * probes support and initialises it asynchronously, and *any* failure —
- * unsupported device, a blocked WGSL transpiler fetch, an init error — falls
- * straight back to the WebGL2 engine that works everywhere. The caller gets a
- * ready engine and a tag saying which backend it got.
- *
- * `?gpu=webgl` forces the WebGL path (debugging); `?gpu=webgpu` still only uses
- * WebGPU when actually supported.
+ * WebGPU gives lower CPU overhead and better throughput on heavy scenes, and
+ * this used to prefer it wherever it was supported. It is no longer the
+ * default, for a reason worth writing down: the scene here is a few dozen
+ * low-poly meshes and gains nothing measurable from WebGPU, while every check
+ * in this repository runs on WebGL — a headless Chromium in a sandbox cannot
+ * create a WebGPU context, so the WebGPU path was shipped to phones and
+ * tablets having never once been executed by the test suite. An untested
+ * renderer on the devices that matter is a bad trade for throughput nobody
+ * needs. `?gpu=webgpu` opts back in, and still falls back to WebGL if
+ * anything about the initialisation fails.
  */
 export type RenderBackendKind = 'webgpu' | 'webgl';
 
@@ -28,9 +28,8 @@ export async function createBestEngine(
   search = '',
 ): Promise<CreatedEngine> {
   const forced = new URLSearchParams(search).get('gpu');
-  const preferWebGPU = forced !== 'webgl';
 
-  if (preferWebGPU) {
+  if (forced === 'webgpu') {
     const webgpu = await tryWebGPU(canvas, opts).catch(() => undefined);
     if (webgpu) return { engine: webgpu, kind: 'webgpu' };
   }

@@ -714,6 +714,87 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 10. Pixels, not projections. -----------------------------------------
+// Every "is it in view" check so far is a projection: maths about where the
+// assembly *would* land. None of them prove a single pixel was drawn over the
+// camera. This one reads the canvas back.
+{
+  const page = await context.newPage();
+  await open(page, URL);
+  await page.click('.ar-enter');
+  await page.evaluate((held) => {
+    setInterval(() => window.dispatchEvent(
+      new DeviceOrientationEvent('deviceorientation', held)), 50);
+  }, HELD_LOOKING_DOWN);
+  await page.waitForTimeout(1200);
+
+  // Read the canvas back: with a transparent clear, any non-zero alpha is
+  // geometry drawn over the camera. A projection can be right while nothing is
+  // painted, and scenery can be painted while the parts are not.
+  const painted = (sel) => page.evaluate((s) => {
+    const c = document.querySelector(s);
+    const gl = c.getContext('webgl2', { preserveDrawingBuffer: true })
+      ?? c.getContext('webgl', { preserveDrawingBuffer: true });
+    if (!gl) return -1;
+    const px = new Uint8Array(c.width * c.height * 4);
+    gl.readPixels(0, 0, c.width, c.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    let lit = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 8) lit++;
+    return lit / (c.width * c.height);
+  }, sel);
+
+  // Entering AR used to put the operator *inside* the assembly: unanchored, it
+  // sits at the world origin, which is the head. Half the screen was the
+  // translucent insides of a gearbox.
+  const beforePlacing = await painted('canvas.viewer-canvas');
+  check('AR opens on the real world, not inside the model', beforePlacing < 0.02,
+    `${(beforePlacing * 100).toFixed(1)}% drawn before anything is placed`);
+  await page.mouse.click(195, 640);
+  await page.waitForTimeout(900);
+
+  const stats = await page.evaluate(() => window.spatialScene().renderStats());
+  check('the renderer is the one the checks actually cover', stats.backend === 'webgl',
+    stats.backend);
+  check('part meshes exist and are being drawn', stats.partMeshes > 0 && stats.activeMeshes > 0,
+    `${stats.activeMeshes} active of ${stats.meshes}, ${stats.partMeshes} parts`);
+  check('the render buffer is not empty', stats.bufferSize[0] > 0 && stats.bufferSize[1] > 0,
+    `${stats.cssSize.join('x')} css → ${stats.bufferSize.join('x')} buffer`);
+
+
+  const coverage = await painted('canvas.viewer-canvas');
+  check('the assembly is actually painted onto the canvas', coverage > 0.005,
+    `${(coverage * 100).toFixed(1)}% of pixels drawn`);
+
+  // The check that matters, and the one this suite lacked: with the parts
+  // hidden, the camera image must be untouched. The studio set — bench,
+  // fixture plate, ground grid — used to be drawn over the real world at 25%
+  // alpha and covered 98% of the screen; the gearbox was 1.7% of the pixels,
+  // underneath it. Nothing looked broken in a screenshot, and nothing was
+  // visible on a phone.
+  await page.evaluate(() => {
+    const m = window.spatialScene();
+    m.scene.meshes.filter((x) => x.name.startsWith('mesh-')).forEach((x) => x.setEnabled(false));
+  });
+  await page.waitForTimeout(400);
+  const scenery = await painted('canvas.viewer-canvas');
+  check('nothing but the parts paints over the camera', scenery < 0.02,
+    `${(scenery * 100).toFixed(1)}% of the camera covered by scenery`);
+  await page.evaluate(() => {
+    const m = window.spatialScene();
+    m.scene.meshes.filter((x) => x.name.startsWith('mesh-')).forEach((x) => x.setEnabled(true));
+  });
+  await page.waitForTimeout(400);
+
+  // The marker is the diagnostic offered to the operator; it has to work.
+  await page.evaluate(() => window.spatialScene().setTestMarker(true));
+  await page.waitForTimeout(500);
+  const withMarker = await painted('canvas.viewer-canvas');
+  check('the test marker paints too, one metre ahead whatever else is wrong',
+    withMarker > 0.002, `${(withMarker * 100).toFixed(1)}% of pixels drawn`);
+  await page.screenshot({ path: `${OUT}/ar-painted.png` });
+  await page.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall checks passed');
 process.exit(failures.length ? 1 : 0);
