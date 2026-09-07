@@ -95,14 +95,28 @@ export async function detectCapabilities(): Promise<Capabilities> {
   if (!secureContext) {
     notes.push('Not a secure context — camera and WebXR are blocked. Serve the app over HTTPS.');
   }
+  // Why the good mode is unavailable matters more than that it is: without
+  // WebXR there is no positional tracking, and no amount of work on the
+  // passthrough path can invent it. On Android that is usually the *browser*,
+  // not the phone — Samsung Internet has no immersive-ar, Chrome does — and
+  // that is a fix the operator can apply in ten seconds.
+  const noPositional =
+    'Without WebXR the overlay has orientation but no position: it turns with you correctly, '
+    + 'but walking carries it along instead of leaving it on the bench.';
   if (!webxrSupported) {
     notes.push(
       isIOS
         ? 'iOS Safari does not implement WebXR. Camera passthrough with motion tracking is used instead.'
-        : 'This browser does not expose navigator.xr.',
+        : 'This browser does not expose navigator.xr. On Android, Chrome does — open the app there for real AR tracking.',
     );
+    if (!isIOS) notes.push(noPositional);
   } else if (!immersiveAr) {
-    notes.push('WebXR is present but immersive-ar is not supported on this device.');
+    notes.push(
+      isIOS
+        ? 'WebXR is present but immersive-ar is not supported on this device.'
+        : 'This browser has WebXR but not immersive-ar. Chrome on Android does, with Google Play Services for AR installed.',
+    );
+    notes.push(noPositional);
   }
   if (!barcodeDetector) {
     notes.push('BarcodeDetector is unavailable — marker re-registration falls back to manual datums.');
@@ -150,7 +164,8 @@ export const MODE_LABELS: Record<ArMode, string> = {
 
 export const MODE_BLURBS: Record<ArMode, string> = {
   webxr: 'Full 6-DoF tracking with plane detection and real-world occlusion.',
-  camera: 'Live camera behind the overlay, orientation from the device sensors. Anchor by touching a datum.',
+  camera: 'Live camera behind the overlay, orientation from the device sensors — 3 degrees of freedom. '
+    + 'Turning is tracked; walking is not, so the overlay travels with you.',
   quicklook: 'Hands the model to the system AR viewer. Great tracking, no live diagnostics.',
   preview: 'Turntable view of the assembly. Everything except the camera works here.',
 };

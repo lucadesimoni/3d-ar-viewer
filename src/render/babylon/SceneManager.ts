@@ -53,6 +53,9 @@ const WATCHDOG_INTERVAL_MS = 2000;
 /** Frame interval when driving the scene from a timer instead of the display. */
 const TIMER_FRAME_MS = 33;                              // ~30 fps
 
+/** Nothing useful can be placed nearer than this: it is inside arm's reach. */
+const MIN_PLACEMENT_M = 0.4;
+
 /** How long after arming placement the first tap is ignored, ms. */
 const PLACEMENT_ARM_DELAY_MS = 350;
 
@@ -605,8 +608,14 @@ export class SceneManager {
     const dx = p.x - ray.origin.x;
     const dz = p.z - ray.origin.z;
     const horizontal = Math.hypot(dx, dz);
-    if (horizontal > maxDistance && horizontal > 1e-6) {
-      const k = maxDistance / horizontal;
+    // Steeply down is the other end of the same problem: aiming at the bottom
+    // of the screen meets the plane directly beneath the operator, and a tap
+    // there put the assembly 40 mm from the camera — inside their own face,
+    // off screen, and reported as placed. Push it out to somewhere a person
+    // can actually look at.
+    const clamped = Math.min(maxDistance, Math.max(MIN_PLACEMENT_M, horizontal));
+    if (Math.abs(clamped - horizontal) > 1e-6 && horizontal > 1e-6) {
+      const k = clamped / horizontal;
       return {
         position: [ray.origin.x + dx * k, p.y, ray.origin.z + dz * k],
         rotation: [0, 0, 0, 1],
@@ -647,7 +656,13 @@ export class SceneManager {
     // but unmistakably there. Measured on the parts alone: a 300 mm gearbox
     // sharing a root with its bench looked twice its size and was allowed twice
     // the distance.
-    return Math.min(8, Math.max(1.2, this.assemblyBounds(true).radius * 8));
+    // The floor is 3 m for anything: a workshop is a room, and a bench assembly
+    // may well belong at the far end of it. The old floor of 1.2 m meant that a
+    // 260 mm gearbox could not be put further than arm's length however far
+    // down the bench you aimed — "it seems like I'm very close to the object".
+    // The ceiling still stops a tap near the horizon throwing it across a car
+    // park, and the off-screen nudge covers what is left.
+    return Math.min(8, Math.max(3, this.assemblyBounds(true).radius * 8));
   }
 
   /** Bounding radius of the built assembly, metres. */
