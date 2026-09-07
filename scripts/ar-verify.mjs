@@ -57,6 +57,16 @@ const SHELF_STREAM = ({ cols, rows, span, sway = 0 }) => {
   navigator.mediaDevices.getUserMedia = async () => stream;
 };
 
+/**
+ * A phone held the way an operator holds one: looking 30 degrees down, facing
+ * some arbitrary direction, with a few degrees of roll from the hand.
+ *
+ * The heading matters. `alpha: 0, gamma: 0` is the one combination where a
+ * swapped Euler triple still looks correct, which is how a pitch that followed
+ * the compass survived every check here for as long as it did.
+ */
+const HELD_LOOKING_DOWN = { alpha: 217, beta: 60, gamma: 4 };
+
 async function open(page, url) {
   await page.goto(url, { waitUntil: 'networkidle' });
   await page.waitForSelector('canvas.viewer-canvas', { timeout: 20000 });
@@ -127,10 +137,10 @@ const context = await browser.newContext({
   // floor is and deliberately falls back to placing straight ahead (checked
   // separately below). Feed a device held upright and tilted 30 degrees down,
   // which is how someone looks at the floor a couple of metres off.
-  await page.evaluate(() => {
+  await page.evaluate((held) => {
     setInterval(() => window.dispatchEvent(
-      new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 60, gamma: 0 })), 50);
-  });
+      new DeviceOrientationEvent('deviceorientation', held)), 50);
+  }, HELD_LOOKING_DOWN);
   await page.waitForTimeout(700);
   check('the phone attitude reaches the app', (await state(page)).motion === true);
   const hintWithMotion = await page.textContent('.placement-hint').catch(() => null);
@@ -616,10 +626,10 @@ const context = await browser.newContext({
   const page = await context.newPage();
   await open(page, `${URL}?assembly=kallax-4x4`);
   await page.click('.ar-enter');
-  await page.evaluate(() => {
+  await page.evaluate((held) => {
     setInterval(() => window.dispatchEvent(
-      new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 60, gamma: 0 })), 50);
-  });
+      new DeviceOrientationEvent('deviceorientation', held)), 50);
+  }, HELD_LOOKING_DOWN);
   await page.waitForTimeout(2500);
 
   check('no part-recognition claim without a model',
@@ -666,11 +676,11 @@ const context = await browser.newContext({
   const page = await context.newPage();
   await open(page, URL);
   await page.click('.ar-enter');
-  await page.evaluate(() => {
-    window.__beta = 60;                                    // looking 30° down
+  await page.evaluate((held) => {
+    window.__beta = held.beta;                             // looking 30° down
     setInterval(() => window.dispatchEvent(new DeviceOrientationEvent(
-      'deviceorientation', { alpha: 0, beta: window.__beta, gamma: 0 })), 50);
-  });
+      'deviceorientation', { ...held, beta: window.__beta })), 50);
+  }, HELD_LOOKING_DOWN);
   await page.waitForTimeout(1200);
   await page.mouse.click(195, 640);
   await page.waitForTimeout(600);

@@ -48,14 +48,32 @@ const DEG = Math.PI / 180;
 /** Maps the device frame (Z out of the screen) to a camera looking down -Z. */
 const SCREEN_TO_CAMERA = new Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2);
 
-/** W3C device orientation (ZXY intrinsic) to a quaternion. */
+/**
+ * W3C device orientation (ZXY intrinsic) to a camera quaternion.
+ *
+ * The axis each angle belongs on is not interchangeable, and one arrangement
+ * looks correct in every test written by hand. At `beta = 90` — a phone held
+ * bolt upright — the YXZ order is in gimbal lock, so `alpha` (compass heading)
+ * and `gamma` (roll) produce the same rotation and can be swapped without
+ * anything appearing to break. Away from upright they cannot: with the two
+ * exchanged, the *pitch* of the camera follows the compass, so pointing the
+ * phone at the floor and turning on the spot swings the view from 30 degrees
+ * down, through level, to 30 degrees up. The overlay is then off screen in a
+ * direction that moves as the operator turns to look for it.
+ *
+ * Beta is the pitch (x), alpha the heading (y), gamma the roll (negated z) —
+ * as in the W3C note and three.js's DeviceOrientationControls. `SCREEN_TO_CAMERA`
+ * then turns the screen-out frame into a camera looking out of the *back* of
+ * the device, and the last term takes out the screen's own rotation.
+ * `deviceOrientation.test.ts` pins all of this to what the operator's hands do.
+ */
 export function orientationToQuaternion(
   alphaDeg: number,
   betaDeg: number,
   gammaDeg: number,
   screenAngleDeg = 0,
 ): Quaternion {
-  const euler = new Euler(betaDeg * DEG, gammaDeg * DEG, -alphaDeg * DEG, 'YXZ');
+  const euler = new Euler(betaDeg * DEG, alphaDeg * DEG, -gammaDeg * DEG, 'YXZ');
   const q = new Quaternion().setFromEuler(euler);
   q.multiply(SCREEN_TO_CAMERA);
   // Undo the screen rotation so landscape and portrait agree on which way is up.
