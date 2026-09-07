@@ -183,7 +183,8 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
 
 /* ---------- Panels ---------- */
 .panel { background: var(--panel); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border: 1px solid var(--edge); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; min-height: 0; box-shadow: var(--shadow); }
-.panel-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+.panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+.panel-ident { min-width: 0; flex: 1; }
 .rev { font-size: 11px; color: var(--muted); }
 .progress-ring { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: conic-gradient(var(--accent) calc(var(--p, 0) * 1%), rgba(255,255,255,0.08) 0); border: 1px solid var(--edge); }
 
@@ -205,6 +206,8 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
 .chip.active { color: var(--accent); }
 .active-card { margin-top: 12px; padding: 12px; border-radius: 11px; background: rgba(34, 211, 238, 0.07); border: 1px solid rgba(34, 211, 238, 0.22); }
 .active-card .caution { color: var(--warn); font-size: 12.5px; margin: 0 0 6px; }
+.active-count { display: block; font-size: 11px; font-weight: 650; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--accent); margin-bottom: 2px; }
 .instruction { font-size: 13.5px; color: var(--text); margin: 4px 0 8px; }
 .tools { font-size: 12px; color: var(--muted); }
 .blocked { color: var(--warn); font-size: 12px; }
@@ -362,6 +365,25 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   .sheet-tabs button.active { background: rgba(34, 211, 238, 0.18); color: var(--accent); }
   .sheet-tabs .sheet-ar { flex: 1.4 1 0; }
 
+  /* The step list becomes a strip of numbers.
+     Six rows of "1 Mount base plate  READY" push the card — the thing you
+     actually work from — below the fold, and cost the 3D view a third of the
+     screen for information the card repeats. As a strip it stays tappable,
+     shows status by colour, and costs one row. */
+  .app.mobile .step-list {
+    display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden;
+    flex: 0 0 auto; padding-bottom: 2px; scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .app.mobile .step-list::-webkit-scrollbar { display: none; }
+  .app.mobile .step-row { padding: 0; flex: 0 0 auto; background: none; }
+  .app.mobile .step-row.selected { background: none; }
+  .app.mobile .step-row .step-title,
+  .app.mobile .step-row .chip { display: none; }
+  .app.mobile .step-row .bullet { width: 34px; height: 34px; font-size: 13px; }
+  .app.mobile .step-row.selected .bullet { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .app.mobile .active-card { margin-top: 10px; }
+
   /* Overlay drawers must not cover the whole small screen. */
   .viewport-overlay { max-width: 70vw; }
   .drawer { width: min(300px, 70vw); }
@@ -376,10 +398,14 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   .brand strong { font-size: 14px; white-space: nowrap; }
   .ar-enter { padding: 10px 12px; font-size: 12.5px; white-space: nowrap; }
   .ar-mode-suffix { display: none; }
-  /* The step-guide header stacks instead of colliding. */
-  .panel-head { flex-wrap: wrap; gap: 6px; }
+  /* Identity and progress on one line: the ring used to wrap onto a band of
+     its own with nothing beside it, which cost a phone ~60 px of 3D view for
+     two characters of text. */
+  .panel-head { gap: 8px; margin-bottom: 8px; }
+  .panel-ident { display: flex; flex-direction: column; gap: 2px; }
   .assembly-picker { max-width: 100%; }
-  .rev { flex-basis: 100%; }
+  .rev { font-size: 10.5px; }
+  .progress-ring { width: 38px; height: 38px; flex: 0 0 auto; font-size: 11px; }
   /* Mode bar must fit the width: icons only, no labels, no reset. */
   .mode-switch { flex: 1; justify-content: space-between; }
   .mode { padding: 9px 10px; }
@@ -387,6 +413,23 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   .mode-icon { font-size: 18px; }
   .reset { display: none; }
   .viewport-overlay { max-width: 78vw; }
+}
+
+/* A phone in landscape has ~390 px of height for everything. Stacked, the 3D
+   view came out a 231 px strip. Side by side, both are usable. */
+@media (max-width: 1024px) and (orientation: landscape) and (max-height: 560px) {
+  .app .stage {
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 38%);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .app .viewport { grid-column: 1; grid-row: 1; min-height: 0; }
+  .mobile-sheet { grid-column: 2; grid-row: 1; max-height: none; }
+  .app.mobile .panel { max-height: none; }
+  .sheet-tabs { grid-column: 1 / -1; grid-row: 2; }
+  .app.mobile.sheet-collapsed .viewport { min-height: 0; }
+  .app.mobile.sheet-collapsed .stage { grid-template-columns: 1fr; }
+  /* The header is the first thing to go when height is this scarce. */
+  .app.mobile .status-bar { display: none; }
 }
 
 /* Assembly picker */

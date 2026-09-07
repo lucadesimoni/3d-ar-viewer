@@ -21,7 +21,7 @@ export function StepGuide(): JSX.Element {
   return (
     <aside className="panel step-guide">
       <header className="panel-head">
-        <div>
+        <div className="panel-ident">
           {ui.showAssemblyPicker ? (
             <select
               className="assembly-picker"
@@ -62,6 +62,12 @@ export function StepGuide(): JSX.Element {
       {active && (
         <div className="active-card">
           {active.step.caution && <p className="caution">⚠ {active.step.caution}</p>}
+          {/* Where you are in the job. On a phone the step list is a strip of
+              numbers, so the card has to say this itself — "Mount base plate"
+              alone does not tell you whether five minutes or an hour is left. */}
+          <span className="active-count">
+            Step {sequence.steps.findIndex((s) => s.step.id === active.step.id) + 1} of {sequence.steps.length}
+          </span>
           <h3>{active.step.title}</h3>
           <p className="instruction">{active.step.instruction}</p>
           {active.step.toolIds && active.step.toolIds.length > 0 && (
