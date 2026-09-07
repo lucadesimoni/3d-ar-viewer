@@ -874,49 +874,36 @@ export class SceneManager {
     onPlace: (pose: Pose) => void,
     onEnd?: () => void,
   ): Promise<{ end: () => Promise<void> } | undefined> {
-    try {
-      const { prepareImmersiveAr } = await import('./xr');
-      // The DOM overlay has to be the app root, not the canvas: the canvas is
-      // what WebXR replaces, while the HUD around it is the part that must stay
-      // on screen and stay tappable inside the session.
-      const overlayRoot = this.canvas.closest('.app') as HTMLElement | null;
-      // Reuse a helper prepared earlier if there is one: the tap's activation
-      // has to reach `requestSession`, and preparing costs more than it has.
-      const prepared = this.xrPrepared ?? await prepareImmersiveAr(this.scene, overlayRoot ?? document.body, {
-        onReticle: (pose) => this.setReticle(this.placementActive ? pose : undefined),
-        onSelectAnchor: (pose) => {
-          // Placed already: a tap is someone touching the screen, not a request
-          // to pick the assembly up and put it somewhere else.
-          if (!this.placementActive) return;
-          if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) return;
-          onPlace(this.placementPose(pose));
-          this.setPlacementActive(false);
-        },
-        onStateChange: (inXr) => {
-          this.arMode = inXr;
-          this.setTransparent(inXr);
-          if (!inXr) { this.setReticle(undefined); onEnd?.(); }
-        },
-      });
-      this.xrPrepared = undefined;
-      if (!prepared) return undefined;
-      const controller = await prepared.enter();
-      if (!controller) {
-        prepared.dispose();
-        // Build another one in the background, so a retry from a fresh tap
-        // costs only the call that needs the tap.
-        void this.prepareWebXr({ onPlace });
-        return undefined;
-      }
-      this.arMode = true;
-      this.setTransparent(true);
-      return { end: () => controller.end() };
-    } catch (err) {
-      // Even loading the module can fail — a blocked dynamic import on a
-      // locked-down network looks exactly like a device without WebXR.
-      this.xrLoadError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    // Never build the session helper inside the gesture.
+    //
+    // `requestSession` needs the tap's transient activation, and
+    // `WebXRDefaultExperience.CreateAsync` is far too much work to do between
+    // the two. Spending the activation there is how a retry button came back
+    // with "requires user activation" every single time it was pressed. If
+    // nothing is prepared, start preparing and let the operator tap again: one
+    // wasted tap beats a button that can never work.
+    const prepared = this.xrPrepared;
+    if (!prepared) {
+      void this.prepareWebXr({ onPlace, onEnd });
       return undefined;
     }
+    this.xrPrepared = undefined;
+    const controller = await prepared.enter();
+    if (!controller) {
+      prepared.dispose();
+      // Build the next one now, in the background, so a retry costs only the
+      // call that actually needs the tap.
+      void this.prepareWebXr({ onPlace, onEnd });
+      return undefined;
+    }
+    this.arMode = true;
+    this.setTransparent(true);
+    return { end: () => controller.end() };
+  }
+
+  /** Whether a session can be entered on the next tap without further setup. */
+  xrReady(): boolean {
+    return this.xrPrepared !== undefined;
   }
 
   /**
@@ -926,8 +913,9 @@ export class SceneManager {
    * Safe to call speculatively: it creates no session, asks for no permission,
    * and is thrown away if AR is never entered.
    */
-  async prepareWebXr(hooks: Parameters<typeof this.startWebXr> extends never ? never : {
+  async prepareWebXr(hooks: {
     onPlace: (pose: Pose) => void;
+    onEnd?: () => void;
   }): Promise<void> {
     if (this.xrPrepared) return;
     try {
@@ -944,7 +932,7 @@ export class SceneManager {
         onStateChange: (inXr) => {
           this.arMode = inXr;
           this.setTransparent(inXr);
-          if (!inXr) this.setReticle(undefined);
+          if (!inXr) { this.setReticle(undefined); hooks.onEnd?.(); }
         },
       });
     } catch (err) {

@@ -864,10 +864,17 @@ const context = await browser.newContext({
   });
   check('a stopped loop is noticed, not silently endured', down.fps < 1,
     `${Math.round(down.fps)} fps after stopping`);
-  const fault = await page.evaluate(() => {
+  // Poll for the message rather than sampling once: the watchdog restarts the
+  // loop within a couple of seconds, and a single late read races its own fix.
+  const fault = await page.evaluate(async () => {
     const btn = [...document.querySelectorAll('.ar-btn')].find((b) => b.textContent.includes('Settings'));
     btn.click();
-    return new Promise((r) => setTimeout(() => r(document.querySelector('.ar-diagnosis')?.textContent ?? null), 700));
+    for (let i = 0; i < 20; i++) {
+      const text = document.querySelector('.ar-diagnosis')?.textContent;
+      if (text && /render loop has stopped/i.test(text)) return text;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return document.querySelector('.ar-diagnosis')?.textContent ?? null;
   });
   check('and it is reported in words, not left to be inferred',
     Boolean(fault && /render loop has stopped/i.test(fault)), fault?.slice(0, 60));
@@ -918,8 +925,15 @@ const context = await browser.newContext({
   // it has to be *looked at* — switching it on from the sheet used to leave the
   // sheet covering the middle of the view, where the marker is.
   const markerBox = () => page.locator('.ar-toggle', { hasText: 'test marker' }).locator('input');
-  await page.locator('.ar-btn', { hasText: 'Settings' }).click();
-  await page.waitForTimeout(600);
+  const openDiagnostics = async () => {
+    await page.locator('.ar-btn', { hasText: 'Settings' }).click();
+    await page.waitForTimeout(600);
+    // Diagnostics are folded away in production; open the disclosure.
+    const summary = page.locator('.ar-details > summary');
+    if (await summary.count()) await summary.click();
+    await page.waitForTimeout(300);
+  };
+  await openDiagnostics();
   await markerBox().click();
   await page.waitForTimeout(700);
   // A switch that does not stay switched reads as a switch that cannot be
@@ -938,8 +952,7 @@ const context = await browser.newContext({
   // Close and reopen: it has to remember.
   await page.locator('.ar-btn', { hasText: 'Settings' }).click();
   await page.waitForTimeout(400);
-  await page.locator('.ar-btn', { hasText: 'Settings' }).click();
-  await page.waitForTimeout(600);
+  await openDiagnostics();
   check('and it remembers across closing the sheet', await markerBox().isChecked());
   await markerBox().click();
   await page.waitForTimeout(400);
@@ -1274,6 +1287,15 @@ const context = await browser.newContext({
   } else {
     check('the AR session request could be observed', requested !== null,
       'navigator.xr missing in this browser');
+  }
+
+  // One request per tap. `requestSession` consumes the transient activation, so
+  // a loop over reference spaces guarantees that every rung after the first
+  // fails with "requires user activation" — and reporting the last error buries
+  // the only one that meant anything. A device reported exactly that.
+  if (requested && requested.length > 0) {
+    check('one session request per tap, not a ladder that spends the activation',
+      requested.length === 1, `${requested.length} requests from one tap`);
   }
 
   // The refusal path still has to land on a live camera rather than a black

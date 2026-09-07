@@ -135,6 +135,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
         void import('../render/babylon/xr');
         void getActiveManager()?.prepareWebXr({
           onPlace: (pose) => useStore.getState().setAnchor(pose, 0.9, 'floor'),
+          onEnd: () => stop(),
         });
       }
     });
