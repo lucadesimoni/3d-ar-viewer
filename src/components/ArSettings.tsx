@@ -60,7 +60,12 @@ export function ArSettings({ capabilities, pipeline }: {
       return { title: 'Every frame is failing.', detail: stats.renderError };
     }
     if (stats.frames > 0 && stats.fps < 1) {
-      return { title: 'The render loop has stopped.', detail: `${stats.frames} frames drawn, then nothing. Nothing will appear over the camera until it runs again.` };
+      return {
+        title: 'The render loop has stopped.',
+        detail: stats.clock === 'timer'
+          ? `${stats.frames} frames drawn, then nothing — and a plain timer cannot revive it either. This is not a display-timing problem.`
+          : `${stats.frames} frames drawn, then nothing. Switching to a timer-driven loop; give it a few seconds.`,
+      };
     }
     if (stats.frames === 0) {
       return { title: 'No frame has ever been drawn.', detail: 'The renderer started but produced nothing.' };
@@ -241,7 +246,7 @@ export function ArSettings({ capabilities, pipeline }: {
           <dd>
             {!stats ? '—'
               : stats.contextLost ? 'context lost'
-                : `${Math.round(stats.fps)} fps · ${stats.frames}${stats.stalls ? ` · ${stats.stalls} restarts` : ''}`}
+                : `${Math.round(stats.fps)} fps · ${stats.frames}${stats.clock === 'timer' ? ' · timer' : ''}${stats.stalls ? ` · ${stats.stalls} restarts` : ''}`}
           </dd>
         </div>
         <div><dt>Camera</dt><dd>{stats?.camera ?? '—'}</dd></div>
