@@ -362,13 +362,23 @@ export class SceneManager {
   /**
    * Feed the device's orientation to the AR camera.
    *
-   * The tracker reports a camera that looks down -Z (the WebXR/three
-   * convention); Babylon's cameras look down +Z, so the incoming rotation is
-   * turned 180 degrees about Y to match.
+   * Two conversions, and the second one was missing. The tracker reports a
+   * camera in the three/WebXR convention: right-handed, looking down -Z.
+   * Babylon is left-handed and looks down +Z. Copying the quaternion's
+   * components across unchanged and turning it 180 degrees about Y lines the
+   * *look direction* up but leaves the handedness un-mirrored, so the world
+   * turns the wrong way about the vertical axis: turn the phone left and the
+   * overlay slides left with it instead of staying put.
+   *
+   * Mirroring in X — `(x, y, z, w)` to `(x, -y, -z, w)` — is what reconciles
+   * them. Established by measurement rather than by argument, because the
+   * plausible-looking alternatives each get exactly one axis right:
+   * `deviceOrientation.test.ts` pins yaw, pitch and roll to what the operator's
+   * hands do, in the renderer's own frame.
    */
   setDeviceOrientation(q: [number, number, number, number]): void {
     if (!this.arCamera) return;
-    const device = new Quaternion(q[0], q[1], q[2], q[3]);
+    const device = new Quaternion(q[0], -q[1], -q[2], q[3]);
     const toBabylon = Quaternion.RotationAxis(new Vector3(0, 1, 0), Math.PI);
     this.arCamera.rotationQuaternion = device.multiply(toBabylon);
   }
