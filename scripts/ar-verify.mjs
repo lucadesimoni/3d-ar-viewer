@@ -983,6 +983,65 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 12. The world has to stay put when the phone moves. -------------------
+// The property that makes an overlay AR rather than a sticker: turn the phone
+// and the anchored assembly stays where it is in the room, so it slides the
+// *other* way across the screen. It did the opposite — "on phone it moves in
+// completely contrary directions" — because the device orientation reached
+// Babylon without a handedness conversion. The look direction was right, so
+// nothing looked obviously broken until you turned.
+{
+  const page = await context.newPage();
+  await open(page, URL);
+  await page.click('.ar-enter');
+  await page.evaluate((held) => {
+    window.__o = { ...held };
+    setInterval(() => window.dispatchEvent(
+      new DeviceOrientationEvent('deviceorientation', window.__o)), 40);
+  }, HELD_LOOKING_DOWN);
+  await page.waitForTimeout(1500);
+  await page.mouse.click(195, 640);
+  await page.waitForTimeout(900);
+
+  const where = () => page.evaluate(() => {
+    const v = window.spatialScene().anchorViewState();
+    return { x: v.x, y: v.y };
+  });
+  const turn = async (patch) => {
+    await page.evaluate((o) => { window.__o = { ...window.__o, ...o }; }, patch);
+    await page.waitForTimeout(600);
+    return where();
+  };
+
+  const base = await where();
+  const alpha = HELD_LOOKING_DOWN.alpha;
+  // W3C alpha increases as the device turns anticlockwise seen from above —
+  // the operator turning to their left.
+  const left = await turn({ alpha: alpha + 30 });
+  check('turning left slides the assembly right, not left', left.x > base.x + 0.05,
+    `x ${base.x.toFixed(2)} -> ${left.x.toFixed(2)}`);
+  const right = await turn({ alpha: alpha - 30 });
+  check('and turning right slides it left', right.x < base.x - 0.05,
+    `x ${base.x.toFixed(2)} -> ${right.x.toFixed(2)}`);
+
+  await turn({ alpha });
+  const up = await turn({ beta: HELD_LOOKING_DOWN.beta + 15 });
+  check('tilting the phone up slides it down', up.y > base.y + 0.03,
+    `y ${base.y.toFixed(2)} -> ${up.y.toFixed(2)}`);
+  const down = await turn({ beta: HELD_LOOKING_DOWN.beta - 15 });
+  check('and tilting it down slides it up', down.y < base.y - 0.03,
+    `y ${base.y.toFixed(2)} -> ${down.y.toFixed(2)}`);
+
+  // Turn away and back: an anchor that drifts is as bad as one that inverts.
+  await turn({ beta: HELD_LOOKING_DOWN.beta });
+  await turn({ alpha: alpha + 90 });
+  const home = await turn({ alpha });
+  check('and coming back leaves it exactly where it was',
+    Math.abs(home.x - base.x) < 0.02 && Math.abs(home.y - base.y) < 0.02,
+    `${base.x.toFixed(2)},${base.y.toFixed(2)} -> ${home.x.toFixed(2)},${home.y.toFixed(2)}`);
+  await page.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall checks passed');
 process.exit(failures.length ? 1 : 0);
