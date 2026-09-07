@@ -50,6 +50,9 @@ import {
 /** How often to check that the render loop is still producing frames, ms. */
 const WATCHDOG_INTERVAL_MS = 2000;
 
+/** Frame interval when driving the scene from a timer instead of the display. */
+const TIMER_FRAME_MS = 33;                              // ~30 fps
+
 /** How long after arming placement the first tap is ignored, ms. */
 const PLACEMENT_ARM_DELAY_MS = 350;
 
@@ -195,7 +198,7 @@ export class SceneManager {
     // phone nobody can open. Counting frames and keeping the first error is
     // the difference between "the overlay is invisible" and knowing which of
     // the three possible reasons it is.
-    this.engine.runRenderLoop(this.renderFrame);
+    this.startRenderLoop();
     this.watchdog = window.setInterval(this.checkRenderLoop, WATCHDOG_INTERVAL_MS);
     // WebGL contexts are lost on a phone far more readily than on a desktop:
     // memory pressure, the camera claiming GPU resources, the tab going to the
@@ -262,6 +265,9 @@ export class SceneManager {
   private renderError: string | undefined;
   private contextLost = false;
   private watchdog = 0;
+  /** Which clock is driving frames: the display's, or a plain timer. */
+  private frameClock: 'raf' | 'timer' = 'raf';
+  private frameTimer = 0;
   private watchdogFrames = -1;
   /** How many times the loop had to be restarted — reported, not hidden. */
   private stalls = 0;
@@ -297,6 +303,7 @@ export class SceneManager {
     }
     if (this.frames === this.watchdogFrames) {
       this.stalls++;
+      if (this.frameClock === 'raf') this.frameClock = 'timer';
       this.restartRenderLoop();
     }
     this.watchdogFrames = this.frames;
@@ -1117,12 +1124,47 @@ export class SceneManager {
    * idempotent: Babylon replaces the loop rather than stacking a second one.
    */
   restartRenderLoop(): void {
-    this.engine.stopRenderLoop();
+    // No watchdog is armed here. It is armed once, in the constructor. Arming
+    // one per restart meant every stall doubled the number of timers, each of
+    // which restarts and arms another: a device reported 13436 restarts, and
+    // thousands of two-second timers on the main thread are themselves enough
+    // to starve the animation frames this was supposed to be rescuing.
     this.renderError = undefined;
-    this.engine.runRenderLoop(this.renderFrame);
-    this.watchdog = window.setInterval(this.checkRenderLoop, WATCHDOG_INTERVAL_MS);
+    this.startRenderLoop();
     // Sizes go stale while nothing is drawing; a restart is also a re-measure.
     this.onResize();
+  }
+
+  /**
+   * Drive the scene from whichever clock is actually ticking.
+   *
+   * `requestAnimationFrame` is the right clock: it matches the display and it
+   * stops when the page is off screen. But when it stops and does not come back
+   * — and on a phone it does — nothing inside it can tell, and the scene never
+   * renders again. Re-arming an animation-frame loop that is not being called
+   * achieves nothing, however many times you do it. So the loop can also be
+   * driven by a plain timer: a worse clock in every respect but the one that
+   * matters here, which is that it is still running. It is what noticed.
+   */
+  private startRenderLoop(): void {
+    this.engine.stopRenderLoop();
+    window.clearInterval(this.frameTimer);
+    this.frameTimer = 0;
+    if (this.frameClock === 'raf') {
+      this.engine.runRenderLoop(this.renderFrame);
+      return;
+    }
+    // The engine's own loop wraps each frame in begin/end; driving it by hand
+    // means doing the same.
+    this.frameTimer = window.setInterval(() => {
+      try {
+        this.engine.beginFrame();
+        this.renderFrame();
+        this.engine.endFrame();
+      } catch (err) {
+        this.renderError ??= String((err as Error)?.message ?? err).slice(0, 200);
+      }
+    }, TIMER_FRAME_MS);
   }
 
   /**
@@ -1346,6 +1388,8 @@ export class SceneManager {
     fps: number;
     /** Times the watchdog had to restart a stalled loop. */
     stalls: number;
+    /** Which clock is producing frames. */
+    clock: 'raf' | 'timer';
     contextLost: boolean;
     renderError: string | undefined;
     camera: string;
@@ -1362,6 +1406,7 @@ export class SceneManager {
       frames: this.frames,
       fps,
       stalls: this.stalls,
+      clock: this.frameClock,
       contextLost: this.contextLost || babylonLost === true,
       renderError: this.renderError,
       camera: this.scene.activeCamera?.name ?? 'none',
@@ -1518,6 +1563,7 @@ export class SceneManager {
 
   dispose(): void {
     window.clearInterval(this.watchdog);
+    window.clearInterval(this.frameTimer);
     this.optimizer?.stop();
     this.optimizer?.dispose?.();
     window.removeEventListener('resize', this.onResize);

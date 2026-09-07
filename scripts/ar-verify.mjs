@@ -865,6 +865,33 @@ const context = await browser.newContext({
   });
   check('and the watchdog brings it back on its own', back.fps > 1 && back.stalls > 0,
     `${Math.round(back.fps)} fps after ${back.stalls} restart(s)`);
+
+  // The harder case, and the one a phone actually reported: requestAnimationFrame
+  // accepts callbacks and never calls them again. Re-arming that loop achieves
+  // nothing however many times you try — a device logged 13436 restarts and
+  // never drew another frame. The clock has to change, not the loop.
+  await page.evaluate(() => { window.requestAnimationFrame = () => 0; });
+  await page.waitForTimeout(6000);
+  const onTimer = await page.evaluate(() => {
+    const m = window.spatialScene();
+    m.renderStats();
+    return new Promise((r) => setTimeout(() => r(m.renderStats()), 500));
+  });
+  check('a dead animation clock is abandoned for one that still ticks',
+    onTimer.clock === 'timer' && onTimer.fps > 1,
+    `${Math.round(onTimer.fps)} fps on the ${onTimer.clock} clock`);
+  const timerPaint = await painted();
+  check('and the overlay paints on it', timerPaint > 0.04,
+    `${(timerPaint * 100).toFixed(1)}% of the screen`);
+  // One watchdog, armed once. Arming another on every restart is how thousands
+  // of timers ended up on the main thread starving the frames they were meant
+  // to rescue.
+  const growth = await page.evaluate(() => {
+    const m = window.spatialScene();
+    const before = m.renderStats().stalls;
+    return new Promise((r) => setTimeout(() => r(m.renderStats().stalls - before), 5000));
+  });
+  check('and the rescue does not multiply itself', growth <= 1, `${growth} extra restarts in 5 s`);
   check('no frame is failing silently', !health.err, health.err);
   check('the graphics context is held', !health.contextLost);
   check('an AR camera is the one rendering', health.camera === 'arcam', health.camera);
