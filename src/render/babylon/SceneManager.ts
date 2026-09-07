@@ -11,6 +11,7 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { UniversalCamera } from '@babylonjs/core/Cameras/universalCamera';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
+import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { Matrix, Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Plane } from '@babylonjs/core/Maths/math.plane';
@@ -21,7 +22,7 @@ import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import type { Material } from '@babylonjs/core/Materials/material';
 
-import type { AssemblyDef, PartDef, PlacementState, Pose } from '../../engine/types';
+import type { AssemblyDef, BackgroundRole, PartDef, PlacementState, Pose } from '../../engine/types';
 import type { Severity } from '../../engine/diagnostics';
 import { assemblyCentroid, explodePose, pulseScale, sampleTimeline, type Timeline } from '../../engine/animation';
 import { loadPartModel } from './gltf';
@@ -93,7 +94,17 @@ export class SceneManager {
   readonly assemblyRoot: TransformNode;
 
   private parts = new Map<string, PartVisual>();
-  private background: AbstractMesh[] = [];
+  /**
+   * Studio scenery, kept with its role because AR wants a different subset.
+   *
+   * On the desktop preview the bench, the fixture plate and the keep-out
+   * volumes are the context that makes the model readable. In AR the real bench
+   * is right there in the camera image, and a virtual one painted over it at
+   * 25% alpha covered 98% of the screen — the actual gearbox was 1.7% of the
+   * pixels, underneath a slate wash. That is what "the camera works but I don't
+   * see the objects anywhere" looked like.
+   */
+  private background: { mesh: AbstractMesh; role: BackgroundRole }[] = [];
   private centroid: ReturnType<typeof assemblyCentroid>;
   private state: SceneRenderState | undefined;
   private startMs = performance.now();
@@ -223,6 +234,9 @@ export class SceneManager {
   /** Hardware scaling the device should render at when it can keep up. */
   private baseScalingLevel = 1;
   private reticle: Mesh | undefined;
+  private showBackground = true;
+  private marker: Mesh | undefined;
+  private markerObserver: ReturnType<Scene['onBeforeRenderObservable']['add']> | undefined;
   /**
    * Whether the operator is currently placing the assembly.
    *
@@ -250,6 +264,7 @@ export class SceneManager {
     } else {
       this.scene.activeCamera = this.camera;
       this.camera.attachControl(true);
+      this.assemblyRoot.setEnabled(true);      // the studio view always shows it
     }
     this.setTransparent(enabled);
   }
@@ -670,6 +685,26 @@ export class SceneManager {
     this.scene.clearColor = on ? new Color4(0, 0, 0, 0) : new Color4(0.05, 0.07, 0.1, 1);
     // The ground grid is a studio aid; it must not float over the real world.
     this.scene.getMeshByName('grid')?.setEnabled(!on);
+    this.applyBackgroundVisibility(this.showBackground);
+  }
+
+  /**
+   * Which scenery is drawn, given the mode.
+   *
+   * In AR the real world supplies the context, so a virtual bench or fixture is
+   * not scenery — it is an opaque-ish sheet between the operator and the parts.
+   * Occluders stay because depth-only is exactly their AR job: real geometry
+   * hiding virtual parts that are behind it. Keep-out volumes stay because a
+   * danger zone drawn on the real bench is the whole point of an AR guide.
+   */
+  private applyBackgroundVisibility(showBackground: boolean): void {
+    this.showBackground = showBackground;
+    for (const { mesh, role } of this.background) {
+      const wanted = this.arMode
+        ? (role === 'occluder' || role === 'keepOut')
+        : showBackground;
+      mesh.setEnabled(showBackground && wanted);
+    }
   }
 
   private resizeObserver: ResizeObserver | undefined;
@@ -730,14 +765,14 @@ export class SceneManager {
       } else {
         mesh.material = makeOverlayMaterial(this.scene, '#334155', 0.25, `fixture-${bg.id}`);
       }
-      this.background.push(mesh);
+      this.background.push({ mesh, role: bg.role });
     }
   }
 
   /** Re-point the whole scene at a new assembly. */
   loadAssembly(assembly: AssemblyDef): void {
     for (const v of this.parts.values()) v.root.dispose(false, true);
-    for (const m of this.background) m.dispose();
+    for (const { mesh } of this.background) mesh.dispose();
     this.parts.clear();
     this.background = [];
     this.assembly = assembly;
@@ -749,6 +784,12 @@ export class SceneManager {
 
   /** Place the whole assembly at a world anchor pose (AR registration). */
   setAnchor(pose: Pose | undefined): void {
+    // An unanchored assembly sits at the world origin — which in AR is the
+    // operator's own head. Entering AR therefore started *inside* the model,
+    // filling the view with the translucent insides of a gearbox while the
+    // reticle was hunted for somewhere in the haze. Until it is anchored to
+    // something, there is nothing honest to draw.
+    if (this.arMode) this.assemblyRoot.setEnabled(Boolean(pose));
     if (!pose) {
       this.assemblyRoot.position.setAll(0);
       this.assemblyRoot.rotationQuaternion = Quaternion.Identity();
@@ -855,7 +896,7 @@ export class SceneManager {
     }
     visual.root.scaling.setAll(1);
 
-    for (const m of this.background) m.setEnabled(state.showBackground);
+    this.applyBackgroundVisibility(state.showBackground);
   }
 
   private tintOverlay(visual: PartVisual, hex: string, alpha: number): void {
@@ -1038,6 +1079,77 @@ export class SceneManager {
     return this.computeAnchorInFront({ centreInView: true });
   }
 
+  /**
+   * A marker locked one metre in front of the camera, drawn as simply as
+   * anything can be drawn.
+   *
+   * Diagnostic of last resort, and the only way to answer "the camera works but
+   * I never see anything" from a distance. It is unlit, double-sided, drawn
+   * after everything else, and pinned to the camera every frame, so it is
+   * impossible for it to be off screen, behind the operator, hidden by another
+   * mesh, or lost to a lighting problem. If this is visible and the assembly is
+   * not, the fault is where the assembly *is*; if this is invisible too, the
+   * fault is in rendering or compositing, and no amount of moving the anchor
+   * will help.
+   */
+  setTestMarker(on: boolean): void {
+    if (!on) {
+      if (this.markerObserver) this.scene.onBeforeRenderObservable.remove(this.markerObserver);
+      this.markerObserver = undefined;
+      this.marker?.dispose();
+      this.marker = undefined;
+      return;
+    }
+    if (this.marker) return;
+    const box = MeshBuilder.CreateBox('ar-test-marker', { size: 0.2 }, this.scene);
+    const mat = new StandardMaterial('ar-test-marker-mat', this.scene);
+    mat.disableLighting = true;
+    mat.emissiveColor = Color3.FromHexString('#22d3ee');
+    mat.backFaceCulling = false;
+    box.material = mat;
+    box.isPickable = false;
+    box.renderingGroupId = 3;              // after everything, never occluded
+    this.marker = box;
+    this.markerObserver = this.scene.onBeforeRenderObservable.add(() => {
+      const cam = this.scene.activeCamera;
+      if (!cam || !this.marker) return;
+      this.marker.position = cam.position.add(cam.getDirection(Vector3.Forward()).scale(1));
+      this.marker.rotation.y += 0.02;      // spinning: alive, not a frozen frame
+    });
+  }
+
+  /**
+   * What the renderer actually did last frame.
+   *
+   * "Nothing is visible" has two very different causes and they need different
+   * fixes: geometry that is not being drawn, and geometry that is drawn but not
+   * composited over the camera. These are the numbers that tell them apart.
+   */
+  renderStats(): {
+    backend: RenderBackendKind;
+    meshes: number;
+    activeMeshes: number;
+    partMeshes: number;
+    fovDeg: number;
+    cssSize: [number, number];
+    bufferSize: [number, number];
+    scaling: number;
+    cameraY: number;
+  } {
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      backend: this.renderBackend,
+      meshes: this.scene.meshes.length,
+      activeMeshes: this.scene.getActiveMeshes().length,
+      partMeshes: this.assemblyRoot.getChildMeshes(false, (n) => n.name.startsWith('mesh-')).length,
+      fovDeg: this.visibleFovDeg,
+      cssSize: [Math.round(rect.width), Math.round(rect.height)],
+      bufferSize: [this.engine.getRenderWidth(), this.engine.getRenderHeight()],
+      scaling: this.engine.getHardwareScalingLevel(),
+      cameraY: (this.scene.activeCamera ?? this.camera).position.y,
+    };
+  }
+
   /** World-space centre of a part's visible geometry. */
   private visualCentre(visual: PartVisual): Vector3 {
     const meshes = visual.loadedMeshes ?? [visual.mesh];
@@ -1170,10 +1282,10 @@ export class SceneManager {
 
   /** Background geometry never moves — freeze its matrices and materials. */
   private freezeStatic(): void {
-    for (const m of this.background) {
-      m.freezeWorldMatrix();
-      m.material?.freeze();
-      m.isPickable = false;
+    for (const { mesh } of this.background) {
+      mesh.freezeWorldMatrix();
+      mesh.material?.freeze();
+      mesh.isPickable = false;
     }
   }
 

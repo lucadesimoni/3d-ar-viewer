@@ -178,13 +178,16 @@ export interface StepDef {
  * a wall. Rendered as a depth-only occluder so virtual parts disappear behind
  * real ones, which is the single biggest cue for believable AR registration.
  */
+/** What a piece of scenery is for — it decides whether AR draws it. */
+export type BackgroundRole = 'occluder' | 'fixture' | 'keepOut';
+
 export interface BackgroundGeometryDef {
   id: string;
   name: string;
   mesh: MeshSpec;
   pose: Pose;
   /** `occluder` writes depth only; `fixture` is drawn as translucent reference. */
-  role: 'occluder' | 'fixture' | 'keepOut';
+  role: BackgroundRole;
 }
 
 export interface ToolDef {

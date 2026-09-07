@@ -1,5 +1,5 @@
 import { useStore } from '../state/store';
-import { getActiveManager, getActiveRenderBackend } from '../render/babylon/managerRegistry';
+import { getActiveManager } from '../render/babylon/managerRegistry';
 import { MODE_LABELS, type Capabilities } from '../engine/tracking/capabilities';
 import type { PipelineStatus } from '../vision/pipeline';
 import { detectGpu, gpuLabel } from '../render/perf';
@@ -38,10 +38,20 @@ export function ArSettings({ capabilities, pipeline }: {
   // Sampled while the sheet is open; the sheet is not on screen long enough for
   // a per-frame subscription to be worth it.
   const [view, setView] = useState(() => getActiveManager()?.anchorViewState());
+  const [stats, setStats] = useState(() => getActiveManager()?.renderStats());
   useEffect(() => {
-    const id = window.setInterval(() => setView(getActiveManager()?.anchorViewState()), 250);
+    const id = window.setInterval(() => {
+      const m = getActiveManager();
+      setView(m?.anchorViewState());
+      setStats(m?.renderStats());
+    }, 250);
     return () => window.clearInterval(id);
   }, []);
+  const [marker, setMarker] = useState(false);
+  const toggleMarker = (on: boolean) => {
+    setMarker(on);
+    getActiveManager()?.setTestMarker(on);
+  };
 
   const setFov = (v: number) => {
     setArSettings({ cameraFovDeg: v });
@@ -151,6 +161,21 @@ export function ArSettings({ capabilities, pipeline }: {
         <span>Snap parts to their mates when placed</span>
       </label>
 
+      {/* The one control that separates "the overlay is somewhere else" from
+          "the overlay is never drawn". Everything else here assumes rendering
+          works; this checks that assumption directly. */}
+      <label className="ar-toggle">
+        <input type="checkbox" checked={marker} onChange={(e) => toggleMarker(e.target.checked)} />
+        <span>
+          Show a test marker
+          <em className="ar-set-help">
+            A spinning cube pinned 1 m in front of the camera. If you cannot see
+            this, nothing is being drawn over the camera at all — and moving the
+            assembly will not help.
+          </em>
+        </span>
+      </label>
+
       <dl className="ar-facts">
         <div><dt>Anchor</dt><dd>{placement === 'idle' ? 'none' : `${placement} · ${Math.round(quality * 100)}%`}</dd></div>
         {/* Answers "camera works, but I see nothing" without a debugger: either
@@ -165,13 +190,19 @@ export function ArSettings({ capabilities, pipeline }: {
           </dd>
         </div>
         <div><dt>Mode</dt><dd>{capabilities ? MODE_LABELS[capabilities.recommended] : '—'}</dd></div>
-        <div><dt>Renderer</dt><dd>{getActiveRenderBackend() === 'webgpu' ? 'WebGPU' : gpuLabel(gpu)}</dd></div>
+        <div>
+          <dt>Renderer</dt>
+          <dd>{stats?.backend === 'webgpu' ? 'WebGPU' : `WebGL · ${gpuLabel(gpu)}`}</dd>
+        </div>
         {/* Say plainly whether part recognition can run at all. Silence here is
             what made "Looking for Base plate…" look like a live search. */}
         <div>
           <dt>Part recognition</dt>
           <dd>{pipeline?.detector ? 'model loaded' : 'no model — off'}</dd>
         </div>
+        <div><dt>Drawn</dt><dd>{stats ? `${stats.activeMeshes} of ${stats.meshes} · ${stats.partMeshes} parts` : '—'}</dd></div>
+        <div><dt>Canvas</dt><dd>{stats ? `${stats.cssSize.join('×')} → ${stats.bufferSize.join('×')}` : '—'}</dd></div>
+        <div><dt>Effective FOV</dt><dd>{stats ? `${stats.fovDeg.toFixed(1)}°` : '—'}</dd></div>
       </dl>
     </div>
   );
