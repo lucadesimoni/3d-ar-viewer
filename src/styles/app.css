@@ -63,6 +63,15 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
 .passthrough {
   position: fixed; inset: 0; width: 100%; height: 100%;
   object-fit: cover; z-index: 0; display: none; background: #000;
+  /* Android promotes an inline <video> to a hardware overlay plane, and an
+     overlay plane is composited outside the normal painting order — it can end
+     up above content that z-index says is in front of it. Both the video and
+     the 3D canvas are therefore given their own composited layers explicitly,
+     so the browser orders them as layers rather than deciding for itself.
+     Symptom when it goes wrong: camera and HTML chrome visible, the WebGL
+     overlay never, on a phone, while every desktop browser looks correct. */
+  transform: translateZ(0);
+  will-change: transform;
 }
 .app.ar .passthrough { display: block; }
 /* AR: everything behind the 3D canvas must be see-through, and the viewport
@@ -76,7 +85,12 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
 .app.ar .viewport {
   position: fixed; inset: 0; z-index: 1;
   background: transparent; border: none; border-radius: 0;
+  /* See `.passthrough`: the canvas gets its own layer so it composites above
+     the video's overlay plane instead of behind it. */
+  transform: translateZ(0);
+  isolation: isolate;
 }
+.app.ar .viewer-canvas { transform: translateZ(0); }
 .app.ar .status-bar, .app.ar .mode-bar { position: relative; z-index: 4; }
 .app.ar .viewport-overlay { z-index: 5; }
 .app.ar .stage { padding: 0; gap: 0; grid-template-columns: 1fr; }
@@ -619,6 +633,10 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 .ar-facts div { background: rgba(255,255,255,0.04); border-radius: 10px; padding: 8px 10px; }
 .ar-facts dt { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 .ar-facts dd { margin: 2px 0 0; font-size: 13px; font-weight: 600; }
+.ar-diagnosis {
+  margin: 0; padding: 10px 12px; border-radius: 10px; line-height: 1.4;
+  background: rgba(239, 68, 68, 0.12); border: 1px solid var(--error); color: var(--text);
+}
 
 /* ---------- Step annotations, pinned to the parts they name ---------- */
 .step-annotations { position: absolute; inset: 0; pointer-events: none; z-index: 4; }

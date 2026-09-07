@@ -813,12 +813,26 @@ const context = await browser.newContext({
   });
   await page.waitForTimeout(400);
 
-  // The marker is the diagnostic offered to the operator; it has to work.
-  await page.evaluate(() => window.spatialScene().setTestMarker(true));
-  await page.waitForTimeout(500);
+  // The app has to be able to answer this question about itself: the readout in
+  // the settings sheet is the only number that proves a pixel reached the
+  // screen, and it is what a report of "I see nothing" now turns into.
+  const selfReport = await page.evaluate(() => window.spatialScene().paintedFraction());
+  check('the app can measure its own overlay', Math.abs(selfReport - coverage) < 0.03,
+    `reports ${(selfReport * 100).toFixed(1)}%, canvas says ${(coverage * 100).toFixed(1)}%`);
+
+  // The marker is the diagnostic offered to the operator; it has to work, and
+  // it has to be *looked at* — switching it on from the sheet used to leave the
+  // sheet covering the middle of the view, where the marker is.
+  await page.locator('.ar-btn', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(600);
+  await page.locator('.ar-toggle', { hasText: 'test marker' }).locator('input').click();
+  await page.waitForTimeout(700);
+  check('turning the marker on gets the sheet out of the way',
+    await page.locator('.ar-sheet').count() === 0);
   const withMarker = await painted('canvas.viewer-canvas');
-  check('the test marker paints too, one metre ahead whatever else is wrong',
-    withMarker > 0.002, `${(withMarker * 100).toFixed(1)}% of pixels drawn`);
+  check('and it paints, one metre ahead whatever else is wrong',
+    withMarker > coverage + 0.03, `${(withMarker * 100).toFixed(1)}% of pixels drawn`);
+  await page.evaluate(() => window.spatialScene().setTestMarker(false));
   await page.screenshot({ path: `${OUT}/ar-painted.png` });
   await page.close();
 }
