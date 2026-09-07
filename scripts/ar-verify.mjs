@@ -157,6 +157,24 @@ const context = await browser.newContext({
     placed.placement === 'floor' && Math.abs(y + 1.45) < 0.01,
     `y=${y?.toFixed(3)} m, ${dist.toFixed(2)} m away`);
   check('placement is at a plausible range', dist > 0.4 && dist < 12, `${dist.toFixed(2)} m`);
+
+  // Both ends of the aim. Steeply down meets the plane directly beneath the
+  // operator — a tap at the bottom of the canvas placed the assembly 40 mm from
+  // the camera, inside their own face and off screen, and reported it placed.
+  // Near the horizon it runs away instead. Every tap on the canvas has to give
+  // something a person can look at.
+  for (const [y, where] of [[680, 'at the bottom of the canvas'], [330, 'near the horizon']]) {
+    await page.locator('.ar-btn', { hasText: 'Move' }).click();
+    await page.waitForTimeout(700);
+    await page.mouse.click(195, y);
+    await page.waitForTimeout(800);
+    const s = await page.evaluate(() => {
+      const v = window.spatialScene().anchorViewState();
+      return { d: v.distanceM, on: v.onScreen };
+    });
+    check(`a tap ${where} lands somewhere you can look at`,
+      s.d > 0.45 && s.d < 12 && s.on, `${s.d.toFixed(2)} m, on screen ${s.on}`);
+  }
   await page.screenshot({ path: `${OUT}/ar-placed.png` });
   await page.close();
 }
