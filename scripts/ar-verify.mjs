@@ -1177,6 +1177,48 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 15. The aiming marker must not appear to spin. ------------------------
+// "Der optische Platzierkreis dreht sich beim Bewegen." Its rotation was
+// identity the whole time — what changes is the ellipse a flat circle projects
+// to as the heading changes, which reads as spinning. A tick kept facing the
+// operator gives the marker a fixed aspect, and shows which way the assembly
+// will be turned when it lands there.
+{
+  const page = await context.newPage();
+  await open(page, URL);
+  await page.click('.ar-enter');
+  await page.evaluate((held) => {
+    window.__o = { ...held };
+    setInterval(() => window.dispatchEvent(
+      new DeviceOrientationEvent('deviceorientation', window.__o)), 40);
+  }, HELD_LOOKING_DOWN);
+  await page.waitForTimeout(1800);
+
+  const facing = () => page.evaluate(() => {
+    const m = window.spatialScene();
+    const r = m.scene.getMeshByName('ar-reticle');
+    if (!r || !r.isEnabled()) return null;
+    const cam = m.scene.activeCamera;
+    const fwd = r.getDirection(new (Object.getPrototypeOf(cam.position).constructor)(0, 0, 1));
+    const toCam = cam.position.subtract(r.getAbsolutePosition());
+    fwd.y = 0; toCam.y = 0;
+    fwd.normalize(); toCam.normalize();
+    return (Math.acos(Math.max(-1, Math.min(1, fwd.x * toCam.x + fwd.z * toCam.z))) * 180) / Math.PI;
+  });
+
+  check('the aiming marker is drawn while placement is armed', (await facing()) !== null);
+  const off = [];
+  for (const d of [0, 40, 90, 160, 250]) {
+    await page.evaluate((a) => { window.__o = { ...window.__o, alpha: a }; }, HELD_LOOKING_DOWN.alpha + d);
+    await page.waitForTimeout(600);
+    off.push(await facing());
+  }
+  const worst = Math.max(...off.filter((v) => v !== null));
+  check('and keeps the same face towards the operator at every heading',
+    worst < 5, `worst ${worst.toFixed(1)}° off`);
+  await page.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall checks passed');
 process.exit(failures.length ? 1 : 0);

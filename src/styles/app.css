@@ -631,6 +631,10 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   background: rgba(239, 68, 68, 0.12); border: 1px solid var(--error); color: var(--text);
 }
 .ar-restart { display: block; margin-top: 8px; min-height: 40px; width: 100%; }
+.ar-xr-note {
+  margin: 0; padding: 10px 12px; border-radius: 10px; line-height: 1.4;
+  background: rgba(245, 158, 11, 0.12); border: 1px solid var(--warn); color: var(--text);
+}
 
 /* ---------- Step annotations, pinned to the parts they name ---------- */
 .step-annotations { position: absolute; inset: 0; pointer-events: none; z-index: 4; }

@@ -30,6 +30,23 @@ export interface XrController {
 }
 
 /**
+ * Why the last attempt to enter immersive AR did not.
+ *
+ * WebXR is the difference between an overlay that stays on the bench when you
+ * walk round it and one that walks with you, so a silent fall back to the
+ * camera is the most expensive silence in this app. Every failure path here
+ * used to end in `catch { return undefined }`. Now the reason survives, and
+ * the settings sheet shows it.
+ */
+export let lastXrError: string | undefined;
+export const clearXrError = (): void => { lastXrError = undefined; };
+const noteXrError = (stage: string, err: unknown): undefined => {
+  const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err ?? 'no reason given');
+  lastXrError = `${stage} — ${message}`.slice(0, 200);
+  return undefined;
+};
+
+/**
  * Start an immersive-AR session for `scene`.
  *
  * Optional features (hit-test, anchors, DOM overlay) are requested but their
@@ -45,13 +62,17 @@ export async function startImmersiveAr(scene: Scene, overlayRoot: HTMLElement, h
   // `disableDefaultUI` because the app has its own way in — Babylon's floating
   // "AR" button otherwise sits in the corner, behind our HUD, as a second
   // control nobody asked for.
+  clearXrError();
   const xr = await WebXRDefaultExperience.CreateAsync(scene, {
     uiOptions: { sessionMode: 'immersive-ar', referenceSpaceType: 'local-floor' },
     disableDefaultUI: true,
     optionalFeatures: true,
     disableTeleportation: true,
-  }).catch(() => undefined);
-  if (!xr) return undefined;
+  }).catch((err) => noteXrError('creating the session', err));
+  if (!xr) {
+    lastXrError ??= 'creating the session — Babylon returned nothing';
+    return undefined;
+  }
 
   let reticle: Pose | undefined;
   try {
@@ -106,12 +127,14 @@ export async function startImmersiveAr(scene: Scene, overlayRoot: HTMLElement, h
   } catch (err) {
     // Leave the scene exactly as it was found, so the camera fallback starts
     // from a known state rather than from half an XR session.
+    noteXrError('entering the session', err);
     await xr.baseExperience.exitXRAsync().catch(() => undefined);
     scene.onPointerDown = undefined;
     xr.dispose();
     return undefined;   // the caller falls back to camera passthrough
   }
   if (xr.baseExperience.state !== WebXRState.IN_XR) {
+    lastXrError = `entering the session — ended in state ${xr.baseExperience.state}`;
     xr.dispose();
     return undefined;
   }

@@ -262,6 +262,7 @@ export class SceneManager {
   /** Hardware scaling the device should render at when it can keep up. */
   private baseScalingLevel = 1;
   private reticle: Mesh | undefined;
+  private xrLoadError: string | undefined;
   private groundShadow: Mesh | undefined;
   private groundOutline: import('@babylonjs/core/Meshes/linesMesh').LinesMesh | undefined;
   private showBackground = true;
@@ -462,9 +463,26 @@ export class SceneManager {
     );
     r.rotation.x = Math.PI / 2;           // lie flat on the ground
     r.bakeCurrentTransformIntoVertices(); // so applyPose controls it cleanly
-    r.material = makeOverlayMaterial(this.scene, DIAGNOSTIC_COLORS.active, 0.9, 'ar-reticle-mat');
+    const mat = makeOverlayMaterial(this.scene, DIAGNOSTIC_COLORS.active, 0.9, 'ar-reticle-mat');
+    r.material = mat;
     r.isPickable = false;
     r.setEnabled(false);
+
+    // A tick on the ring, pointing back at the operator.
+    //
+    // The ring alone is a circle seen in perspective: turn the phone and its
+    // ellipse leans one way and then the other, which reads as the marker
+    // spinning even though its rotation is exactly identity the whole time.
+    // The tick is kept facing the camera, so the marker presents the same
+    // aspect from anywhere — and it earns its place twice, because the side it
+    // marks is the side the assembly will face once it is dropped there.
+    const tick = MeshBuilder.CreateBox(
+      'ar-reticle-tick', { width: 0.03, height: 0.004, depth: 0.07 }, this.scene,
+    );
+    tick.material = mat;
+    tick.isPickable = false;
+    tick.position.z = 0.15;
+    tick.parent = r;
     this.reticle = r;
     return r;
   }
@@ -581,6 +599,18 @@ export class SceneManager {
     if (!pose) { r.setEnabled(false); return; }
     r.setEnabled(true);
     applyPose(r, pose);
+    // Face the operator, so the marker looks the same from every heading — and
+    // so the tick shows which way the assembly will be turned when it lands.
+    const cam = this.scene.activeCamera;
+    if (cam) {
+      const toCam = cam.position.subtract(r.position);
+      toCam.y = 0;
+      if (toCam.lengthSquared() > 1e-6) {
+        r.rotationQuaternion = Quaternion.RotationAxis(
+          new Vector3(0, 1, 0), Math.atan2(toCam.x, toCam.z),
+        );
+      }
+    }
   }
 
   /**
@@ -869,6 +899,23 @@ export class SceneManager {
       this.arMode = true;
       this.setTransparent(true);
       return { end: () => controller.end() };
+    } catch (err) {
+      // Even loading the module can fail — a blocked dynamic import on a
+      // locked-down network looks exactly like a device without WebXR.
+      this.xrLoadError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      return undefined;
+    }
+  }
+
+  /**
+   * Why immersive AR is not running: the reason, in words, from whichever
+   * stage gave up. Empty when WebXR was never attempted.
+   */
+  async xrFailure(): Promise<string | undefined> {
+    if (this.xrLoadError) return `loading WebXR — ${this.xrLoadError}`;
+    try {
+      const { lastXrError } = await import('./xr');
+      return lastXrError;
     } catch {
       return undefined;
     }
