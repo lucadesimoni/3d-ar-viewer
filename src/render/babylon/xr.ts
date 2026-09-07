@@ -43,6 +43,18 @@ export let lastXrError: string | undefined;
 export let referenceSpace: string | undefined;
 /** Features the browser actually granted, as reported by the session. */
 export let grantedFeatures: string[] = [];
+
+/**
+ * Reference spaces to try, best first, one per tap.
+ *
+ * `local-floor` puts the origin on the floor, which is what a placement on the
+ * ground wants. A device that cannot establish one refuses rather than
+ * downgrading — but an AR session measured from the headset is still real
+ * positional tracking, and losing all of it over the origin's height would be
+ * a poor trade.
+ */
+const SPACES: XRReferenceSpaceType[] = ['local-floor', 'local', 'viewer'];
+let spaceIndex = 0;
 export const clearXrError = (): void => { lastXrError = undefined; };
 const noteXrError = (stage: string, err: unknown): undefined => {
   const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err ?? 'no reason given');
@@ -158,37 +170,45 @@ export async function prepareImmersiveAr(
   };
 
   const enter = async (): Promise<XrController | undefined> => {
-    // Reference spaces, best first. `local-floor` gives a floor at y = 0, which
-    // is what a placement on the ground wants; but a device that cannot
-    // establish one refuses the session outright rather than downgrading, and
-    // an AR session measured from the headset is still an AR session — real
-    // positional tracking, which is the whole point. Losing all of it over the
-    // origin's height would be a poor trade.
-    const spaces: XRReferenceSpaceType[] = ['local-floor', 'local', 'viewer'];
-    for (const space of spaces) {
-      try {
-        await xr.baseExperience.enterXRAsync('immersive-ar', space, xr.renderTarget);
-      } catch (err) {
-        noteXrError(`entering the session (${space})`, err);
-        await xr.baseExperience.exitXRAsync().catch(() => undefined);
-        continue;
-      }
-      if (xr.baseExperience.state === WebXRState.IN_XR) {
-        clearXrError();
-        referenceSpace = space;
-        const session = xr.baseExperience.sessionManager.session as XRSession & {
-          enabledFeatures?: string[];
-        };
-        grantedFeatures = [...(session?.enabledFeatures ?? [])];
-        break;
-      }
-      lastXrError = `entering the session (${space}) — ended in state ${xr.baseExperience.state}`;
+    // One `requestSession` per tap. Exactly one.
+    //
+    // My first version tried three reference spaces in a loop, and that was
+    // worse than useless: `requestSession` *consumes* the transient user
+    // activation, so the second and third calls fail with "requires user
+    // activation" whatever the truth was — and reporting the last error buried
+    // the first, which is the only one that says anything. A device reported
+    // `entering the session (viewer) — SecurityError: requires user activation`
+    // and the real reason had been thrown away two rungs earlier.
+    //
+    // So the ladder is climbed across *taps* instead: this attempt uses the
+    // best space not yet ruled out, and a failure that is not about activation
+    // rules it out for the next one.
+    const space = SPACES[Math.min(spaceIndex, SPACES.length - 1)];
+    try {
+      await xr.baseExperience.enterXRAsync('immersive-ar', space, xr.renderTarget);
+    } catch (err) {
+      noteXrError(`entering the session (${space})`, err);
+      const activation = /user activation/i.test(lastXrError ?? '');
+      // An activation failure says nothing about the reference space, so it
+      // must not cost us one. Anything else did rule this space out.
+      if (!activation && spaceIndex < SPACES.length - 1) spaceIndex++;
       await xr.baseExperience.exitXRAsync().catch(() => undefined);
+      scene.onPointerDown = undefined;
+      return undefined;
     }
     if (xr.baseExperience.state !== WebXRState.IN_XR) {
+      lastXrError = `entering the session (${space}) — ended in state ${xr.baseExperience.state}`;
+      if (spaceIndex < SPACES.length - 1) spaceIndex++;
+      await xr.baseExperience.exitXRAsync().catch(() => undefined);
       scene.onPointerDown = undefined;
-      return undefined;   // the caller falls back to camera passthrough
+      return undefined;
     }
+    clearXrError();
+    referenceSpace = space;
+    const session = xr.baseExperience.sessionManager.session as XRSession & {
+      enabledFeatures?: string[];
+    };
+    grantedFeatures = [...(session?.enabledFeatures ?? [])];
     return {
       experience: xr,
       end: async () => { await xr.baseExperience.exitXRAsync().catch(() => undefined); },

@@ -46,9 +46,14 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
   const [painted, setPainted] = useState<number | undefined>(() => getActiveManager()?.paintedFraction());
   const [xrWhy, setXrWhy] = useState<string>();
   const [xrInfo, setXrInfo] = useState<{ space?: string; features: string[] }>();
+  const [xrReady, setXrReady] = useState(false);
   useEffect(() => {
     void getActiveManager()?.xrFailure().then(setXrWhy);
     void getActiveManager()?.xrSessionInfo().then(setXrInfo);
+    // The helper is rebuilt in the background after a failed attempt; the
+    // button must not promise a session it cannot request yet.
+    const id = window.setInterval(() => setXrReady(getActiveManager()?.xrReady() ?? false), 300);
+    return () => window.clearInterval(id);
   }, []);
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -207,20 +212,27 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
         <span>Snap parts to their mates when placed</span>
       </label>
 
-      {/* The one control that separates "the overlay is somewhere else" from
-          "the overlay is never drawn". Everything else here assumes rendering
-          works; this checks that assumption directly. */}
-      <label className="ar-toggle">
-        <input type="checkbox" checked={marker} onChange={(e) => toggleMarker(e.target.checked)} />
-        <span>
-          Show a test marker
-          <em className="ar-set-help">
-            A spinning cube pinned 1 m in front of the camera, above this sheet.
-            If you cannot see it, nothing is being drawn over the camera at all —
-            and moving the assembly will not help.
-          </em>
-        </span>
-      </label>
+
+
+      {/* Everything below is for when something is wrong. In an operator's
+          hands it is noise, so it stays folded away until it is wanted. */}
+      <details className="ar-details">
+        <summary>Diagnostics</summary>
+
+        {/* The one control that separates "the overlay is somewhere else" from
+            "the overlay is never drawn". Everything else assumes rendering
+            works; this checks that assumption directly. */}
+        <label className="ar-toggle">
+          <input type="checkbox" checked={marker} onChange={(e) => toggleMarker(e.target.checked)} />
+          <span>
+            Show a test marker
+            <em className="ar-set-help">
+              A spinning cube pinned 1 m in front of the camera, above this sheet.
+              If you cannot see it, nothing is being drawn over the camera at all —
+              and moving the assembly will not help.
+            </em>
+          </span>
+        </label>
 
       <dl className="ar-facts">
         <div><dt>Anchor</dt><dd>{placement === 'idle' ? 'none' : `${placement} · ${Math.round(quality * 100)}%`}</dd></div>
@@ -284,6 +296,7 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
           <dd>{painted === undefined ? '—' : `${(painted * 100).toFixed(1)}% of the view`}</dd>
         </div>
       </dl>
+      </details>
 
       {/* An empty overlay has causes that need different fixes, and they look
           identical from outside. Name whichever one it is.
@@ -312,9 +325,14 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
           {onRetryWebXr && (
             <button
               className="secondary ar-restart"
-              onClick={() => { void onRetryWebXr().then((ok) => { if (!ok) void getActiveManager()?.xrFailure().then(setXrWhy); }); }}
+              disabled={!xrReady}
+              onClick={() => {
+                void onRetryWebXr().then((ok) => {
+                  if (!ok) void getActiveManager()?.xrFailure().then(setXrWhy);
+                });
+              }}
             >
-              Try real AR tracking
+              {xrReady ? 'Try real AR tracking' : 'Getting ready — one moment'}
             </button>
           )}
         </p>
