@@ -53,7 +53,31 @@ const noteXrError = (stage: string, err: unknown): undefined => {
  * absence never aborts the session — a headset without plane detection should
  * still enter AR, just without the reticle.
  */
-export async function startImmersiveAr(scene: Scene, overlayRoot: HTMLElement, hooks: XrHooks = {}): Promise<XrController | undefined> {
+export interface XrPrepared {
+  /** Enter the session. Call this *directly from a click handler*. */
+  enter(): Promise<XrController | undefined>;
+  dispose(): void;
+}
+
+/**
+ * Build the session helper without entering it.
+ *
+ * This split is the whole point. `requestSession('immersive-ar')` needs the
+ * user activation from a tap, and an activation does not survive much: on a
+ * phone, a 300 kB dynamic import and the asynchronous setup inside
+ * `CreateAsync` can outlast it, and the session is then refused with no
+ * explanation the operator could act on.
+ *
+ * It is also, exactly, what used to work. Before the app entered sessions
+ * itself, `CreateAsync` ran at AR entry and Babylon's own floating button
+ * called `enterXRAsync` — a click with nothing awaited in front of it. Removing
+ * that button removed the one path that reliably got a real session.
+ *
+ * So: prepare early, enter from the click.
+ */
+export async function prepareImmersiveAr(
+  scene: Scene, overlayRoot: HTMLElement, hooks: XrHooks = {},
+): Promise<XrPrepared | undefined> {
   const { WebXRDefaultExperience } = await import('@babylonjs/core/XR/webXRDefaultExperience');
   const { WebXRHitTest } = await import('@babylonjs/core/XR/features/WebXRHitTest');
   const { WebXRFeatureName } = await import('@babylonjs/core/XR/webXRFeaturesManager');
@@ -117,33 +141,38 @@ export async function startImmersiveAr(scene: Scene, overlayRoot: HTMLElement, h
     if (xr.baseExperience.state === WebXRState.IN_XR && reticle) hooks.onSelectAnchor?.(reticle);
   };
 
-  // Actually enter the session. Creating the experience only *prepares* one —
-  // it builds the helper and, left to itself, a button for the user to press.
-  // Skipping this call was the bug behind a black screen on Android: the app
-  // switched into AR mode, cleared the canvas to transparent for a camera feed
-  // that was never started, and rendered the assembly over the page background.
-  try {
-    await xr.baseExperience.enterXRAsync('immersive-ar', 'local-floor', xr.renderTarget);
-  } catch (err) {
-    // Leave the scene exactly as it was found, so the camera fallback starts
-    // from a known state rather than from half an XR session.
-    noteXrError('entering the session', err);
-    await xr.baseExperience.exitXRAsync().catch(() => undefined);
-    scene.onPointerDown = undefined;
-    xr.dispose();
-    return undefined;   // the caller falls back to camera passthrough
-  }
-  if (xr.baseExperience.state !== WebXRState.IN_XR) {
-    lastXrError = `entering the session — ended in state ${xr.baseExperience.state}`;
-    xr.dispose();
-    return undefined;
-  }
-
-  return {
-    experience: xr,
-    inSession: () => xr.baseExperience.state === WebXRState.IN_XR,
-    end: async () => {
+  const enter = async (): Promise<XrController | undefined> => {
+    try {
+      await xr.baseExperience.enterXRAsync('immersive-ar', 'local-floor', xr.renderTarget);
+    } catch (err) {
+      // Leave the scene exactly as it was found, so the camera fallback starts
+      // from a known state rather than from half an XR session.
+      noteXrError('entering the session', err);
       await xr.baseExperience.exitXRAsync().catch(() => undefined);
-    },
+      scene.onPointerDown = undefined;
+      return undefined;   // the caller falls back to camera passthrough
+    }
+    if (xr.baseExperience.state !== WebXRState.IN_XR) {
+      lastXrError = `entering the session — ended in state ${xr.baseExperience.state}`;
+      return undefined;
+    }
+    return {
+      experience: xr,
+      end: async () => { await xr.baseExperience.exitXRAsync().catch(() => undefined); },
+      inSession: () => xr.baseExperience.state === WebXRState.IN_XR,
+    };
   };
+
+  return { enter, dispose: () => xr.dispose() };
+}
+
+/** Prepare and enter in one call, for callers already inside a gesture. */
+export async function startImmersiveAr(
+  scene: Scene, overlayRoot: HTMLElement, hooks: XrHooks = {},
+): Promise<XrController | undefined> {
+  const prepared = await prepareImmersiveAr(scene, overlayRoot, hooks);
+  if (!prepared) return undefined;
+  const controller = await prepared.enter();
+  if (!controller) prepared.dispose();
+  return controller;
 }

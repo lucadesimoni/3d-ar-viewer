@@ -263,6 +263,7 @@ export class SceneManager {
   private baseScalingLevel = 1;
   private reticle: Mesh | undefined;
   private xrLoadError: string | undefined;
+  private xrPrepared: import('./xr').XrPrepared | undefined;
   private groundShadow: Mesh | undefined;
   private groundOutline: import('@babylonjs/core/Meshes/linesMesh').LinesMesh | undefined;
   private showBackground = true;
@@ -874,12 +875,14 @@ export class SceneManager {
     onEnd?: () => void,
   ): Promise<{ end: () => Promise<void> } | undefined> {
     try {
-      const { startImmersiveAr } = await import('./xr');
+      const { prepareImmersiveAr } = await import('./xr');
       // The DOM overlay has to be the app root, not the canvas: the canvas is
       // what WebXR replaces, while the HUD around it is the part that must stay
       // on screen and stay tappable inside the session.
       const overlayRoot = this.canvas.closest('.app') as HTMLElement | null;
-      const controller = await startImmersiveAr(this.scene, overlayRoot ?? document.body, {
+      // Reuse a helper prepared earlier if there is one: the tap's activation
+      // has to reach `requestSession`, and preparing costs more than it has.
+      const prepared = this.xrPrepared ?? await prepareImmersiveAr(this.scene, overlayRoot ?? document.body, {
         onReticle: (pose) => this.setReticle(this.placementActive ? pose : undefined),
         onSelectAnchor: (pose) => {
           // Placed already: a tap is someone touching the screen, not a request
@@ -895,7 +898,16 @@ export class SceneManager {
           if (!inXr) { this.setReticle(undefined); onEnd?.(); }
         },
       });
-      if (!controller) return undefined;
+      this.xrPrepared = undefined;
+      if (!prepared) return undefined;
+      const controller = await prepared.enter();
+      if (!controller) {
+        prepared.dispose();
+        // Build another one in the background, so a retry from a fresh tap
+        // costs only the call that needs the tap.
+        void this.prepareWebXr({ onPlace });
+        return undefined;
+      }
       this.arMode = true;
       this.setTransparent(true);
       return { end: () => controller.end() };
@@ -904,6 +916,39 @@ export class SceneManager {
       // locked-down network looks exactly like a device without WebXR.
       this.xrLoadError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
       return undefined;
+    }
+  }
+
+  /**
+   * Build the WebXR session helper now, so that entering it later costs only
+   * the call that needs the operator's tap.
+   *
+   * Safe to call speculatively: it creates no session, asks for no permission,
+   * and is thrown away if AR is never entered.
+   */
+  async prepareWebXr(hooks: Parameters<typeof this.startWebXr> extends never ? never : {
+    onPlace: (pose: Pose) => void;
+  }): Promise<void> {
+    if (this.xrPrepared) return;
+    try {
+      const { prepareImmersiveAr } = await import('./xr');
+      const overlayRoot = this.canvas.closest('.app') as HTMLElement | null;
+      this.xrPrepared = await prepareImmersiveAr(this.scene, overlayRoot ?? document.body, {
+        onReticle: (pose) => this.setReticle(this.placementActive ? pose : undefined),
+        onSelectAnchor: (pose) => {
+          if (!this.placementActive) return;
+          if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) return;
+          hooks.onPlace(this.placementPose(pose));
+          this.setPlacementActive(false);
+        },
+        onStateChange: (inXr) => {
+          this.arMode = inXr;
+          this.setTransparent(inXr);
+          if (!inXr) this.setReticle(undefined);
+        },
+      });
+    } catch (err) {
+      this.xrLoadError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     }
   }
 
