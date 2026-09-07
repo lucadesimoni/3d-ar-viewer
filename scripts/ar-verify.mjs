@@ -1033,12 +1033,71 @@ const context = await browser.newContext({
     `y ${base.y.toFixed(2)} -> ${down.y.toFixed(2)}`);
 
   // Turn away and back: an anchor that drifts is as bad as one that inverts.
+  // The filter deliberately takes the last fraction of a degree slowly — that
+  // is what holds the overlay still in the hand — so this waits for it to
+  // settle. How *fast* it follows is a separate property, checked below.
   await turn({ beta: HELD_LOOKING_DOWN.beta });
   await turn({ alpha: alpha + 90 });
-  const home = await turn({ alpha });
+  await turn({ alpha });
+  await page.waitForTimeout(1500);
+  const home = await where();
   check('and coming back leaves it exactly where it was',
     Math.abs(home.x - base.x) < 0.02 && Math.abs(home.y - base.y) < 0.02,
     `${base.x.toFixed(2)},${base.y.toFixed(2)} -> ${home.x.toFixed(2)},${home.y.toFixed(2)}`);
+  await page.close();
+}
+
+// --- 13. Held still, it has to sit still. ----------------------------------
+// "Now it is very unstable, hops around." A phone's magnetometer indoors sits
+// quiet and then jumps ten or twenty degrees as it passes something steel.
+// Followed faithfully, that moved the overlay a quarter of the screen while the
+// operator held the phone motionless.
+{
+  const page = await context.newPage();
+  await open(page, URL);
+  await page.click('.ar-enter');
+  await page.evaluate(() => {
+    window.__alpha = 217;
+    window.__glitch = 0.06;
+    const n = () => (Math.random() - 0.5) * 0.6;              // ±0.3° of noise
+    setInterval(() => {
+      const g = Math.random() < window.__glitch ? (Math.random() - 0.5) * 40 : 0;
+      const base = { alpha: window.__alpha + n() + g, beta: 60 + n(), gamma: 4 + n() };
+      // Android fires both names, and their references disagree.
+      window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { ...base, alpha: base.alpha - 12 }));
+      window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute', { ...base, absolute: true }));
+    }, 30);
+  });
+  await page.waitForTimeout(1800);
+  await page.mouse.click(195, 640);
+  await page.waitForTimeout(1000);
+
+  const spread = async () => {
+    const xs = [];
+    for (let i = 0; i < 30; i++) {
+      xs.push(await page.evaluate(() => window.spatialScene().anchorViewState().x));
+      await page.waitForTimeout(45);
+    }
+    return Math.max(...xs) - Math.min(...xs);
+  };
+  const still = await spread();
+  check('a phone held still holds the overlay still', still < 0.03,
+    `${(still * 100).toFixed(2)}% of the width, peak to peak`);
+
+  // …without becoming unresponsive, which is the easy way to pass the above.
+  await page.evaluate(() => { window.__glitch = 0; });
+  await page.waitForTimeout(500);
+  const before = await page.evaluate(() => window.spatialScene().anchorViewState().x);
+  const started = Date.now();
+  await page.evaluate(() => { window.__alpha += 25; });
+  let moved = 0;
+  for (let i = 0; i < 30; i++) {
+    await page.waitForTimeout(50);
+    const x = await page.evaluate(() => window.spatialScene().anchorViewState().x);
+    if (Math.abs(x - before) > 0.4) { moved = Date.now() - started; break; }
+  }
+  check('and a real turn is still followed promptly', moved > 0 && moved < 600,
+    moved ? `${moved} ms` : 'never followed');
   await page.close();
 }
 

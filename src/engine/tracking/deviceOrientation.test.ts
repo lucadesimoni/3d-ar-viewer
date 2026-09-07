@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
-import { orientationToQuaternion } from './cameraTracker';
+import { angleBetweenDeg, orientationToQuaternion, smoothingFactor } from './cameraTracker';
 
 /**
  * What the device's attitude has to mean, stated as physics rather than as
@@ -88,5 +88,37 @@ describe('device orientation → camera', () => {
       const tipped = pitchDeg(forward(alpha, 55, 0));
       expect(tipped, `heading ${alpha}°`).toBeLessThan(level - 30);
     }
+  });
+});
+
+/**
+ * The filter between the sensor and the scene.
+ *
+ * A phone's magnetometer indoors is not a smooth signal: it sits still, then
+ * jumps ten or twenty degrees as it passes a steel upright, then comes back.
+ * Following that faithfully is what made the overlay "hop around". Damping it
+ * enough to sit still, while still following a deliberate turn within a tenth
+ * of a second, is the whole job.
+ */
+describe('orientation filtering', () => {
+  it('damps hand tremor hard and deliberate movement lightly', () => {
+    expect(smoothingFactor(0.2)).toBeLessThan(0.1);     // tremor: almost ignored
+    expect(smoothingFactor(20)).toBeGreaterThan(0.2);   // a turn: followed
+    expect(smoothingFactor(20)).toBeLessThanOrEqual(0.25);
+  });
+
+  it('never follows instantly, however large the step', () => {
+    // An unclamped factor would make a single noisy reading the new truth.
+    for (const step of [50, 180, 1000]) {
+      expect(smoothingFactor(step), `${step}°`).toBeLessThanOrEqual(0.25);
+    }
+  });
+
+  it('measures the angle between two orientations', () => {
+    const level = orientationToQuaternion(0, 90, 0);
+    expect(angleBetweenDeg(level, level)).toBeCloseTo(0, 5);
+    // Thirty degrees of heading is thirty degrees of rotation.
+    expect(angleBetweenDeg(level, orientationToQuaternion(30, 90, 0))).toBeCloseTo(30, 0);
+    expect(angleBetweenDeg(level, orientationToQuaternion(0, 60, 0))).toBeCloseTo(30, 0);
   });
 });
