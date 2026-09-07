@@ -258,7 +258,7 @@ export const useStore = create<AppState>((set, get) => {
     arSettings: {
       cameraFovDeg: readFovOverride() ?? 60,
       eyeHeightM: 1.45,
-      surfaceHeightM: 0,
+      surfaceHeightM: assembly.workSurfaceM ?? 0,
       autoRecognize: true,
       placeOnEntry: true,
     } as ArSettings,
@@ -285,6 +285,9 @@ export const useStore = create<AppState>((set, get) => {
         anchor: undefined,
         anchorQuality: 0,
         arPlacement: 'idle',
+        // The surface belongs to the workpiece, not to the operator's last
+        // session: a gearbox is built at a bench, a shelf carcass on the floor.
+        arSettings: { ...get().arSettings, surfaceHeightM: a.workSurfaceM ?? 0 },
         selectedPartId: undefined,
         explodeFactor: 0,
         ...derive(next),

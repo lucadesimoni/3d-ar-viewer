@@ -775,8 +775,23 @@ const context = await browser.newContext({
 
 
   const coverage = await painted('canvas.viewer-canvas');
-  check('the assembly is actually painted onto the canvas', coverage > 0.005,
-    `${(coverage * 100).toFixed(1)}% of pixels drawn`);
+  // Not "is it drawn" but "can it be seen". A bench gearbox placed on the floor
+  // is 1.9 m from a standing operator and covers 1.7% of a phone screen — a
+  // grey smudge behind its own label, which is exactly what "I still don't see
+  // anything" was. The assembly says where it is built; on its bench the same
+  // tap lands at 0.75 m and covers 10%.
+  check('the assembly is big enough on screen to work from', coverage > 0.04,
+    `${(coverage * 100).toFixed(1)}% of the screen`);
+  const surface = await page.evaluate(() =>
+    window.spatialStore.getState().arSettings.surfaceHeightM);
+  check('and it defaults to the surface the job is done on', surface > 0.5,
+    `${surface} m above the floor`);
+  const outlined = await page.evaluate(() => {
+    const m = window.spatialScene();
+    const step = window.spatialStore.getState().assembly.steps[0];
+    return step.partIds.every((id) => m.scene.getMeshByName(`mesh-${id}`)?.renderOutline);
+  });
+  check('the active step is outlined, so it reads against a real room', outlined);
 
   // The check that matters, and the one this suite lacked: with the parts
   // hidden, the camera image must be untouched. The studio set — bench,

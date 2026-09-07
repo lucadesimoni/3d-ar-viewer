@@ -238,6 +238,20 @@ export interface AssemblyDef {
   background: BackgroundGeometryDef[];
   tools?: ToolDef[];
   /**
+   * Height above the floor at which this assembly is actually built, metres.
+   *
+   * The difference between a usable overlay and an invisible one, and it is not
+   * a preference — it is a property of the job. A bench gearbox placed on the
+   * floor lands 1.9 m from a standing operator and covers 1.7% of a phone
+   * screen; the same tap at bench height lands at 0.75 m and covers 10%. You
+   * cannot fix that by aiming better: standing up, the nearest floor you can
+   * see is already a metre and a half away.
+   *
+   * 0 (the default) means the floor — right for a shelf carcass or an equipment
+   * rack, wrong for anything you build at a bench.
+   */
+  workSurfaceM?: number;
+  /**
    * Fiducial that pins the assembly frame to the world. When present the app
    * can re-register after tracking loss without asking the operator to re-place.
    */

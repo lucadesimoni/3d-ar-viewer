@@ -333,6 +333,14 @@ export class SceneManager {
     };
   }
 
+  /**
+   * Outline width is in world units, so it has to grow with the object: at a
+   * fixed width a 1.5 m shelf gets a hairline and a 30 mm bolt gets a halo.
+   */
+  private outlineScale(): number {
+    return Math.max(0.5, Math.min(3, this.assemblyRadiusM() / 0.15));
+  }
+
   /** Bounding radius of the assembly around its centroid, metres. */
   private assemblyRadius(): number {
     let r = 0.05;
@@ -866,8 +874,14 @@ export class SceneManager {
       } else {
         visual.mesh.material = visual.overlayMat;
         visual.mesh.isVisible = visible;
-        if (reco) this.tintOverlay(visual, STATUS_COLORS[reco], 0.4);
-        else this.tintOverlay(visual, isActive ? DIAGNOSTIC_COLORS.active : DIAGNOSTIC_COLORS.ghost, isActive ? 0.42 : 0.22);
+        if (reco) this.tintOverlay(visual, STATUS_COLORS[reco], this.arMode ? 0.7 : 0.4);
+        else {
+          this.tintOverlay(
+            visual,
+            isActive ? DIAGNOSTIC_COLORS.active : DIAGNOSTIC_COLORS.ghost,
+            this.arMode ? (isActive ? 0.75 : 0.45) : (isActive ? 0.42 : 0.22),
+          );
+        }
       }
     } else {
       // Placed: show the real geometry; tint by the worst diagnostic.
@@ -888,14 +902,23 @@ export class SceneManager {
 
     // A recognised part's outline (localised to that part) uses the discrepancy
     // colour and takes precedence; otherwise selection/error styling applies.
-    const wantOutline = reco !== undefined || isSelected || severity === 'error';
-    const outlineHex = reco ? STATUS_COLORS[reco] : isSelected ? '#ffffff' : DIAGNOSTIC_COLORS.error;
+    // In AR the active step's parts are always outlined. Translucent geometry
+    // needs a hard edge to read against a camera image of a real room: the fill
+    // competes with whatever is behind it, the contour does not. Without it a
+    // 260 mm gearbox is a faint grey smudge covering 2% of a phone screen, and
+    // the only thing the operator can actually see is the HTML label on top.
+    const wantOutline = reco !== undefined || isSelected || severity === 'error'
+      || (this.arMode && isActive && status === 'ghost');
+    const outlineHex = reco ? STATUS_COLORS[reco]
+      : isSelected ? '#ffffff'
+        : severity === 'error' ? DIAGNOSTIC_COLORS.error
+          : DIAGNOSTIC_COLORS.active;
     const outlineTargets: (Mesh | AbstractMesh)[] = loaded ?? [visual.mesh];
     for (const m of outlineTargets) {
       m.renderOutline = wantOutline;
       if (wantOutline) {
         m.outlineColor = Color3.FromHexString(outlineHex);
-        m.outlineWidth = reco ? 0.008 : 0.004;
+        m.outlineWidth = (reco ? 0.008 : this.arMode ? 0.006 : 0.004) * this.outlineScale();
       }
     }
     visual.outline = wantOutline;
@@ -905,7 +928,7 @@ export class SceneManager {
     const pulsing = reco !== undefined || severity === 'error';
     const pulse = pulsing ? pulseScale(performance.now() - this.startMs) : 1;
     if (wantOutline) {
-      const base = reco ? 0.008 : 0.004;
+      const base = (reco ? 0.008 : this.arMode ? 0.006 : 0.004) * this.outlineScale();
       for (const m of outlineTargets) m.outlineWidth = base * pulse;
     }
     visual.root.scaling.setAll(1);
