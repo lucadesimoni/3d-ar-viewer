@@ -576,6 +576,19 @@ const context = await browser.newContext({
   });
 
   check('the verdict banner is docked in the HUD, not floating over it', hud.bannerInHud);
+  // On-object labels cannot be docked — their position is their meaning — so
+  // they are dropped when they would fall behind the HUD. Half a label poking
+  // out from under the control bar reads as a rendering fault.
+  const buried = await page.evaluate(() => {
+    const hudEl = document.querySelector('.ar-hud');
+    if (!hudEl) return [];
+    const top = hudEl.getBoundingClientRect().top;
+    return [...document.querySelectorAll('.step-tag, .reco-pin')]
+      .filter((el) => el.getBoundingClientRect().bottom > top)
+      .map((el) => el.textContent.trim());
+  });
+  check('no on-object label is left stranded behind the HUD', buried.length === 0,
+    buried.join(', '));
   check('nothing covers the AR control bar', hud.overlapping.length === 0, hud.overlapping.join(', '));
   check('every AR button is the topmost element at its centre', hud.unreachable.length === 0, hud.unreachable.join(', '));
   check('the banner stays inside the viewport',

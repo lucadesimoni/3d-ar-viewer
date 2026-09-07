@@ -1003,11 +1003,16 @@ export class SceneManager {
     const world = this.visualCentre(visual);
     const w = this.engine.getRenderWidth();
     const h = this.engine.getRenderHeight();
+    // The *active* camera's viewport: in AR that is the head camera, not the
+    // orbit camera. They share a full-screen viewport today, so this has never
+    // misplaced a label — but reading the transform from one camera and the
+    // viewport from another is a trap left armed for whoever adds a split view.
+    const cam = this.scene.activeCamera ?? this.camera;
     const p = Vector3.Project(
       world,
       Matrix.Identity(),
       this.scene.getTransformMatrix(),
-      this.camera.viewport.toGlobal(w, h),
+      cam.viewport.toGlobal(w, h),
     );
     return { x: p.x / w, y: p.y / h, onScreen: p.z > 0 && p.z < 1 && p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h };
   }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../state/store';
 import { getActiveManager } from '../render/babylon/managerRegistry';
+import { arChromeTop } from './arChrome';
 import { STATUS_COLORS, VERDICT_COLORS } from '../vision/verdict';
 import { useUiConfig } from '../ui/UiConfigContext';
 
@@ -42,11 +43,13 @@ export function RecognitionOverlay(): JSX.Element | null {
     const onFrame = (): void => {
       const manager = getActiveManager();
       const next: Tag[] = [];
+      const limit = arChromeTop();
       if (manager) {
         for (const o of recognition.objects) {
           if (!partIds.has(o.label)) continue; // only on known assembly parts
           const p = manager.projectPart(o.label);
-          if (!p || !p.onScreen) continue;
+          // Below the AR HUD a pin is just a fragment behind the control bar.
+          if (!p || !p.onScreen || p.y > limit) continue;
           next.push({ id: o.id, label: o.name ?? o.label, status: o.status, score: o.score, x: p.x, y: p.y });
         }
       }
