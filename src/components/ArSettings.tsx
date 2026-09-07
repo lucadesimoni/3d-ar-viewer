@@ -23,9 +23,11 @@ const SURFACES: { label: string; height: number }[] = [
  * shelf is visibly bigger than the real one) and this is where they correct it,
  * live, with the camera running.
  */
-export function ArSettings({ capabilities, pipeline }: {
+export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
   capabilities?: Capabilities;
   pipeline?: PipelineStatus;
+  /** Ask for a real AR session from this tap — see `retryWebXr`. */
+  onRetryWebXr?: () => Promise<boolean>;
 }): JSX.Element {
   const settings = useStore((s) => s.arSettings);
   const setArSettings = useStore((s) => s.setArSettings);
@@ -282,10 +284,19 @@ export function ArSettings({ capabilities, pipeline }: {
       {/* Informational, not a fault: the camera path works, it simply cannot
           track walking. Kept distinct from the renderer diagnosis so that each
           says one thing. */}
-      {source !== 'webxr' && xrWhy && (
+      {source !== 'webxr' && capabilities?.webxrSupported && (
         <p className="ar-set-help ar-xr-note" role="status">
-          <strong>Real AR tracking was tried and refused.</strong> {xrWhy}
-          {' '}Without it the overlay turns with you but does not stay put when you walk.
+          <strong>Running without real AR tracking.</strong>{' '}
+          {xrWhy ?? 'The session was not entered.'}{' '}
+          Without it the overlay turns with you but does not stay put when you walk.
+          {onRetryWebXr && (
+            <button
+              className="secondary ar-restart"
+              onClick={() => { void onRetryWebXr().then((ok) => { if (!ok) void getActiveManager()?.xrFailure().then(setXrWhy); }); }}
+            >
+              Try real AR tracking
+            </button>
+          )}
         </p>
       )}
 

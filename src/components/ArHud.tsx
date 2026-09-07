@@ -25,10 +25,11 @@ type Sheet = 'steps' | 'errors' | 'view' | 'settings' | null;
  * Everything here is at least 48 px tall, which is the smallest target a gloved
  * finger reliably hits on a workshop tablet.
  */
-export function ArHud({ onExit, onReplace, onBringInFront, capabilities, pipeline }: {
+export function ArHud({ onExit, onReplace, onBringInFront, onRetryWebXr, capabilities, pipeline }: {
   onExit: () => void;
   onReplace: () => void;
   onBringInFront: () => void;
+  onRetryWebXr?: () => Promise<boolean>;
   capabilities?: Capabilities;
   pipeline?: PipelineStatus;
 }): JSX.Element {
@@ -66,7 +67,9 @@ export function ArHud({ onExit, onReplace, onBringInFront, capabilities, pipelin
           {sheet === 'steps' && <StepGuide />}
           {sheet === 'errors' && <DiagnosticsPanel />}
           {sheet === 'view' && <ModeBar />}
-          {sheet === 'settings' && <ArSettings capabilities={capabilities} pipeline={pipeline} />}
+          {sheet === 'settings' && (
+            <ArSettings capabilities={capabilities} pipeline={pipeline} onRetryWebXr={onRetryWebXr} />
+          )}
         </div>
       )}
 

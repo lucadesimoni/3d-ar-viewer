@@ -1219,6 +1219,39 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 16. Entering a real AR session must not out-wait the tap. -------------
+// It worked once, on a Saturday, and stopped when the app started entering
+// sessions itself instead of leaving Babylon's own button to do it. That button
+// was a click with nothing awaited in front of it. `requestSession` needs the
+// activation from a tap, and an activation does not survive a 300 kB dynamic
+// import plus the asynchronous setup inside `CreateAsync` on a phone.
+{
+  const page = await context.newPage();
+  await open(page, `${URL}?assembly=kallax-4x4`);
+
+  // The module has to be fetched before any tap, for every browser that has
+  // WebXR at all — not only one whose capability probe happened to say yes.
+  await page.waitForTimeout(2000);
+  const fetched = await page.evaluate(() => performance.getEntriesByType('resource')
+    .map((e) => e.name).filter((n) => /xr/i.test(n)).length);
+  check('the WebXR module is fetched before any tap', fetched > 0,
+    `${fetched} XR chunk(s) already loaded`);
+
+  // And the helper is built ahead of the gesture, so the tap only has to enter.
+  const prepared = await page.evaluate(() =>
+    Boolean(window.spatialScene()?.prepareWebXr));
+  check('the session helper can be prepared separately from entering it', prepared);
+
+  // The refusal path still has to land on a live camera rather than a black
+  // screen — that is what makes attempting WebXR everywhere safe.
+  await page.click('.ar-enter');
+  await page.waitForTimeout(3000);
+  const s = await state(page);
+  check('and a refused session still leaves a working camera',
+    s.placement !== 'idle', `placement=${s.placement}`);
+  await page.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall checks passed');
 process.exit(failures.length ? 1 : 0);

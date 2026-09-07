@@ -126,7 +126,17 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       // Requesting an XR session needs the user's click to still be "fresh".
       // Loading 300 kB of WebXR code first can spend that activation, so pull
       // the module in now, while nobody is waiting for it.
-      if (caps.immersiveAr) void import('../render/babylon/xr');
+      // Preload for *any* browser that has WebXR, not only one whose probe said
+      // yes: entering a session needs the tap's user activation, and 300 kB of
+      // download inside the tap handler is how that activation gets spent. The
+      // session helper is built ahead of time for the same reason — that split
+      // is what Babylon's own AR button used to give us for free.
+      if (caps.webxrSupported) {
+        void import('../render/babylon/xr');
+        void getActiveManager()?.prepareWebXr({
+          onPlace: (pose) => useStore.getState().setAnchor(pose, 0.9, 'floor'),
+        });
+      }
     });
     // Boot the recognition pipeline in the background; no models are bundled, so
     // this only wires up OpenCV unless a deployment supplies model URLs.
@@ -395,6 +405,35 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
   }, [arActive, capabilities, assembly, setAnchor, stop, videoRef]);
 
   /**
+   * Ask for a real AR session again, from this tap.
+   *
+   * The automatic attempt happens inside `enterAr`, after capability checks and
+   * a camera permission prompt — by which time the activation from the original
+   * tap may be gone, and a refused session is indistinguishable from a device
+   * that cannot do AR. This is a button whose click leads straight to
+   * `requestSession` with nothing awaited in front of it, which is the sequence
+   * that worked before the app started entering sessions on its own.
+   */
+  const retryWebXr = useCallback(async () => {
+    const manager = getActiveManager();
+    if (!manager) return false;
+    const session = await manager.startWebXr(
+      (pose) => useStore.getState().setAnchor(pose, 0.9, 'floor'),
+      () => stop(),
+    );
+    if (!session) return false;
+    // Real tracking took over: the camera passthrough is now redundant, and
+    // holding the device would keep it warm for nothing.
+    trackerRef.current?.stop();
+    trackerRef.current = undefined;
+    releaseVideo(videoRef.current);
+    xrSession.current = session;
+    useStore.getState().setArSource('webxr');
+    setArActive(true);
+    return true;
+  }, [stop, videoRef]);
+
+  /**
    * Move the assembly into view, now, without a placement gesture.
    *
    * The escape hatch for an anchor the operator cannot find: it lands in front
@@ -479,7 +518,7 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
 
   useEffect(() => () => stop(), [stop]);
 
-  return { capabilities, pipelineStatus, arActive, enterAr, replaceAnchor, bringInFront };
+  return { capabilities, pipelineStatus, arActive, enterAr, replaceAnchor, bringInFront, retryWebXr };
 }
 
 /**
