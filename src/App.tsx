@@ -10,6 +10,7 @@ import { CollabPanel } from './components/CollabPanel';
 import { BomPanel } from './components/BomPanel';
 import { useArController } from './components/useArController';
 import { QuickLookButton } from './components/QuickLookButton';
+import { AppClipLink } from './components/AppClipLink';
 import { RecognitionOverlay } from './components/RecognitionOverlay';
 import { PlacementHint } from './components/PlacementHint';
 import { StepAnnotations } from './components/StepAnnotations';
@@ -93,6 +94,9 @@ export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
             arActive={arActive} showEnterAr={!isMobile} />
         )}
         {ui.showRecognition && !arActive && <QuickLookButton capabilities={capabilities} />}
+        {/* On iOS this is the only route to positional tracking; it belongs
+            next to the way into AR, not buried in a settings sheet. */}
+        {!arActive && <AppClipLink capabilities={capabilities} />}
 
         {/* AR refused to start: say so, on every screen size. */}
         {arError && (

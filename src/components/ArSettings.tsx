@@ -1,5 +1,6 @@
 import { useStore } from '../state/store';
 import { getActiveManager } from '../render/babylon/managerRegistry';
+import { AppClipLink } from './AppClipLink';
 import { MODE_LABELS, type Capabilities } from '../engine/tracking/capabilities';
 import type { PipelineStatus } from '../vision/pipeline';
 import { detectGpu, gpuLabel } from '../render/perf';
@@ -292,7 +293,18 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
       {/* Informational, not a fault: the camera path works, it simply cannot
           track walking. Kept distinct from the renderer diagnosis so that each
           says one thing. */}
-      {source !== 'webxr' && capabilities?.webxrSupported && (
+      {/* iOS: the browser will never provide WebXR, so the offer is an App
+          Clip rather than a retry. */}
+      {source !== 'webxr' && capabilities?.isIOS && (
+        <p className="ar-set-help ar-xr-note" role="status">
+          <strong>Running without real AR tracking.</strong>{' '}
+          iOS Safari has no WebXR, so the overlay turns with you but does not stay put
+          when you walk.
+          <AppClipLink capabilities={capabilities} compact />
+        </p>
+      )}
+
+      {source !== 'webxr' && !capabilities?.isIOS && capabilities?.webxrSupported && (
         <p className="ar-set-help ar-xr-note" role="status">
           <strong>Running without real AR tracking.</strong>{' '}
           {xrWhy ?? 'The session was not entered.'}{' '}
