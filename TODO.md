@@ -11,6 +11,15 @@ error · **unverified** = correct as far as it can be tested here · **chore**.
 
 ## Blocking a real deployment
 
+- **unverified — the iOS App Clip route.** iOS Safari has no WebXR, so an
+  iPhone gets orientation-only tracking. The app now offers a link to an App
+  Clip that provides the WebXR API over ARKit
+  (`https://appclip.needle.tools/ar?url=…`, overridable or disabled with
+  `?appclip=`). The link's shape is tested; that our page actually runs inside
+  that clip is not, and cannot be from here — it needs an iPhone. Verify before
+  relying on it, and note it points at a third party.
+  `src/components/AppClipLink.tsx`
+
 - **gap — no ONNX model ships.** `vision/pipeline` is wired for detection,
   classification and segmentation; with no `VITE_DETECTOR_MODEL_URL` set it runs
   geometry-only and stays quiet. Pick a model with a redistributable licence,

@@ -631,6 +631,21 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   background: rgba(239, 68, 68, 0.12); border: 1px solid var(--error); color: var(--text);
 }
 .ar-restart { display: block; margin-top: 8px; min-height: 40px; width: 100%; }
+.appclip {
+  display: flex; align-items: center; gap: 10px; text-decoration: none;
+  margin: 8px 12px 0; padding: 10px 12px; border-radius: 12px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  color: #04141a; font-weight: 680; font-size: 13.5px; line-height: 1.3;
+}
+.appclip span[aria-hidden] { font-size: 20px; }
+.appclip em {
+  display: block; font-style: normal; font-weight: 500; font-size: 11.5px;
+  opacity: 0.85; margin-top: 2px;
+}
+.appclip.compact {
+  margin: 8px 0 0; justify-content: center; min-height: 40px;
+}
+
 .ar-xr-note {
   margin: 0; padding: 10px 12px; border-radius: 10px; line-height: 1.4;
   background: rgba(245, 158, 11, 0.12); border: 1px solid var(--warn); color: var(--text);

@@ -1287,6 +1287,43 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 17. iOS: the offer of real tracking, and only there. ------------------
+// iOS Safari has no WebXR, so an iPhone runs the camera path: orientation only.
+// An App Clip is a native ARKit host that provides the WebXR API to an ordinary
+// page and launches from a link with no install, which is the one way the same
+// WebXR code runs on iOS. The offer has to appear there and nowhere else — on
+// Android it would be a detour away from a browser that already does this.
+{
+  const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15'
+    + ' (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+  const ios = await browser.newContext({
+    viewport: { width: 390, height: 844 }, deviceScaleFactor: 3,
+    isMobile: true, hasTouch: true, userAgent: IPHONE,
+  });
+  const page = await ios.newPage();
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  const link = page.locator('a.appclip');
+  check('an iPhone is offered a route to real AR tracking', await link.count() === 1);
+  const href = await link.getAttribute('href').catch(() => null);
+  // `URL` is the preview address in this file; reach for the global explicitly.
+  const carried = href ? new globalThis.URL(href).searchParams.get('url') : null;
+  check('and the link carries this page, encoded, with the assembly on it',
+    Boolean(carried && new globalThis.URL(carried).searchParams.get('assembly') === 'kallax-4x4'),
+    carried ?? href ?? 'no link');
+
+  // A deployment has to be able to refuse sending operators to a third party.
+  await open(page, `${URL}?appclip=off`);
+  check('and a deployment can switch the offer off', await page.locator('a.appclip').count() === 0);
+  await page.close();
+  await ios.close();
+
+  const android = await context.newPage();
+  await open(android, URL);
+  check('an Android phone is not sent on a detour',
+    await android.locator('a.appclip').count() === 0);
+  await android.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall checks passed');
 process.exit(failures.length ? 1 : 0);
