@@ -259,6 +259,8 @@ export class SceneManager {
   /** Hardware scaling the device should render at when it can keep up. */
   private baseScalingLevel = 1;
   private reticle: Mesh | undefined;
+  private groundShadow: Mesh | undefined;
+  private groundOutline: import('@babylonjs/core/Meshes/linesMesh').LinesMesh | undefined;
   private showBackground = true;
   /** Frames actually rendered — a loop that has stopped shows up here first. */
   private frames = 0;
@@ -357,6 +359,7 @@ export class SceneManager {
       this.assemblyRoot.setEnabled(true);      // the studio view always shows it
     }
     this.setTransparent(enabled);
+    this.updateGroundContact();
   }
 
   /**
@@ -461,6 +464,97 @@ export class SceneManager {
     r.setEnabled(false);
     this.reticle = r;
     return r;
+  }
+
+  /**
+   * Show that the assembly is standing on something.
+   *
+   * Without a contact cue a virtual object over a camera image reads as
+   * floating: there is no shadow, no occlusion, and nothing to say which of the
+   * surfaces behind it the thing is meant to be on. Two marks fix that, and
+   * they are the same two a photograph would have given for free — a soft
+   * shadow directly beneath the footprint, and the footprint's own outline on
+   * the surface, so "it is on the bench" is something you can see rather than
+   * something the badge claims.
+   *
+   * Both are drawn at the *bottom of the assembly*, not at the placement plane:
+   * where the model actually rests is the honest answer, and the two differ the
+   * moment a part is dragged out of place.
+   */
+  private updateGroundContact(): void {
+    const wanted = this.arMode && this.assemblyRoot.isEnabled();
+    if (!wanted) {
+      this.groundShadow?.setEnabled(false);
+      this.groundOutline?.setEnabled(false);
+      return;
+    }
+    const meshes = this.assemblyRoot.getChildMeshes(
+      false, (n) => n.getClassName().includes('Mesh') && n.name.startsWith('mesh-'),
+    );
+    if (meshes.length === 0) return;
+
+    // Measure in the assembly's own frame, not the world's. A placed assembly is
+    // turned to face the operator, and the world-axis-aligned box of a rotated
+    // object is both too big and the wrong shape — the footprint came out as a
+    // diamond lying across the real one. Both marks are parented to the root, so
+    // its rotation carries them for free.
+    this.assemblyRoot.computeWorldMatrix(true);
+    const toLocal = this.assemblyRoot.getWorldMatrix().clone().invert();
+    let min: Vector3 | undefined;
+    let max: Vector3 | undefined;
+    for (const m of meshes) {
+      m.computeWorldMatrix(true);
+      for (const corner of m.getBoundingInfo().boundingBox.vectorsWorld) {
+        const local = Vector3.TransformCoordinates(corner, toLocal);
+        min = min ? Vector3.Minimize(min, local) : local.clone();
+        max = max ? Vector3.Maximize(max, local) : local.clone();
+      }
+    }
+    if (!min || !max) return;
+
+    const width = Math.max(0.02, max.x - min.x);
+    const depth = Math.max(0.02, max.z - min.z);
+    const cx = (min.x + max.x) / 2;
+    const cz = (min.z + max.z) / 2;
+    // A hair above the surface: coplanar geometry z-fights, and a flickering
+    // shadow is worse than none.
+    const y = min.y + 0.001;
+
+    if (!this.groundShadow) {
+      const disc = MeshBuilder.CreateDisc('ar-ground-shadow', { radius: 0.5, tessellation: 48 }, this.scene);
+      disc.rotation.x = Math.PI / 2;
+      disc.bakeCurrentTransformIntoVertices();
+      const mat = makeOverlayMaterial(this.scene, '#000000', 0.3, 'ar-ground-shadow-mat');
+      mat.emissiveColor = Color3.Black();
+      mat.diffuseColor = Color3.Black();
+      disc.material = mat;
+      disc.isPickable = false;
+      disc.parent = this.assemblyRoot;
+      this.groundShadow = disc;
+    }
+    this.groundShadow.setEnabled(true);
+    this.groundShadow.position.set(cx, y, cz);
+    // Slightly wider than the footprint, as a real contact shadow spreads.
+    this.groundShadow.scaling.set(width * 1.15, 1, depth * 1.15);
+
+    const hx = width / 2;
+    const hz = depth / 2;
+    const corners = [
+      new Vector3(cx - hx, y, cz - hz),
+      new Vector3(cx + hx, y, cz - hz),
+      new Vector3(cx + hx, y, cz + hz),
+      new Vector3(cx - hx, y, cz + hz),
+    ];
+    corners.push(corners[0].clone());
+    this.groundOutline = MeshBuilder.CreateLines(
+      'ar-ground-outline',
+      { points: corners, instance: this.groundOutline as never, updatable: true },
+      this.scene,
+    );
+    this.groundOutline.color = Color3.FromHexString(DIAGNOSTIC_COLORS.active);
+    this.groundOutline.isPickable = false;
+    this.groundOutline.parent = this.assemblyRoot;
+    this.groundOutline.setEnabled(true);
   }
 
   /** Arm or disarm placement: the reticle and the tap-to-place gesture. */
@@ -903,12 +997,14 @@ export class SceneManager {
     // something, there is nothing honest to draw.
     if (this.arMode) this.assemblyRoot.setEnabled(Boolean(pose));
     if (!pose) {
+      this.updateGroundContact();
       this.assemblyRoot.position.setAll(0);
       this.assemblyRoot.rotationQuaternion = Quaternion.Identity();
       return;
     }
     this.assemblyRoot.position.set(pose.position[0], pose.position[1], pose.position[2]);
     this.assemblyRoot.rotationQuaternion = new Quaternion(...pose.rotation);
+    this.updateGroundContact();
   }
 
   /**
@@ -1024,6 +1120,7 @@ export class SceneManager {
     visual.root.scaling.setAll(1);
 
     this.applyBackgroundVisibility(state.showBackground);
+    this.updateGroundContact();
   }
 
   private tintOverlay(visual: PartVisual, hex: string, alpha: number): void {

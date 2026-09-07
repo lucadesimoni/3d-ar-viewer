@@ -798,18 +798,18 @@ const context = await browser.newContext({
   // alpha and covered 98% of the screen; the gearbox was 1.7% of the pixels,
   // underneath it. Nothing looked broken in a screenshot, and nothing was
   // visible on a phone.
+  // The contact shadow and footprint go with the parts: they are how the
+  // assembly says it is resting on something, not studio scenery.
   await page.evaluate(() => {
-    const m = window.spatialScene();
-    m.scene.meshes.filter((x) => x.name.startsWith('mesh-')).forEach((x) => x.setEnabled(false));
+    window.__hidden = window.spatialScene().scene.meshes
+      .filter((x) => x.name.startsWith('mesh-') || x.name.startsWith('ar-ground-'));
+    window.__hidden.forEach((x) => x.setEnabled(false));
   });
   await page.waitForTimeout(400);
   const scenery = await painted();
-  check('nothing but the parts paints over the camera', scenery < 0.02,
+  check('nothing but the assembly paints over the camera', scenery < 0.02,
     `${(scenery * 100).toFixed(1)}% of the camera covered by scenery`);
-  await page.evaluate(() => {
-    const m = window.spatialScene();
-    m.scene.meshes.filter((x) => x.name.startsWith('mesh-')).forEach((x) => x.setEnabled(true));
-  });
+  await page.evaluate(() => window.__hidden.forEach((x) => x.setEnabled(true)));
   await page.waitForTimeout(400);
 
   // The app has to be able to answer this question about itself: the readout in
@@ -1098,6 +1098,64 @@ const context = await browser.newContext({
   }
   check('and a real turn is still followed promptly', moved > 0 && moved < 600,
     moved ? `${moved} ms` : 'never followed');
+  await page.close();
+}
+
+// --- 14. Standing on something, visibly. -----------------------------------
+// A virtual object over a camera image has no shadow and no occlusion, so it
+// reads as floating however correctly it is anchored: nothing on screen says
+// which of the surfaces behind it the thing is meant to be resting on. A
+// contact shadow and the footprint's outline are what a photograph would have
+// given for free.
+{
+  const page = await context.newPage();
+  await open(page, URL);
+
+  const marks = () => page.evaluate(() => {
+    const m = window.spatialScene();
+    const shadow = m.scene.getMeshByName('ar-ground-shadow');
+    const outline = m.scene.getMeshByName('ar-ground-outline');
+    const parts = m.scene.meshes.filter((x) => x.name.startsWith('mesh-'));
+    let bottom = Infinity;
+    for (const x of parts) { x.computeWorldMatrix(true); bottom = Math.min(bottom, x.getBoundingInfo().boundingBox.minimumWorld.y); }
+    return {
+      shadowOn: Boolean(shadow?.isEnabled()),
+      outlineOn: Boolean(outline?.isEnabled()),
+      // Parented to the assembly, so its rotation carries them.
+      parented: shadow?.parent?.name === 'assembly' && outline?.parent?.name === 'assembly',
+      shadowWorldY: shadow ? shadow.getAbsolutePosition().y : null,
+      bottom: Number.isFinite(bottom) ? bottom : null,
+      scaling: shadow ? [shadow.scaling.x, shadow.scaling.z] : null,
+    };
+  });
+
+  check('the studio view is not given a fake shadow', !(await marks()).shadowOn);
+
+  await page.click('.ar-enter');
+  await page.evaluate((held) => {
+    setInterval(() => window.dispatchEvent(
+      new DeviceOrientationEvent('deviceorientation', held)), 40);
+  }, HELD_LOOKING_DOWN);
+  await page.waitForTimeout(1800);
+  check('and nothing is drawn on the floor before anything is placed',
+    !(await marks()).shadowOn);
+
+  await page.mouse.click(195, 640);
+  await page.waitForTimeout(1200);
+  const placed = await marks();
+  check('a placed assembly casts a contact shadow', placed.shadowOn && placed.outlineOn);
+  // At the bottom of the assembly, not at the placement plane: where it
+  // actually rests is the honest answer, and the two differ as parts move.
+  check('the shadow sits under the assembly, not at a guessed plane',
+    Math.abs(placed.shadowWorldY - placed.bottom) < 0.01,
+    `shadow at ${placed.shadowWorldY.toFixed(3)}, assembly bottom ${placed.bottom.toFixed(3)}`);
+  // Parented, so a rotated assembly gets a rotated footprint rather than the
+  // world-axis-aligned diamond a world-space box produces.
+  check('and it turns with the assembly instead of lying across it', placed.parented);
+
+  await page.locator('.ar-btn', { hasText: 'Exit' }).click();
+  await page.waitForTimeout(1200);
+  check('and it goes when AR does', !(await marks()).shadowOn);
   await page.close();
 }
 
