@@ -154,6 +154,12 @@ export class SceneManager {
 
     this.camera = new ArcRotateCamera('cam', -Math.PI / 2.2, Math.PI / 2.6, 0.7, new Vector3(0, 0.05, 0), this.scene);
     this.camera.attachControl(canvas, true);
+    // Any orbit, pinch or wheel is the operator choosing a view; auto-fit stops
+    // second-guessing them from that point on.
+    this.camera.onViewMatrixChangedObservable.add(() => {
+      if (this.framing) return;
+      this.cameraTouched = true;
+    });
     this.camera.wheelDeltaPercentage = 0.02;
     this.camera.minZ = 0.01;
     this.camera.lowerRadiusLimit = 0.15;
@@ -235,6 +241,10 @@ export class SceneManager {
   private baseScalingLevel = 1;
   private reticle: Mesh | undefined;
   private showBackground = true;
+  /** Set once the operator orbits or zooms: their framing outranks any auto-fit. */
+  private cameraTouched = false;
+  /** True while `frameCamera` moves the camera, so it is not read as input. */
+  private framing = false;
   private marker: Mesh | undefined;
   private markerObserver: ReturnType<Scene['onBeforeRenderObservable']['add']> | undefined;
   /**
@@ -715,6 +725,10 @@ export class SceneManager {
     this.engine.resize();
     // Rotating the device changes which axis of the camera image is cropped.
     this.applyPassthroughFov();
+    // A portrait phone turned landscape has a completely different framing, and
+    // the canvas is not its final size when the scene is first built. Re-fit —
+    // but never over a view the operator has set themselves.
+    if (!this.arMode && !this.cameraTouched) this.frameCamera();
   };
 
   private buildParts(): void {
@@ -934,7 +948,13 @@ export class SceneManager {
    * the width and a wide one on a laptop by the height.
    */
   frameCamera(): void {
-    const { centre, radius } = this.assemblyBounds();
+    // Frame the *parts*. Measured with its bench and wall the gearbox reads as
+    // a 0.72 m object instead of a 0.13 m one, and the camera pulls back to
+    // suit: on a phone the assembly came out 11% of the screen wide and 4% of
+    // it tall, a speck in the middle of an empty grid. The bench is context,
+    // not the subject — and it stays in shot anyway at this distance.
+    this.framing = true;
+    const { centre, radius } = this.assemblyBounds(true);
     this.camera.setTarget(centre);
 
     const halfVertical = this.camera.fov / 2;
@@ -947,6 +967,7 @@ export class SceneManager {
     // Let the operator get close without falling through the far side.
     this.camera.lowerRadiusLimit = Math.max(0.15, radius * 0.35);
     this.camera.upperRadiusLimit = distance * 4;
+    this.framing = false;
   }
 
   /**

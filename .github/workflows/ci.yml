@@ -61,6 +61,9 @@ jobs:
       - run: npm run steps:check
         env:
           PREVIEW_URL: http://localhost:8080/
+      - run: npm run layout:check
+        env:
+          PREVIEW_URL: http://localhost:8080/
       - run: npm run place:check
         env:
           PREVIEW_URL: http://localhost:8080/
@@ -88,4 +91,5 @@ jobs:
         run: |
           npm run ar:verify
           npm run steps:check
+          npm run layout:check
           npm run place:check

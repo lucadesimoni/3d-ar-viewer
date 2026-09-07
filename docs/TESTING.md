@@ -8,7 +8,7 @@ cannot.
 | --- | --- | --- | --- |
 | Types | `npm run typecheck` | The whole repo compiles | Everything about behaviour |
 | Unit | `npm test` | Geometry, snapping, diagnostics, sequencing, vision maths — 161 tests | Anything needing a canvas, a camera or a layout |
-| Browser | `ar:verify`, `steps:check`, `place:check` | AR anchoring and tracking, the HUD on phone/tablet viewports, step guidance, placing and snapping — against a real Chromium and the real build | Real camera optics, real motion sensors, real WebXR |
+| Browser | `ar:verify`, `steps:check`, `layout:check`, `place:check` | AR anchoring and tracking, the HUD on phone/tablet viewports, step guidance, placing and snapping — against a real Chromium and the real build | Real camera optics, real motion sensors, real WebXR |
 | Deployment | `deploy:check` | First visit, offline, redeploy with new bundle names, offline again — against a deliberately dumb static host | Whether the actual host sets the headers |
 | Production | the same browser checks with `PREVIEW_URL=https://…` | The site that is actually serving: bad deploy, stale worker, missing header | Same hardware blind spots |
 
@@ -21,8 +21,9 @@ demand (Actions ▸ CI ▸ Run workflow).
 npm run typecheck && npm test
 npm run build
 npm run serve &                 # http://localhost:8080
-npm run ar:verify               # 42 checks
+npm run ar:verify               # 74 checks
 npm run steps:check             # 12 checks
+npm run layout:check            # 19 checks
 npm run place:check             # 7 checks
 npm run deploy:check            # 8 checks — starts its own host
 ```
@@ -51,6 +52,13 @@ reported wrong at some point:
 - **`steps:check`** walks every step of every bundled assembly and requires each
   on-part label to belong to that step, and "Show me" to animate that step's own
   parts and change nothing.
+- **`layout:check`** opens the start screen at four viewports — phone in both
+  orientations, tablet, desktop — and requires the assembly to actually fill the
+  frame, the 3D view to keep its share of the screen, the page never to scroll,
+  and every control to be on screen and at least 32 px tall. It exists because
+  the camera framed each assembly together with its workbench, so a 0.26 m
+  gearbox was drawn 11% of the screen wide: nothing failed, the app just looked
+  empty.
 - **`place:check`** drags a part with a real pointer and requires it to snap
   from 38 mm out to 0 mm from nominal — and, dropped 140 mm out, to *stay* out
   and raise a diagnostic.
