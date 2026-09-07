@@ -1242,9 +1242,44 @@ const context = await browser.newContext({
     Boolean(window.spatialScene()?.prepareWebXr));
   check('the session helper can be prepared separately from entering it', prepared);
 
+  // The session request itself: nothing that a phone might lack may be asked
+  // for as *required*. Babylon's `enableFeature(name, version)` defaults its
+  // fifth argument, `required`, to true — so asking for hit-test in the obvious
+  // two-argument way says "no AR at all unless this device does surface
+  // detection", and Android refuses the whole session when Google Play Services
+  // for AR is missing or mid-update. Hit-test is worth having and not worth
+  // losing a session over.
+  const requested = await page.evaluate(async () => {
+    const seen = [];
+    const real = navigator.xr?.requestSession?.bind(navigator.xr);
+    if (!real) return null;
+    navigator.xr.requestSession = (mode, init) => {
+      seen.push({ mode, required: init?.requiredFeatures ?? [], optional: init?.optionalFeatures ?? [] });
+      return real(mode, init);
+    };
+    const btn = document.querySelector('.ar-enter');
+    btn.click();
+    await new Promise((r) => setTimeout(r, 3000));
+    return seen;
+  });
+  if (requested && requested.length > 0) {
+    const required = requested.flatMap((r) => r.required);
+    check('the AR session asks for nothing a phone might lack',
+      !required.includes('hit-test') && !required.includes('anchors')
+        && !required.includes('plane-detection'),
+      `required: ${required.join(', ') || 'none'}`);
+    const optional = requested.flatMap((r) => r.optional);
+    check('and asks for hit-test as an optional extra', optional.includes('hit-test'),
+      `optional: ${optional.join(', ') || 'none'}`);
+  } else {
+    check('the AR session request could be observed', requested !== null,
+      'navigator.xr missing in this browser');
+  }
+
   // The refusal path still has to land on a live camera rather than a black
   // screen — that is what makes attempting WebXR everywhere safe.
-  await page.click('.ar-enter');
+  await page.waitForTimeout(500);
+  if (await page.locator('.ar-enter').count()) await page.click('.ar-enter');
   await page.waitForTimeout(3000);
   const s = await state(page);
   check('and a refused session still leaves a working camera',
