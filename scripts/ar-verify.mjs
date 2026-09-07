@@ -933,6 +933,56 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 11. Repositioning must not walk away. ---------------------------------
+// Reported from a laptop: "every time I reposition, it gets smaller". It did —
+// 0.5 m, then 1.0, 1.8, 3.0, 4.7, and 4% of the screen down to nothing. The
+// standoff is derived from the assembly's measured radius, and the measurement
+// unioned the old position with the new one, because `minimumWorld` is cached
+// from the last time a mesh was transformed and a disabled mesh is never
+// transformed. Every placement therefore made the assembly measure bigger,
+// which pushed the next one further away.
+{
+  // A laptop: no touch, no attitude, a webcam.
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.context().grantPermissions(['camera']);
+  await open(page, URL);
+  await page.click('.ar-enter');
+  await page.waitForTimeout(2500);
+
+  const place = async () => {
+    await page.mouse.click(720, 620);
+    await page.waitForTimeout(900);
+    await page.evaluate(() => window.spatialScene().paintedFraction());
+    await page.waitForTimeout(350);
+    return page.evaluate(() => {
+      const m = window.spatialScene();
+      return {
+        dist: m.anchorViewState().distanceM,
+        radius: m.assemblyRadiusM(),
+        painted: m.paintedFraction() ?? 0,
+      };
+    });
+  };
+
+  const first = await place();
+  let last = first;
+  for (let i = 0; i < 4; i++) {
+    await page.locator('.ar-btn', { hasText: 'Move' }).click();
+    await page.waitForTimeout(700);
+    last = await place();
+  }
+  check('the assembly does not grow as it is measured',
+    Math.abs(last.radius - first.radius) < 0.01,
+    `${first.radius.toFixed(2)} m then ${last.radius.toFixed(2)} m`);
+  check('and repositioning puts it back at the same distance',
+    Math.abs(last.dist - first.dist) < 0.05,
+    `${first.dist.toFixed(2)} m then ${last.dist.toFixed(2)} m`);
+  check('so it is still the same size on screen after five placements',
+    last.painted > 0.02 && Math.abs(last.painted - first.painted) < 0.01,
+    `${(first.painted * 100).toFixed(1)}% then ${(last.painted * 100).toFixed(1)}%`);
+  await page.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall checks passed');
 process.exit(failures.length ? 1 : 0);

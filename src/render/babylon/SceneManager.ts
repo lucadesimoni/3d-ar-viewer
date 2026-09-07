@@ -1090,6 +1090,16 @@ export class SceneManager {
       (n) => n.getClassName().includes('Mesh') && (!partsOnly || n.name.startsWith('mesh-')),
     );
     if (meshes.length > 0) {
+      // Force the world matrices first. `minimumWorld`/`maximumWorld` are
+      // cached from the last time a mesh was transformed, and a mesh that is
+      // disabled — which every part is while the assembly is unanchored in AR —
+      // is not transformed at all. Reading them then unions the assembly's *old*
+      // position with its new one, so the measured radius grows by roughly the
+      // distance it moved. Since the standoff is derived from that radius, each
+      // reposition pushed the assembly further away and made it smaller: 0.5 m
+      // and 4% of the screen, then 1.0, 1.8, 3.0, 4.7 m and nothing at all.
+      this.assemblyRoot.computeWorldMatrix(true);
+      for (const mesh of meshes) mesh.computeWorldMatrix(true);
       let min = meshes[0].getBoundingInfo().boundingBox.minimumWorld.clone();
       let max = meshes[0].getBoundingInfo().boundingBox.maximumWorld.clone();
       for (const mesh of meshes) {
