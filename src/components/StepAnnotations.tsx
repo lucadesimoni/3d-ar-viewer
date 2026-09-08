@@ -29,6 +29,27 @@ interface Tag {
 /** Minimum gap between two tags, as a fraction of the viewport's smaller side. */
 const MIN_SEPARATION = 0.11;
 const MAX_TAGS = 6;
+/**
+ * How far a tag must move before the DOM is told about it.
+ *
+ * The projection runs every animation frame, and it used to publish every
+ * frame too: a new array into React state sixty times a second, which is sixty
+ * reconciliations, style recalculations and layouts for labels that had not
+ * moved a pixel. Two thousandths of the viewport is well under what an eye
+ * resolves and well over the jitter of a projection, so a still phone now costs
+ * nothing at all and a moving one costs only what it must.
+ */
+const TAG_EPSILON = 0.002;
+
+/** Whether anything about the tags is worth re-rendering for. */
+function tagsDiffer(a: Tag[], b: Tag[]): boolean {
+  if (a.length !== b.length) return true;
+  return a.some((t, i) => (
+    t.partId !== b[i].partId
+    || Math.abs(t.x - b[i].x) > TAG_EPSILON
+    || Math.abs(t.y - b[i].y) > TAG_EPSILON
+  ));
+}
 
 export function StepAnnotations(): JSX.Element | null {
   const assembly = useStore((s) => s.assembly);
@@ -37,12 +58,21 @@ export function StepAnnotations(): JSX.Element | null {
   const [tags, setTags] = useState<Tag[]>([]);
   const [hidden, setHidden] = useState(0);
   const raf = useRef(0);
+  // What the DOM currently shows, so a frame that changes nothing costs nothing.
+  const published = useRef<Tag[]>([]);
+  const hiddenCount = useRef(0);
 
   const step = assembly.steps.find((s) => s.id === activeStepId);
   const enabled = viewMode === 'guide' && Boolean(step);
 
   useEffect(() => {
-    if (!enabled || !step) { setTags([]); setHidden(0); return; }
+    if (!enabled || !step) {
+      published.current = [];
+      hiddenCount.current = 0;
+      setTags([]);
+      setHidden(0);
+      return;
+    }
     const names = new Map(assembly.parts.map((p) => [p.id, p.name]));
 
     const onFrame = (): void => {
@@ -61,8 +91,14 @@ export function StepAnnotations(): JSX.Element | null {
           next.push({ partId, name: names.get(partId) ?? partId, x: p.x, y: p.y });
         }
       }
-      setTags(next);
-      setHidden(dropped);
+      if (tagsDiffer(next, published.current)) {
+        published.current = next;
+        setTags(next);
+      }
+      if (dropped !== hiddenCount.current) {
+        hiddenCount.current = dropped;
+        setHidden(dropped);
+      }
       raf.current = requestAnimationFrame(onFrame);
     };
     raf.current = requestAnimationFrame(onFrame);

@@ -1517,6 +1517,53 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 21. A still phone must cost nothing. ----------------------------------
+// The on-part labels are projected every animation frame, and they used to be
+// *published* every frame too: a fresh array into React state sixty times a
+// second — sixty reconciliations for labels that had not moved a pixel. React
+// writes no DOM when the output is identical, so the waste is invisible to a
+// mutation observer and shows up only as scripting time. Measured against the
+// same app with the labels switched off, in the same run on the same machine,
+// so the number means something wherever this runs.
+{
+  const page = await context.newPage();
+  const cdp = await context.newCDPSession(page);
+  await cdp.send('Performance.enable');
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  await page.waitForTimeout(2000);
+
+  const perFrame = async (seconds) => {
+    const metric = async () => {
+      const { metrics } = await cdp.send('Performance.getMetrics');
+      return metrics.find((m) => m.name === 'ScriptDuration')?.value ?? 0;
+    };
+    const t0 = await metric();
+    const f0 = await page.evaluate(() => window.spatialScene().renderStats().frames);
+    await page.waitForTimeout(seconds * 1000);
+    const t1 = await metric();
+    const f1 = await page.evaluate(() => window.spatialScene().renderStats().frames);
+    return { ms: ((t1 - t0) * 1000) / Math.max(1, f1 - f0), frames: f1 - f0 };
+  };
+
+  const withLabels = await perFrame(4);
+  // The same app with nothing to label: the floor this machine runs at.
+  await page.evaluate(() => window.spatialStore.getState().setViewMode('inspect'));
+  await page.waitForTimeout(500);
+  const without = await perFrame(4);
+
+  check('frames are being drawn to measure against',
+    withLabels.frames > 30 && without.frames > 30,
+    `${withLabels.frames} and ${without.frames} frames`);
+  const cost = withLabels.ms - without.ms;
+  // Measured on this machine: 0.36 ms with the guard, 0.52 without it. The
+  // threshold sits between them rather than at a round number pulled from air.
+  check('a still view costs almost nothing to keep labelled',
+    cost < 0.45,
+    `${cost.toFixed(2)} ms per frame over a view with no labels (${
+      withLabels.ms.toFixed(2)} vs ${without.ms.toFixed(2)})`);
+  await page.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall checks passed');
 process.exit(failures.length ? 1 : 0);

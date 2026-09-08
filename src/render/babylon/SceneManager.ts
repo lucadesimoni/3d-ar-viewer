@@ -1037,6 +1037,13 @@ export class SceneManager {
       const callbacks = { ...hooks };
       const prepared = await prepareImmersiveAr(this.scene, overlayRoot ?? document.body, {
         onReticle: (pose) => this.setReticle(this.placementActive ? pose : undefined),
+        // The platform moved the spot it is holding: follow it, quietly. The
+        // store keeps the placement the operator made — this is the same
+        // placement, where it now is, and re-announcing it would re-arm
+        // placement and re-run everything that watches for a new anchor.
+        onAnchorPose: (pose) => {
+          if (this.inXrSession) this.setAnchor(this.placementPose(pose));
+        },
         onSelectAnchor: (pose) => {
           if (!this.placementActive) return;
           if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) return;
@@ -1795,7 +1802,12 @@ export class SceneManager {
     let max: Vector3 | undefined;
     for (const m of meshes) {
       if (!m.getTotalVertices || m.getTotalVertices() === 0) continue;
-      m.computeWorldMatrix(true);
+      // Force the recompute only for a mesh the renderer skipped. This is
+      // called once per labelled part per animation frame, and for a mesh that
+      // was just drawn the forced version recomputes a matrix that is already
+      // correct — the reason the bounds go stale is that a *disabled* mesh is
+      // never visited at all.
+      m.computeWorldMatrix(!m.isEnabled());
       const bb = m.getBoundingInfo().boundingBox;
       min = min ? Vector3.Minimize(min, bb.minimumWorld) : bb.minimumWorld.clone();
       max = max ? Vector3.Maximize(max, bb.maximumWorld) : bb.maximumWorld.clone();
