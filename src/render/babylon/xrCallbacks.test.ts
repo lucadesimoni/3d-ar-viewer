@@ -107,3 +107,57 @@ describe('why real AR is not running', () => {
     }
   });
 });
+
+describe('the watchdog and a live session', () => {
+  const manager = () => new SceneManager(document.createElement('canvas'), gearbox, {}, {
+    engine: new NullEngine(), kind: 'webgl',
+    perf: { tier: 'low', antialias: false, adaptive: false, maxPixelRatio: 1, targetFps: 30, recognitionIntervalMs: 1000 },
+  });
+
+  it('does not switch a session to a timer clock when frames pause', async () => {
+    vi.useFakeTimers();
+    prepare.mockImplementation(async () => ({
+      enter: async () => ({ end: async () => {} }), dispose: vi.fn(),
+    }));
+    const m = manager();
+    try {
+      await m.prepareWebXr({ onPlace: vi.fn(), onEnd: vi.fn() });
+      expect(await m.startWebXr(vi.fn(), vi.fn())).toBeDefined();
+      // Babylon reports IN_XR on the session's first frame; the manager is in
+      // a session from here, and Babylon owns the loop.
+      (prepare.mock.calls.at(-1)![2] as XrHooks).onStateChange!(true);
+      // No frames for ten watchdog intervals — ARCore starting, or a slow
+      // first frame. Rescuing this with a `setInterval` renders into the page
+      // canvas instead of the session, which is a black passthrough.
+      vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(0);
+      await vi.advanceTimersByTimeAsync(20000);
+      expect(m.renderStats().clock).toBe('raf');
+      expect(m.renderStats().stalls).toBe(0);
+    } finally {
+      m.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('takes a stalled loop back off the timer before handing it to a session', async () => {
+    vi.useFakeTimers();
+    prepare.mockImplementation(async () => ({
+      enter: async () => ({ end: async () => {} }), dispose: vi.fn(),
+    }));
+    const m = manager();
+    try {
+      // A genuine stall before AR: animation frames stop coming, the watchdog
+      // moves the loop onto a timer, and a timer cannot drive an XR session.
+      vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(0);
+      m.restartRenderLoop();
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(m.renderStats().clock).toBe('timer');
+      await m.prepareWebXr({ onPlace: vi.fn(), onEnd: vi.fn() });
+      expect(await m.startWebXr(vi.fn(), vi.fn())).toBeDefined();
+      expect(m.renderStats().clock).toBe('raf');
+    } finally {
+      m.dispose();
+      vi.useRealTimers();
+    }
+  });
+});
