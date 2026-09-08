@@ -973,8 +973,26 @@ export class SceneManager {
       this.frameClock = 'raf';
       this.restartRenderLoop();
     }
+    // Clear the canvas to nothing *before* the session starts, not after.
+    //
+    // Once a session runs, Babylon draws into its framebuffer and never into
+    // this canvas again — so whatever the canvas last held, it keeps. Entering
+    // straight from the studio view that is the opaque slate background, and
+    // wherever the page is composited over the camera the operator gets a black
+    // sheet with a working HUD on it. Transparent first, and one frame drawn
+    // with it, means the worst the canvas can contribute is nothing at all.
+    //
+    // Only the clear colour, though: `arMode` stays false until the session is
+    // actually granted. Setting it here made the camera fallback's own
+    // `setArMode(true)` a no-op after a refused session, so the AR camera never
+    // became active and placement stopped working entirely — five checks, and a
+    // fair warning about fixing one screen by breaking another.
+    this.setTransparent(true);
+    this.renderFrame();
     const controller = await prepared.enter().finally(() => { this.xrEntering = false; });
     if (!controller) {
+      // Back to whatever the mode says, so a refused session leaves no trace.
+      this.setTransparent(this.arMode);
       prepared.dispose();
       // Build the next one now, in the background, so a retry costs only the
       // call that actually needs the tap.

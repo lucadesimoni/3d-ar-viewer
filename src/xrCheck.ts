@@ -63,8 +63,21 @@ void (async () => {
     try { f.push(`immersive-ar=${await navigator.xr.isSessionSupported('immersive-ar')}`); }
     catch (e) { f.push(`immersive-ar threw ${(e as Error).name}`); }
   }
-  f.push(navigator.userAgent.slice(0, 60));
-  el('facts').textContent = f.join(' · ');
+  // The whole user-agent, not a prefix of it.
+  //
+  // A run reported as "on the phone" carried `Mozilla/5.0 (X11; Linux x86_64)`
+  // — a desktop Linux string. Which browser a result came from decides what it
+  // means, and a control that passes in one browser says nothing about an app
+  // that fails in another, so this page has to name the browser it ran in
+  // rather than leave it to be remembered.
+  el('facts').innerHTML = '';
+  el('facts').append(f.join(' · '));
+  const ua = document.createElement('div');
+  ua.append('browser: ');
+  const b = document.createElement('b');
+  b.textContent = navigator.userAgent;
+  ua.append(b);
+  el('facts').append(ua);
 })();
 
 // --- 1. Raw WebXR: no Babylon, no app. --------------------------------------
