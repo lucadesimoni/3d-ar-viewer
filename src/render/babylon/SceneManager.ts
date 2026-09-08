@@ -56,6 +56,23 @@ const TIMER_FRAME_MS = 33;                              // ~30 fps
 /** Nothing useful can be placed nearer than this: it is inside arm's reach. */
 const MIN_PLACEMENT_M = 0.4;
 
+/**
+ * The distance at which the aiming marker is drawn at its nominal size.
+ *
+ * A ring of fixed size in the world is a ring that fills the screen when you
+ * aim near your own feet — and aiming near your feet is what holding a phone at
+ * a natural angle does. Measured at a 30° tilt: 0.68 m away and 91% of the
+ * screen wide, a hoop around the operator rather than a target on the floor.
+ *
+ * A target is read as a target at a constant *apparent* size, so the marker is
+ * scaled by its distance. This is the distance where that scale is 1, chosen
+ * because a marker at arm's reach and one across the bench then both come out
+ * at roughly a tenth of the screen: present, precise, and never in the way.
+ */
+const RETICLE_REF_M = 2.0;
+/** Beyond this the marker would be a speck, or a hoop. */
+const RETICLE_SCALE_RANGE: [number, number] = [0.25, 2];
+
 /** How long after arming placement the first tap is ignored, ms. */
 const PLACEMENT_ARM_DELAY_MS = 350;
 /**
@@ -639,6 +656,11 @@ export class SceneManager {
     const cam = this.scene.activeCamera;
     if (cam) {
       const toCam = cam.position.subtract(r.position);
+      // Constant apparent size: near the feet or across the bench, the marker
+      // reads the same. See RETICLE_REF_M.
+      const [lo, hi] = RETICLE_SCALE_RANGE;
+      const scale = Math.min(hi, Math.max(lo, toCam.length() / RETICLE_REF_M));
+      r.scaling.setAll(scale);
       toCam.y = 0;
       if (toCam.lengthSquared() > 1e-6) {
         r.rotationQuaternion = Quaternion.RotationAxis(
