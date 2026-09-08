@@ -11,6 +11,9 @@ export default defineConfig({
   build: {
     target: 'es2022',
     rollupOptions: {
+      // The WebXR control page is a second entry, so Babylon comes from this
+      // origin rather than a CDN — the network this is tested on blocks CDNs.
+      input: { index: 'index.html', 'xr-check': 'xr-check.html' },
       output: {
         // three is by far the biggest dependency; splitting it lets the shell
         // and the HUD paint before the renderer is parsed on a cold cellular load.

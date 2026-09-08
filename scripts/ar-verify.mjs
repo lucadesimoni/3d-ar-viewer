@@ -1431,6 +1431,35 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 20. AR must not reach out to the open internet to start. --------------
+// Babylon looks every XR input source up in a controller-profile repository on
+// immersive-web.github.io, and a phone's touchscreen is an input source like
+// any other — so preparing a session on a plain Android phone fetched from
+// GitHub. The network this app is used on blocks CDNs outright (the control
+// page's CDN-hosted Babylon never loaded there), and a shop-floor tablet is
+// offline by design. There are no motion controllers here to describe.
+{
+  const page = await context.newPage();
+  const offsite = [];
+  page.on('request', (r) => {
+    const host = new globalThis.URL(r.url()).hostname;
+    if (host !== 'localhost' && host !== '127.0.0.1') offsite.push(host);
+  });
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  // Preparing the helper is what registers the input handling, and it happens
+  // before any tap.
+  await page.waitForTimeout(2500);
+  const controllerRepo = offsite.filter((h) => h.includes('immersive-web'));
+  check('preparing AR fetches no controller profiles from GitHub',
+    controllerRepo.length === 0, controllerRepo.join(', ') || 'none');
+  // The model CDNs are a deployment's choice and are allowed to be there; a
+  // controller repository is not a choice anyone made.
+  check('and the only other hosts are the ones a deployment configured',
+    offsite.every((h) => h.includes('opencv') || h.includes('jsdelivr') || h.includes('cdn')),
+    [...new Set(offsite)].join(', ') || 'none');
+  await page.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall checks passed');
 process.exit(failures.length ? 1 : 0);

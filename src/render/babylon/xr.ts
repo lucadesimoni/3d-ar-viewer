@@ -200,6 +200,17 @@ export async function prepareImmersiveAr(
     disableTeleportation: true,
     disablePointerSelection: true,
     disableNearInteraction: true,
+    // No fetching controller descriptions from the open internet.
+    //
+    // Babylon looks every input source up in a repository hosted on
+    // immersive-web.github.io — and a phone's touchscreen is an input source
+    // like any other, so an AR session on a plain Android phone reaches out to
+    // GitHub. On a shop floor, and on the network this app is tested from,
+    // which blocks CDNs outright, that request cannot succeed. There are no
+    // motion controllers here to describe: Babylon's bundled defaults are the
+    // whole truth. (The static `UseOnlineRepository` looks like the switch and
+    // is not — `WebXRInput`'s constructor overwrites it from this option.)
+    inputOptions: { disableOnlineControllerRepository: true, doNotLoadControllerMeshes: true },
   }).catch((err) => noteXrError('creating the session', err));
   if (!xr) {
     lastXrError ??= 'creating the session — Babylon returned nothing';
