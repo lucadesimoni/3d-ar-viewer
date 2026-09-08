@@ -123,6 +123,28 @@ export interface XrPrepared {
   dispose(): void;
 }
 
+/** The class the overlay root carries for as long as a session is running. */
+export const XR_OVERLAY_CLASS = 'xr-session';
+
+/**
+ * Keep the page's own surfaces out of the DOM overlay.
+ *
+ * A DOM overlay is not a HUD layer the browser draws for us — it is the page,
+ * composited over the camera, and everything in the overlay root is painted.
+ * The render canvas is in there. During a session Babylon draws into the
+ * session's framebuffer, not that canvas, so the canvas keeps whatever it last
+ * held — the opaque studio background — and paints it, full screen, over the
+ * real world. So does the passthrough video, if the camera path was running.
+ *
+ * The result is a black screen with a working HUD on top of it: identical, from
+ * the operator's side, to a session that never started. Only the HUD belongs in
+ * the overlay; the camera image and the scene come from the compositor.
+ */
+export function markXrOverlay(root: HTMLElement): () => void {
+  root.classList.add(XR_OVERLAY_CLASS);
+  return () => root.classList.remove(XR_OVERLAY_CLASS);
+}
+
 /** Real-world placement must not depend on picking a virtual mesh. */
 export function bindXrPlacement(
   session: Pick<XRSession, 'addEventListener' | 'removeEventListener'>,
@@ -241,14 +263,18 @@ export async function prepareImmersiveAr(
   // to leave everything exactly as it found it.
   let everEntered = false;
   let stopInput: (() => void) | undefined;
+  let unmarkOverlay: (() => void) | undefined;
   const clearPlacement = (): void => {
     stopInput?.();
     stopInput = undefined;
+    unmarkOverlay?.();
+    unmarkOverlay = undefined;
     reticle = undefined;
     hooks.onReticle?.(undefined);
   };
   const sessionObserver = xr.baseExperience.sessionManager.onXRSessionInit.add((session) => {
     clearPlacement();
+    unmarkOverlay = markXrOverlay(overlayRoot);
     stopInput = bindXrPlacement(session, overlayRoot, scene.getEngine().getRenderingCanvas(), () => {
       if (xr.baseExperience.state === WebXRState.IN_XR && reticle) hooks.onSelectAnchor?.(reticle);
     });

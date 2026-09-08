@@ -3,7 +3,7 @@ import { NullEngine } from '@babylonjs/core/Engines/nullEngine';
 import { Scene } from '@babylonjs/core/scene';
 import { Observable } from '@babylonjs/core/Misc/observable';
 import { WebXRState } from '@babylonjs/core/XR/webXRTypes';
-import { bindXrPlacement, prepareImmersiveAr } from './xr';
+import { XR_OVERLAY_CLASS, bindXrPlacement, prepareImmersiveAr } from './xr';
 
 const createExperience = vi.hoisted(() => vi.fn());
 vi.mock('@babylonjs/core/XR/webXRDefaultExperience', () => ({
@@ -166,5 +166,41 @@ describe('XR DOM overlay input', () => {
     unbind();
     expect(selectFrom(label)).toBe(false);
     expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('what the DOM overlay is allowed to paint', () => {
+  it('takes the page\'s own surfaces out of the overlay for the life of the session', async () => {
+    const f = fixture();
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, {});
+    expect(f.overlay.classList.contains(XR_OVERLAY_CLASS)).toBe(false);
+    await prepared!.enter();
+    // The overlay root is the page, composited over the camera. The render
+    // canvas is in it, holding its last non-XR frame — the opaque studio
+    // background — and painting it over the real world.
+    expect(f.overlay.classList.contains(XR_OVERLAY_CLASS)).toBe(true);
+    f.emit(WebXRState.NOT_IN_XR);
+    expect(f.overlay.classList.contains(XR_OVERLAY_CLASS)).toBe(false);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+
+  it('leaves the page alone when the session was refused', async () => {
+    const f = fixture();
+    f.baseExperience.enterXRAsync.mockRejectedValue(new DOMException('no', 'NotSupportedError'));
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, {});
+    await prepared!.enter();
+    expect(f.overlay.classList.contains(XR_OVERLAY_CLASS)).toBe(false);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+
+  it('restores the page when the helper is disposed mid-session', async () => {
+    const f = fixture();
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, {});
+    await prepared!.enter();
+    prepared!.dispose();
+    expect(f.overlay.classList.contains(XR_OVERLAY_CLASS)).toBe(false);
+    f.engine.dispose();
   });
 });

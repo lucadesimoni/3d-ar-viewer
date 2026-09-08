@@ -1383,6 +1383,54 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 19. In a session, the page must not paint over the real world. --------
+// A DOM overlay is not a HUD layer the browser draws for us: it is the page,
+// composited over the camera image, and everything inside the overlay root gets
+// painted. The render canvas is inside it — and during a session Babylon draws
+// into the session's own framebuffer, never that canvas, so the canvas keeps
+// whatever it last held (the opaque studio slate) and covers the room with it.
+// A phone reported "WebXR works but no image": a black screen with a working
+// HUD on top, indistinguishable from a session that never started.
+{
+  const page = await context.newPage();
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  const paints = () => page.evaluate(() => {
+    const seen = (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const st = getComputedStyle(el);
+      return st.visibility !== 'hidden' && st.display !== 'none';
+    };
+    return { canvas: seen('canvas.viewer-canvas'), video: seen('video.passthrough') };
+  });
+
+  // In camera passthrough both surfaces paint: the video is the world and the
+  // canvas is the overlay on it. Measuring from there is what makes the next
+  // two assertions mean anything — outside AR the video is display:none, so it
+  // would read "not painting" whatever the session does.
+  await page.evaluate(() => document.querySelector('.app').classList.add('ar'));
+  const before = await paints();
+  check('in camera passthrough the page paints both its own surfaces',
+    before.canvas === true && before.video === true,
+    `canvas=${before.canvas}, video=${before.video}`);
+
+  // The class the XR session helper puts on the overlay root while a session
+  // runs. The unit tests cover the wiring; this covers whether it does anything.
+  await page.evaluate(() => document.querySelector('.app').classList.add('xr-session'));
+  const during = await paints();
+  check('in a session the render canvas stops painting over the camera',
+    during.canvas === false, `canvas visible=${during.canvas}`);
+  check('and so does the camera passthrough the session replaced',
+    during.video === false, `video visible=${during.video}`);
+
+  await page.evaluate(() => document.querySelector('.app').classList.remove('xr-session'));
+  const after = await paints();
+  check('and the page gets both back when the session ends',
+    after.canvas === true && after.video === true,
+    `canvas=${after.canvas}, video=${after.video}`);
+  await page.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall checks passed');
 process.exit(failures.length ? 1 : 0);
