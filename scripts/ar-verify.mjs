@@ -1346,6 +1346,43 @@ const context = await browser.newContext({
   await android.close();
 }
 
+// --- 18. A refused retry must not throw the operator out. ------------------
+// Pressing "Try real AR tracking" from inside the camera passthrough and having
+// the request denied used to end the whole AR mode: Babylon reports the state
+// falling back to NOT_IN_XR when an *attempt* fails, and that was forwarded as
+// "the session ended". A failed entry has to leave everything as it found it.
+{
+  const page = await context.newPage();
+  await open(page, URL);
+  await page.click('.ar-enter');
+  await page.evaluate((held) => {
+    setInterval(() => window.dispatchEvent(
+      new DeviceOrientationEvent('deviceorientation', held)), 40);
+  }, HELD_LOOKING_DOWN);
+  await page.waitForTimeout(2500);
+  const before = await state(page);
+  check('the camera passthrough is running before the retry',
+    before.placement !== 'idle', `placement=${before.placement}`);
+
+  // Ask again, from a real tap, and let it be refused.
+  await page.locator('.ar-btn', { hasText: 'Settings' }).click();
+  await page.waitForTimeout(600);
+  const retry = page.locator('button', { hasText: /Try real AR tracking|Getting ready/ });
+  if (await retry.count()) {
+    await retry.first().click({ force: true }).catch(() => undefined);
+    await page.waitForTimeout(2500);
+  }
+  const after = await state(page);
+  check('and a refused retry leaves it running', after.placement !== 'idle',
+    `placement=${after.placement}`);
+  const live = await page.evaluate(() => {
+    const v = document.querySelector('video.passthrough');
+    return Boolean(v && v.srcObject && v.videoWidth > 0);
+  });
+  check('with the camera still live, not handed back', live);
+  await page.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall checks passed');
 process.exit(failures.length ? 1 : 0);

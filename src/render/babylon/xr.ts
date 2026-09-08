@@ -160,8 +160,20 @@ export async function prepareImmersiveAr(
     // Not supported (or the element is unsuitable) — the session still runs.
   }
 
+  // Only a session that actually ran can end.
+  //
+  // Babylon reports the state falling back to NOT_IN_XR when an *attempt*
+  // fails, and again when the helper is disposed. Forwarding those as "the
+  // session ended" made a refused attempt tear the whole AR mode down: press
+  // "Try real AR tracking", the request is denied, and the operator is thrown
+  // out of the camera passthrough they were already using. A failed entry has
+  // to leave everything exactly as it found it.
+  let everEntered = false;
   xr.baseExperience.onStateChangedObservable.add((state) => {
-    hooks.onStateChange?.(state === WebXRState.IN_XR);
+    const inXr = state === WebXRState.IN_XR;
+    if (inXr) everEntered = true;
+    else if (!everEntered) return;
+    hooks.onStateChange?.(inXr);
   });
 
   // A tap in-session drops the anchor at the current reticle.
