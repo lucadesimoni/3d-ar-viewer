@@ -62,6 +62,53 @@ const noteXrError = (stage: string, err: unknown): undefined => {
   return undefined;
 };
 
+
+/** How long to wait for the session's first frame before giving up. */
+const FIRST_FRAME_TIMEOUT_MS = 8000;
+
+/** The parts of Babylon's experience this needs, so a fake can stand in. */
+export interface StateSource {
+  state: number;
+  onStateChangedObservable: {
+    add(cb: (state: number) => void): unknown;
+    remove(observer: unknown): unknown;
+  };
+}
+
+/**
+ * Wait until the session is really running.
+ *
+ * `enterXRAsync` resolves *before* the session is in XR. Babylon says so in its
+ * own source: "Wait until the first frame arrives before setting state to in
+ * xr" — the state is set from a one-shot frame observer, after the promise has
+ * already returned. Sampling the state immediately therefore always reads
+ * ENTERING_XR, and treating that as failure tore down sessions that had in fact
+ * started. That is what "ended in state 0" was: not a refusal, a session killed
+ * a fraction of a second after it was granted.
+ */
+export function awaitInSession(
+  source: StateSource, inXr: number, notInXr: number, timeoutMs = FIRST_FRAME_TIMEOUT_MS,
+): Promise<boolean> {
+  if (source.state === inXr) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    let observer: unknown;
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = (ok: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      source.onStateChangedObservable.remove(observer);
+      resolve(ok);
+    };
+    timer = setTimeout(() => finish(false), timeoutMs);
+    observer = source.onStateChangedObservable.add((state) => {
+      if (state === inXr) finish(true);
+      else if (state === notInXr) finish(false);
+    });
+  });
+}
+
 /**
  * Start an immersive-AR session for `scene`.
  *
@@ -208,9 +255,19 @@ export async function prepareImmersiveAr(
       scene.onPointerDown = undefined;
       return undefined;
     }
-    if (xr.baseExperience.state !== WebXRState.IN_XR) {
-      lastXrError = `entering the session (${space}) — ended in state ${xr.baseExperience.state}`;
-      if (spaceIndex < SPACES.length - 1) spaceIndex++;
+    // The promise above resolves before the session is in XR — see
+    // `awaitInSession`. Give it until its first frame.
+    const running = await awaitInSession(
+      xr.baseExperience as unknown as StateSource, WebXRState.IN_XR, WebXRState.NOT_IN_XR,
+    );
+    if (!running) {
+      // No advance of the reference-space ladder here. A session that was
+      // granted and then produced no frame says nothing about the space it was
+      // measured in — `setReferenceSpaceTypeAsync` throws for one it cannot
+      // provide, and that lands in the catch above. Ruling out `local-floor`
+      // on this evidence is how the ladder walked itself down to `viewer` for
+      // a fault that had nothing to do with either.
+      lastXrError = `entering the session (${space}) — no first frame, state ${xr.baseExperience.state}`;
       await xr.baseExperience.exitXRAsync().catch(() => undefined);
       scene.onPointerDown = undefined;
       return undefined;
