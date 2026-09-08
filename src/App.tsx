@@ -14,6 +14,7 @@ import { AppClipLink } from './components/AppClipLink';
 import { RecognitionOverlay } from './components/RecognitionOverlay';
 import { PlacementHint } from './components/PlacementHint';
 import { StepAnnotations } from './components/StepAnnotations';
+import { Annotations } from './components/Annotations';
 import { ArHud } from './components/ArHud';
 import { UiConfigProvider } from './ui/UiConfigContext';
 import { resolveUiConfig, type UiConfig } from './ui/config';
@@ -128,6 +129,8 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
           <main className="viewport">
             <Viewer transparent={arActive} />
             {ui.showSteps && <StepAnnotations />}
+            {/* Operator notes ride the parts, in the studio and in AR alike. */}
+            <Annotations />
             {ui.showRecognition && <RecognitionOverlay />}
             {arActive && <PlacementHint />}
             <div className="viewport-overlay">

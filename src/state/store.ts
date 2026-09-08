@@ -8,6 +8,23 @@ import { stagedPose, type Timeline } from '../engine/animation';
 import type { RecognitionState } from '../vision/verdict';
 import type { AssemblyDef, PlacementState, Pose } from '../engine/types';
 import { gearbox } from '../data';
+import {
+  loadAnnotations, makeAnnotation, saveAnnotations,
+  type Annotation, type AnnotationsByAssembly,
+} from './annotations';
+
+/**
+ * Notes are read once at start and written back per change.
+ *
+ * Kept beside the store rather than in it: what is on screen is one assembly's
+ * notes, and the rest are only there so switching jobs and coming back does not
+ * lose them.
+ */
+const storedAnnotations: AnnotationsByAssembly = loadAnnotations();
+function persist(assemblyId: string, annotations: Annotation[]): void {
+  storedAnnotations[assemblyId] = annotations;
+  saveAnnotations(storedAnnotations);
+}
 
 export type ViewMode = 'guide' | 'explore' | 'explode' | 'animate';
 
@@ -120,6 +137,16 @@ export interface AppState {
   activeStepId: string | undefined;
   completedStepIds: Set<string>;
   selectedPartId: string | undefined;
+  /**
+   * Annotate mode: a tap adds a note to the part under it.
+   *
+   * Deliberately *not* a `ViewMode`. Notes are written while reading the guide,
+   * while the view is exploded, while the animation is paused on the step in
+   * question — making it a mode would have turned one of those off to do it.
+   */
+  annotating: boolean;
+  /** Notes for the assembly in hand, newest last. */
+  annotations: Annotation[];
 
   // Derived, recomputed on every mutation so components can read them cheaply.
   diagnostics: Diagnostic[];
@@ -141,6 +168,9 @@ export interface AppState {
   setRecognition(recognition: RecognitionState | undefined): void;
   setSnapEnabled(on: boolean): void;
   selectPart(id: string | undefined): void;
+  setAnnotating(on: boolean): void;
+  addAnnotation(partId: string, local: [number, number, number], text: string): void;
+  removeAnnotation(id: string): void;
   setActiveStep(id: string | undefined): void;
 
   /** Move a part to a pose without changing its status (used while dragging). */
@@ -271,6 +301,8 @@ export const useStore = create<AppState>((set, get) => {
     snapEnabled: true,
     lastSnap: undefined,
     selectedPartId: undefined,
+    annotating: false,
+    annotations: storedAnnotations[assembly.id] ?? [],
     ...derive(base),
 
     loadAssembly(a) {
@@ -279,6 +311,7 @@ export const useStore = create<AppState>((set, get) => {
         placements: initialPlacements(a),
         completedStepIds: new Set<string>(),
         activeStepId: a.steps[0]?.id,
+        annotations: storedAnnotations[a.id] ?? [],
       };
       set({
         ...next,
@@ -352,6 +385,22 @@ export const useStore = create<AppState>((set, get) => {
     selectPart(id) {
       set({ selectedPartId: id });
     },
+    setAnnotating(on) {
+      // Placement and annotation both own the tap; only one of them can.
+      set({ annotating: on, selectedPartId: on ? get().selectedPartId : get().selectedPartId });
+    },
+    addAnnotation(partId, local, text) {
+      if (!text.trim()) return;
+      const annotations = [...get().annotations, makeAnnotation(partId, local, text)];
+      set({ annotations });
+      persist(get().assembly.id, annotations);
+    },
+    removeAnnotation(id) {
+      const annotations = get().annotations.filter((a) => a.id !== id);
+      set({ annotations });
+      persist(get().assembly.id, annotations);
+    },
+
     setActiveStep(id) {
       set({ activeStepId: id });
     },
