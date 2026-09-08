@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>WebXR control test</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: #0b0f14; color: #e6edf3; }
+  main { padding: 20px 18px 40px; max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.15rem; margin: 0 0 4px; }
+  p.sub { color: #93a4b8; margin: 0 0 20px; }
+  button { display: block; width: 100%; padding: 16px; margin: 10px 0; font-size: 1rem;
+           border-radius: 12px; border: 1px solid #2b3b50; background: #16202c; color: #e6edf3; }
+  button:disabled { opacity: .45; }
+  #verdict { margin-top: 18px; padding: 14px; border-radius: 10px; font-weight: 600;
+             border: 1px solid #2b3b50; background: #0f1720; }
+  #log { margin-top: 10px; padding: 12px; border-radius: 10px; background: #0f1720;
+         border: 1px solid #1f2b3a; white-space: pre-wrap; word-break: break-word;
+         font: 12px/1.5 ui-monospace, monospace; min-height: 6rem; }
+  /* The canvas is never shown. During a session Babylon draws into the
+     session's own framebuffer and the compositor puts that on the display —
+     the element in the page only ever holds a stale frame, and showing it
+     covers both the camera and the rest of this page. It keeps its box so the
+     engine has a sane size to work from. (Raw WebXR above proves the point: it
+     ran with this canvas hidden the whole time.) */
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%;
+           visibility: hidden; pointer-events: none; }
+  .facts { color: #93a4b8; font-size: .85rem; }
+  #overlay { display: none; position: fixed; inset: auto 0 0 0; padding: 14px;
+             background: rgba(17, 24, 33, .82); }
+  #overlay p { margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>WebXR control test</h1>
+  <p class="sub">Three ways into AR, each a step closer to what the app does. The first one
+     that fails is where the fault is.</p>
+
+  <button id="raw">1 · Raw WebXR — no Babylon, no app</button>
+  <button id="bjs">2 · Babylon's own AR path, default settings</button>
+  <button id="app">3 · Babylon with everything the app asks for</button>
+
+  <div id="verdict">press one</div>
+  <div id="log">…</div>
+  <p class="facts" id="facts"></p>
+</main>
+<canvas id="c"></canvas>
+<div id="overlay"><p>HUD in the DOM overlay — the camera must still be visible behind this.</p></div>
+
+<script type="module" src="/src/xrCheck.ts"></script>
+
+</body>
+</html>
