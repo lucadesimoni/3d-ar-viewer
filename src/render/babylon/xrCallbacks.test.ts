@@ -161,3 +161,59 @@ describe('the watchdog and a live session', () => {
     }
   });
 });
+
+describe('an anchored assembly when the operator walks around it', () => {
+  const manager = () => new SceneManager(document.createElement('canvas'), gearbox, {}, {
+    engine: new NullEngine(), kind: 'webgl',
+    perf: { tier: 'low', antialias: false, adaptive: false, maxPixelRatio: 1, targetFps: 30, recognitionIntervalMs: 1000 },
+  });
+  const yawOf = (m: SceneManager) => {
+    const root = m.scene.getTransformNodeByName('assembly')!;
+    const q = root.rotationQuaternion!;
+    return (Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.z * q.z)) * 180) / Math.PI;
+  };
+
+  it('keeps the heading it was placed with, however the operator moves', async () => {
+    prepare.mockImplementation(async () => ({
+      enter: async () => ({ end: async () => {} }), dispose: vi.fn(),
+    }));
+    const m = manager();
+    try {
+      // The app's controller is what puts a placed pose into the scene; stand
+      // in for it, so this measures the scene and not a spy.
+      const place = (pose: Parameters<SceneManager['setAnchor']>[0]) => m.setAnchor(pose);
+      await m.prepareWebXr({ onPlace: place, onEnd: vi.fn() });
+      expect(await m.startWebXr(place, vi.fn())).toBeDefined();
+      const hooks = prepare.mock.calls.at(-1)![2] as XrHooks;
+      hooks.onStateChange!(true);
+      vi.spyOn(performance, 'now').mockReturnValue(1000);
+      m.setPlacementActive(true);
+      vi.mocked(performance.now).mockReturnValue(2000);
+
+      // Placed on a surface two metres ahead. It turns to face the operator —
+      // right once, at the tap.
+      const surface = { position: [0, 0, 2] as [number, number, number], rotation: [0, 0, 0, 1] as [number, number, number, number] };
+      hooks.onSelectAnchor!(surface);
+      const placed = yawOf(m);
+
+      // The operator walks round to the far side. The platform re-reports the
+      // same spot — nothing about the world changed.
+      m.scene.activeCamera!.position.set(0, 1.6, 4);
+      hooks.onAnchorPose!(surface);
+      hooks.onAnchorPose!(surface);
+      expect(yawOf(m)).toBeCloseTo(placed, 4);
+
+      // A real correction, though, has to be followed: the same spot, found to
+      // be 5 cm further on and turned by ten degrees.
+      const turned = Math.sin((10 * Math.PI) / 180 / 2);
+      hooks.onAnchorPose!({ position: [0.05, 0, 2], rotation: [0, turned, 0, Math.cos((10 * Math.PI) / 180 / 2)] });
+      // Compared as an angle: 188° and −172° are the same heading.
+      const turnedBy = ((yawOf(m) - placed + 540) % 360) - 180;
+      expect(turnedBy).toBeCloseTo(10, 2);
+      const root = m.scene.getTransformNodeByName('assembly')!;
+      expect(root.position.x).not.toBeCloseTo(0, 3);
+    } finally {
+      m.dispose();
+    }
+  });
+});
