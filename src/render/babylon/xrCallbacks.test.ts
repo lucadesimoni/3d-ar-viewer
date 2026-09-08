@@ -50,3 +50,27 @@ describe('prepared XR callback ownership', () => {
     }
   });
 });
+
+describe('why real AR is not running', () => {
+  const manager = () => new SceneManager(document.createElement('canvas'), gearbox, {}, {
+    engine: new NullEngine(), kind: 'webgl',
+    perf: { tier: 'low', antialias: false, adaptive: false, maxPixelRatio: 1, targetFps: 30, recognitionIntervalMs: 1000 },
+  });
+
+  it('says the tap outran the loading rather than blaming the device', async () => {
+    prepare.mockImplementation(async () => ({ enter: async () => undefined, dispose: vi.fn() }));
+    const m = manager();
+    try {
+      // AR entered before the helper existed: nothing was refused because
+      // nothing was asked, and the operator only has to press again.
+      expect(await m.startWebXr(vi.fn(), vi.fn())).toBeUndefined();
+      expect(await m.xrFailure()).toMatch(/before WebXR had finished loading/);
+      await vi.waitFor(() => expect(m.xrReady()).toBe(true));
+      // A real attempt was made this time; the reason must come from it.
+      expect(await m.startWebXr(vi.fn(), vi.fn())).toBeUndefined();
+      expect(await m.xrFailure()).toBeUndefined();
+    } finally {
+      m.dispose();
+    }
+  });
+});

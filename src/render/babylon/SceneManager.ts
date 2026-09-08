@@ -265,6 +265,8 @@ export class SceneManager {
   private xrLoadError: string | undefined;
   /** True from the session's first frame until it ends. */
   private inXrSession = false;
+  /** A tap arrived before the session helper was built, so nothing was asked. */
+  private xrMissedTap = false;
   private xrPrepared: (import('./xr').XrPrepared & {
     callbacks: { onPlace: (pose: Pose) => void; onEnd?: () => void };
   }) | undefined;
@@ -888,9 +890,11 @@ export class SceneManager {
     // wasted tap beats a button that can never work.
     const prepared = this.xrPrepared;
     if (!prepared) {
+      this.xrMissedTap = true;
       void this.prepareWebXr({ onPlace, onEnd });
       return undefined;
     }
+    this.xrMissedTap = false;
     // Preparation may belong to a failed attempt. The current entry owns the
     // callbacks, not the gesture that happened to build this helper.
     prepared.callbacks.onPlace = onPlace;
@@ -964,10 +968,20 @@ export class SceneManager {
     if (this.xrLoadError) return `loading WebXR — ${this.xrLoadError}`;
     try {
       const { lastXrError } = await import('./xr');
-      return lastXrError;
+      if (lastXrError) return lastXrError;
     } catch {
       return undefined;
     }
+    // Nothing was refused: nothing was asked. The helper is built ahead of the
+    // tap because `requestSession` needs that tap's activation and building it
+    // first spends the activation — so a tap that lands before the helper is
+    // ready takes the camera path silently. "The session was not entered" is
+    // true and useless; a device that would do real AR reads the same as one
+    // that refuses it. Say which, because the answers differ: press again.
+    if (this.xrMissedTap) {
+      return 'AR started before WebXR had finished loading, so no session was requested yet.';
+    }
+    return undefined;
   }
 
   /** What a running session actually got: reference space and granted features. */
