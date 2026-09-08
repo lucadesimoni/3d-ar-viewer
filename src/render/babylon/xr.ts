@@ -146,16 +146,36 @@ export function markXrOverlay(root: HTMLElement): () => void {
 }
 
 /** Real-world placement must not depend on picking a virtual mesh. */
+/**
+ * Which parts of the overlay swallow a tap instead of placing the assembly.
+ *
+ * Anything the operator can operate: the HUD's buttons, the sheets, a slider.
+ * Everything else in the overlay is a window onto the real world, and a tap
+ * there means "put it here".
+ */
+const INTERACTIVE = 'button, a[href], input, select, textarea, label, [role="button"], .ar-sheet, .panel';
+
 export function bindXrPlacement(
   session: Pick<XRSession, 'addEventListener' | 'removeEventListener'>,
   overlayRoot: HTMLElement,
-  canvas: HTMLCanvasElement | null,
   onSelect: () => void,
 ): () => void {
   // DOM controls still receive their normal clicks, but must not also place
   // the assembly through the touchscreen's XR input source.
+  //
+  // This used to ask whether the tap landed on the render canvas, and let only
+  // those through. That was right while the canvas was the top surface of the
+  // overlay — and it stopped being right the moment the canvas was hidden so it
+  // could not paint over the camera. A hidden element is never an event target,
+  // so every tap looked like a tap on the chrome and every one of them was
+  // cancelled: aiming at a surface and tapping did nothing at all in a session,
+  // while the camera path, which does not go through `select`, kept working.
+  //
+  // So ask the question that was always meant: is this a control? Only a
+  // control swallows the tap.
   const beforeSelect = (event: Event): void => {
-    if (event.target !== canvas) event.preventDefault();
+    const target = event.target;
+    if (target instanceof Element && target.closest(INTERACTIVE)) event.preventDefault();
   };
   session.addEventListener('select', onSelect);
   overlayRoot.addEventListener('beforexrselect', beforeSelect);
@@ -286,7 +306,7 @@ export async function prepareImmersiveAr(
   const sessionObserver = xr.baseExperience.sessionManager.onXRSessionInit.add((session) => {
     clearPlacement();
     unmarkOverlay = markXrOverlay(overlayRoot);
-    stopInput = bindXrPlacement(session, overlayRoot, scene.getEngine().getRenderingCanvas(), () => {
+    stopInput = bindXrPlacement(session, overlayRoot, () => {
       if (xr.baseExperience.state === WebXRState.IN_XR && reticle) hooks.onSelectAnchor?.(reticle);
     });
   });
