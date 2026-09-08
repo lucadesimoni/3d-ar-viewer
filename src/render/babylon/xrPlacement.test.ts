@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NullEngine } from '@babylonjs/core/Engines/nullEngine';
 import { Scene } from '@babylonjs/core/scene';
 import { Observable } from '@babylonjs/core/Misc/observable';
+import { Matrix } from '@babylonjs/core/Maths/math.vector';
 import { WebXRState } from '@babylonjs/core/XR/webXRTypes';
 import { XR_OVERLAY_CLASS, bindXrPlacement, prepareImmersiveAr } from './xr';
 
@@ -24,6 +25,11 @@ function fixture() {
       rotationQuaternion: { x: number; y: number; z: number; w: number };
     }>>(),
   };
+  const anchor = { id: 7, transformationMatrix: Matrix.Translation(1, 0, 2) };
+  const anchors = {
+    onAnchorUpdatedObservable: new Observable<typeof anchor>(),
+    addAnchorPointUsingHitTestResultAsync: vi.fn(async () => anchor),
+  };
   const sessionManager = {
     session,
     onXRSessionInit: new Observable<EventTarget>(),
@@ -32,7 +38,9 @@ function fixture() {
     state: WebXRState.NOT_IN_XR,
     onStateChangedObservable: new Observable<WebXRState>(),
     sessionManager,
-    featuresManager: { enableFeature: vi.fn(() => hitTest) },
+    featuresManager: {
+      enableFeature: vi.fn((name: string) => (/anchor/i.test(name) ? anchors : hitTest)),
+    },
     enterXRAsync: vi.fn(async (
       _mode: XRSessionMode, _space: XRReferenceSpaceType, _target: unknown, _options: XRSessionInit,
     ) => {
@@ -53,7 +61,7 @@ function fixture() {
     position: { x: 1, y: 0, z: 2 },
     rotationQuaternion: { x: 0, y: 0, z: 0, w: 1 },
   }]);
-  return { engine, scene, overlay, session, baseExperience, hitTest, emit, hit };
+  return { engine, scene, overlay, session, baseExperience, hitTest, anchors, anchor, emit, hit };
 }
 
 describe('WebXR surface placement', () => {
@@ -212,6 +220,51 @@ describe('what the DOM overlay is allowed to paint', () => {
     await prepared!.enter();
     prepared!.dispose();
     expect(f.overlay.classList.contains(XR_OVERLAY_CLASS)).toBe(false);
+    f.engine.dispose();
+  });
+});
+
+describe('holding the spot while the device learns the room', () => {
+  it('asks the platform to hold the placed surface, and follows its corrections', async () => {
+    const f = fixture();
+    const onAnchorPose = vi.fn();
+    const onSelectAnchor = vi.fn();
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, { onAnchorPose, onSelectAnchor });
+    await prepared!.enter();
+    f.hit();
+    f.session.dispatchEvent(new Event('select'));
+    expect(onSelectAnchor).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(f.anchors.addAnchorPointUsingHitTestResultAsync).toHaveBeenCalledTimes(1));
+
+    // ARCore revises where that spot is; the assembly has to go with it rather
+    // than stay pinned to a reference space that moved underneath it.
+    f.anchor.transformationMatrix = Matrix.Translation(1.05, 0, 2.1);
+    f.anchors.onAnchorUpdatedObservable.notifyObservers(f.anchor);
+    expect(onAnchorPose).toHaveBeenCalledTimes(1);
+    expect(onAnchorPose.mock.calls[0][0].position[0]).toBeCloseTo(1.05, 3);
+    expect(onAnchorPose.mock.calls[0][0].position[2]).toBeCloseTo(2.1, 3);
+
+    // Another anchor's corrections are not ours to follow.
+    f.anchors.onAnchorUpdatedObservable.notifyObservers({ ...f.anchor, id: 99 });
+    expect(onAnchorPose).toHaveBeenCalledTimes(1);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+
+  it('still places when the device grants no anchors', async () => {
+    const f = fixture();
+    f.baseExperience.featuresManager.enableFeature = vi.fn((name: string) => {
+      if (/anchor/i.test(name)) throw new Error('not supported');
+      return f.hitTest;
+    });
+    const onSelectAnchor = vi.fn();
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, { onSelectAnchor });
+    await prepared!.enter();
+    f.hit();
+    f.session.dispatchEvent(new Event('select'));
+    expect(onSelectAnchor).toHaveBeenCalledTimes(1);
+    prepared!.dispose();
     f.engine.dispose();
   });
 });

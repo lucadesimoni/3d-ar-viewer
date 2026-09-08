@@ -1,7 +1,9 @@
 import '@babylonjs/core/XR/webXRDefaultExperience';
 import type { WebXRDefaultExperience } from '@babylonjs/core/XR/webXRDefaultExperience';
 import { WebXRState } from '@babylonjs/core/XR/webXRTypes';
+import { Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import type { Scene } from '@babylonjs/core/scene';
+import type { IWebXRHitResult } from '@babylonjs/core/XR/features/WebXRHitTest';
 import type { Pose } from '../../engine/types';
 
 /**
@@ -21,6 +23,15 @@ export interface XrHooks {
   onReticle?: (pose: Pose | undefined) => void;
   /** Operator selected (tapped) at this pose — the anchor drop. */
   onSelectAnchor?: (pose: Pose) => void;
+  /**
+   * The platform corrected where the placed spot really is.
+   *
+   * A pose in a reference space is a pose in a guess, and the guess is revised
+   * as the device learns the room — which moves everything pinned to it. An
+   * anchor is held by the platform instead, so this reports the same spot
+   * where it now actually is, rather than the assembly sliding off the bench.
+   */
+  onAnchorPose?: (pose: Pose) => void;
 }
 
 export interface XrController {
@@ -206,6 +217,7 @@ export async function prepareImmersiveAr(
 ): Promise<XrPrepared | undefined> {
   const { WebXRDefaultExperience } = await import('@babylonjs/core/XR/webXRDefaultExperience');
   const { WebXRHitTest } = await import('@babylonjs/core/XR/features/WebXRHitTest');
+  const { WebXRAnchorSystem } = await import('@babylonjs/core/XR/features/WebXRAnchorSystem');
   const { WebXRFeatureName } = await import('@babylonjs/core/XR/webXRFeaturesManager');
   await import('@babylonjs/core/XR/features/WebXRDOMOverlay');
 
@@ -238,6 +250,11 @@ export async function prepareImmersiveAr(
   }
 
   let reticle: Pose | undefined;
+  /** The hit-test result behind the reticle, which an anchor is created from. */
+  let lastHit: IWebXRHitResult | undefined;
+  let anchors: InstanceType<typeof WebXRAnchorSystem> | undefined;
+  /** The anchor the assembly is currently riding, if the device grants them. */
+  let placedAnchorId: number | undefined;
   try {
     // `required: false` — the fifth argument, and it defaults to *true*.
     //
@@ -261,13 +278,38 @@ export async function prepareImmersiveAr(
       const first = results[0];
       if (!first) {
         reticle = undefined;
+        lastHit = undefined;
         hooks.onReticle?.(undefined);
         return;
       }
       const p = first.position;
       const r = first.rotationQuaternion;
+      lastHit = first;
       reticle = { position: [p.x, p.y, p.z], rotation: [r.x, r.y, r.z, r.w] };
       hooks.onReticle?.(reticle);
+    });
+
+    // Anchors: the answer to an assembly that drifts off the bench.
+    //
+    // A pose in a reference space is a pose in a *guess* — ARCore refines its
+    // idea of the room continuously, and every refinement moves the whole space
+    // under anything pinned to it. That is the hopping and drifting seen even
+    // in Babylon's own AR sample, which does exactly this. An anchor is the
+    // other way round: the platform is told "this spot on this surface", and it
+    // carries the spot along when it corrects itself. Optional, because a
+    // device without it still places — it just places into a space that moves.
+    anchors = xr.baseExperience.featuresManager.enableFeature(
+      WebXRFeatureName.ANCHOR_SYSTEM, 'latest', {}, true, false,
+    ) as InstanceType<typeof WebXRAnchorSystem>;
+    anchors.onAnchorUpdatedObservable.add((anchor) => {
+      if (anchor.id !== placedAnchorId) return;
+      const position = new Vector3();
+      const rotation = new Quaternion();
+      if (!anchor.transformationMatrix.decompose(undefined, rotation, position)) return;
+      hooks.onAnchorPose?.({
+        position: [position.x, position.y, position.z],
+        rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
+      });
     });
   } catch {
     // Hit-test unsupported on this device; the app falls back to manual placement.
@@ -296,6 +338,8 @@ export async function prepareImmersiveAr(
   let stopInput: (() => void) | undefined;
   let unmarkOverlay: (() => void) | undefined;
   const clearPlacement = (): void => {
+    placedAnchorId = undefined;
+    lastHit = undefined;
     stopInput?.();
     stopInput = undefined;
     unmarkOverlay?.();
@@ -307,7 +351,15 @@ export async function prepareImmersiveAr(
     clearPlacement();
     unmarkOverlay = markXrOverlay(overlayRoot);
     stopInput = bindXrPlacement(session, overlayRoot, () => {
-      if (xr.baseExperience.state === WebXRState.IN_XR && reticle) hooks.onSelectAnchor?.(reticle);
+      if (xr.baseExperience.state !== WebXRState.IN_XR || !reticle) return;
+      hooks.onSelectAnchor?.(reticle);
+      // And ask the platform to hold the spot, so later corrections move the
+      // assembly with the room rather than the room out from under it.
+      const hit = lastHit;
+      if (!anchors || !hit) return;
+      void anchors.addAnchorPointUsingHitTestResultAsync(hit)
+        .then((anchor) => { placedAnchorId = anchor.id; })
+        .catch(() => { placedAnchorId = undefined; });
     });
   });
   xr.baseExperience.onStateChangedObservable.add((state) => {
