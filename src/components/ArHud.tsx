@@ -100,7 +100,14 @@ export function ArHud({ onExit, onReplace, onBringInFront, onRetryWebXr, capabil
             never changes — a control that renames itself is hard to look for. */}
         <button
           className={`ar-btn ${placing ? 'active' : ''}`}
-          onClick={() => { setSheet(null); onReplace(); }}
+          onClick={() => {
+            // Placement and annotation both act on the next tap; only one of
+            // them can own it, or the operator gets a note *and* a moved
+            // assembly from one touch.
+            useStore.getState().setAnnotating(false);
+            setSheet(null);
+            onReplace();
+          }}
           aria-pressed={placing}
         >
           <span className="ar-btn-icon">◎</span>Move

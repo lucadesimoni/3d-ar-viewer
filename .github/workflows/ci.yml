@@ -67,6 +67,9 @@ jobs:
       - run: npm run place:check
         env:
           PREVIEW_URL: http://localhost:8080/
+      - run: npm run notes:check
+        env:
+          PREVIEW_URL: http://localhost:8080/
       - run: npm run deploy:check
 
   # Nightly (and on demand): the same browser checks, pointed at the deployed
@@ -93,3 +96,4 @@ jobs:
           npm run steps:check
           npm run layout:check
           npm run place:check
+          npm run notes:check

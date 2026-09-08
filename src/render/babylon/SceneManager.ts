@@ -1649,6 +1649,11 @@ export class SceneManager {
     // for a long part (a shaft, a rail) sits at one end — a label pinned there
     // floats off the object.
     const world = this.visualCentre(visual);
+    return this.projectWorld(world);
+  }
+
+  /** A world point in view fractions, using whichever camera is active. */
+  private projectWorld(world: Vector3): { x: number; y: number; onScreen: boolean } {
     const w = this.engine.getRenderWidth();
     const h = this.engine.getRenderHeight();
     // The *active* camera's viewport: in AR that is the head camera, not the
@@ -1942,6 +1947,50 @@ export class SceneManager {
       this.scene.onPointerObservable.remove(observer);
       dragging = undefined;
     };
+  }
+
+  /**
+   * What the operator touched, ready to hang a note on.
+   *
+   * Client coordinates, not canvas ones: in a session the render canvas is
+   * hidden so the compositor's picture is not painted over, and a hidden
+   * element receives no pointer events at all — the tap arrives on the DOM
+   * overlay instead. Converting here keeps that knowledge in one place, and
+   * means the same call works in the studio, where the canvas is a panel in a
+   * layout rather than the whole screen.
+   *
+   * The point comes back in the part's own frame, so a note stays where it was
+   * put when the assembly is re-placed, exploded or animated.
+   */
+  pickAnnotationAtClient(clientX: number, clientY: number): {
+    partId: string; local: [number, number, number];
+  } | undefined {
+    const rect = this.canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return undefined;
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    if (x < 0 || y < 0 || x > rect.width || y > rect.height) return undefined;
+    const pick = this.scene.pick(x, y, (mesh) => mesh.isEnabled() && mesh.name.startsWith('mesh-'));
+    const partId = pick?.pickedMesh?.name.match(/^mesh-(.+)$/)?.[1];
+    if (!partId || !pick?.pickedPoint) return undefined;
+    const visual = this.parts.get(partId);
+    if (!visual) return undefined;
+    const local = Vector3.TransformCoordinates(
+      pick.pickedPoint, Matrix.Invert(visual.root.getWorldMatrix()),
+    );
+    return { partId, local: [local.x, local.y, local.z] };
+  }
+
+  /** Where a note sits on screen now, as fractions of the view. */
+  projectAnnotation(partId: string, local: [number, number, number]): {
+    x: number; y: number; onScreen: boolean;
+  } | undefined {
+    const visual = this.parts.get(partId);
+    if (!visual) return undefined;
+    const world = Vector3.TransformCoordinates(
+      new Vector3(local[0], local[1], local[2]), visual.root.getWorldMatrix(),
+    );
+    return this.projectWorld(world);
   }
 
   pickPartAt(x: number, y: number): string | undefined {

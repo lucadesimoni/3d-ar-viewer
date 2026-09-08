@@ -758,3 +758,62 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 }
 .placement-hint.warn { border-color: rgba(245, 158, 11, 0.5); }
 .placement-hint .dot.warn { background: var(--warn); }
+
+
+/* ---------- Operator notes ---------- */
+/* Pinned to the part they are about, so they ride it through a re-placement,
+   an explode or the build animation. Same projection and the same
+   publish-only-when-it-moves rule as the step labels. */
+.annotations { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.note-pin {
+  position: absolute; transform: translate(-50%, -50%);
+  pointer-events: auto;
+  display: flex; align-items: center; gap: 6px;
+  max-width: min(62vw, 320px);
+  padding: 5px 10px 5px 6px;
+  border-radius: 999px; border: 1px solid var(--edge);
+  background: rgba(9, 14, 20, 0.86);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  color: var(--text); font: inherit; font-size: 0.82rem; text-align: left;
+}
+.note-pin .note-dot {
+  flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 0.72rem;
+  background: var(--accent); color: #04121a;
+}
+.note-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-pin.open { max-width: min(80vw, 420px); }
+.note-pin.open .note-text { white-space: normal; }
+.note-delete {
+  flex: 0 0 auto; margin-left: 4px; padding: 2px 6px;
+  border-radius: 8px; color: var(--danger, #fca5a5);
+}
+/* A miss is not an error: it says what to do instead, and goes by itself. */
+.note-hint {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom) + 96px);
+  z-index: 7; margin: 0; padding: 8px 14px;
+  border-radius: 999px; border: 1px solid var(--edge);
+  background: rgba(9, 14, 20, 0.88); font-size: 0.85rem;
+}
+.note-hint.missed { border-color: var(--accent); }
+.note-compose {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom) + 92px);
+  z-index: 8; width: min(92vw, 420px);
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; border-radius: 16px; border: 1px solid var(--edge);
+  background: rgba(9, 14, 20, 0.94);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+}
+.note-compose input {
+  width: 100%; padding: 10px 12px; font: inherit;
+  border-radius: 10px; border: 1px solid var(--edge);
+  background: rgba(255, 255, 255, 0.05); color: var(--text);
+}
+.note-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.note-actions button { min-height: 44px; padding: 0 16px; }
+/* In AR the composer sits above the HUD, which is taller than the desktop bar. */
+.app.ar .note-compose, .app.ar .note-hint {
+  bottom: calc(env(safe-area-inset-bottom) + 150px);
+}

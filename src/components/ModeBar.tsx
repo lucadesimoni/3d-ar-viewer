@@ -1,5 +1,6 @@
 import { useStore, type ViewMode } from '../state/store';
 import { assemblyTimeline } from '../engine/animation';
+import { getActiveManager } from '../render/babylon/managerRegistry';
 import { useEffect, useRef } from 'react';
 
 const MODES: { id: ViewMode; label: string; icon: string }[] = [
@@ -16,6 +17,8 @@ export function ModeBar(): JSX.Element {
   const explodeFactor = useStore((s) => s.explodeFactor);
   const setExplodeFactor = useStore((s) => s.setExplodeFactor);
   const reset = useStore((s) => s.reset);
+  const annotating = useStore((s) => s.annotating);
+  const setAnnotating = useStore((s) => s.setAnnotating);
 
   return (
     <div className="mode-bar">
@@ -47,6 +50,23 @@ export function ModeBar(): JSX.Element {
       )}
 
       {viewMode === 'animate' && <AnimationScrubber />}
+
+      {/* Notes are written *while* reading the guide, or with the view
+          exploded, or with the animation paused on the step in question — so
+          this is a switch beside the modes, not one of them. */}
+      <button
+        className={`mode note-mode ${annotating ? 'active' : ''}`}
+        aria-pressed={annotating}
+        onClick={() => {
+          const on = !annotating;
+          setAnnotating(on);
+          // The same tap cannot both note a part and re-place the assembly.
+          if (on) getActiveManager()?.setPlacementActive(false);
+        }}
+      >
+        <span className="mode-icon">✎</span>
+        <span className="mode-label">{annotating ? 'Done noting' : 'Add notes'}</span>
+      </button>
 
       <button className="ghost reset" onClick={reset}>Reset build</button>
     </div>
