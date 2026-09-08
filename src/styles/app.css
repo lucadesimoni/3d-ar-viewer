@@ -97,6 +97,21 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
 .app.ar .viewer-canvas, .app.ar .passthrough { touch-action: none; }
 .app.ar { overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
 
+/* In an immersive WebXR session the compositor owns the picture: it supplies
+   the camera image and Babylon draws the scene into the session's own
+   framebuffer. The overlay root is still the page, though, and the page is
+   painted over that picture — including the render canvas, which during a
+   session holds nothing but its last non-XR frame (the opaque studio slate),
+   and the passthrough video, which the camera path leaves behind. Either one
+   covers the real world completely: a black screen with a working HUD on it,
+   which is what "WebXR works but there is no image" looks like.
+
+   `visibility` rather than `display`: the canvas keeps its box and its size, so
+   nothing re-measures on the way in or out of a session. */
+.app.xr-session .viewer-canvas,
+.app.xr-session .viewport-canvas,
+.app.xr-session .passthrough { visibility: hidden; }
+
 /* ---------- AR HUD (phone + tablet) ---------- */
 /* A normal flex child at the end of the app column, deliberately *not*
    `position: fixed`. On iOS a fixed element is placed against the layout

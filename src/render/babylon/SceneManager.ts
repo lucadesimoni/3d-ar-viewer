@@ -263,6 +263,8 @@ export class SceneManager {
   private baseScalingLevel = 1;
   private reticle: Mesh | undefined;
   private xrLoadError: string | undefined;
+  /** True from the session's first frame until it ends. */
+  private inXrSession = false;
   private xrPrepared: (import('./xr').XrPrepared & {
     callbacks: { onPlace: (pose: Pose) => void; onEnd?: () => void };
   }) | undefined;
@@ -937,6 +939,7 @@ export class SceneManager {
           this.setPlacementActive(false);
         },
         onStateChange: (inXr) => {
+          this.inXrSession = inXr;
           if (inXr) {
             this.arMode = true;
             this.setTransparent(true);
@@ -1421,6 +1424,13 @@ export class SceneManager {
    * never per frame.
    */
   paintedFraction(): number | undefined {
+    // In an immersive session this measurement has nothing to measure. Babylon
+    // draws into the session's framebuffer and the compositor puts it on the
+    // display; the page canvas this reads back is not what the operator is
+    // looking at, and it reads empty however well the session is running.
+    // Reporting that zero produced a red "nothing reaches the screen" box on a
+    // working session — the instrument inventing the fault again.
+    if (this.inXrSession) return undefined;
     this.paintSampleWanted = true;      // taken at the end of the next frame
     return this.lastPainted;
   }
@@ -1628,6 +1638,8 @@ export class SceneManager {
     contextLost: boolean;
     renderError: string | undefined;
     camera: string;
+    /** Whether an immersive session, rather than the page, owns the display. */
+    xr: boolean;
   } {
     const rect = this.canvas.getBoundingClientRect();
     const now = performance.now();
@@ -1654,6 +1666,7 @@ export class SceneManager {
       bufferSize: [this.engine.getRenderWidth(), this.engine.getRenderHeight()],
       scaling: this.engine.getHardwareScalingLevel(),
       cameraY: (this.scene.activeCamera ?? this.camera).position.y,
+      xr: this.inXrSession,
     };
   }
 
