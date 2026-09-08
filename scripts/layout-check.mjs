@@ -156,6 +156,36 @@ for (const vp of VIEWPORTS) {
   await cam.close();
 }
 
+// --- Motion, for an operator who asked for less of it. ---------------------
+// One pulsing dot was covered by a reduced-motion rule and the other was not.
+// That is how these rules usually go: written for the animation in front of
+// you, and the next one lands somewhere else. None of the motion here carries
+// meaning the still state does not, so under the preference it all stops.
+{
+  const quiet = await browser.newContext({
+    viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+    reducedMotion: 'reduce',
+  });
+  const page = await quiet.newPage();
+  await page.goto(`${URL}?assembly=kallax-4x4`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1500);
+  const moving = await page.evaluate(() => {
+    const out = [];
+    for (const el of document.querySelectorAll('*')) {
+      const st = getComputedStyle(el);
+      const duration = (v) => v.split(',').some((d) => parseFloat(d) > 0.01);
+      if (st.animationName !== 'none' && duration(st.animationDuration)) {
+        out.push(`${el.className || el.tagName} animates ${st.animationName}`);
+      }
+      if (duration(st.transitionDuration)) out.push(`${el.className || el.tagName} transitions`);
+    }
+    return out.slice(0, 6);
+  });
+  check('nothing animates when the operator has asked for reduced motion',
+    moving.length === 0, moving.join(', ') || 'nothing moves');
+  await quiet.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall layout checks passed');
 process.exit(failures.length ? 1 : 0);

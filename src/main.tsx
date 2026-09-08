@@ -19,6 +19,19 @@ const wanted = new URLSearchParams(typeof window !== 'undefined' ? window.locati
 const chosen = wanted ? ASSEMBLIES.find((a) => a.id === wanted || a.name.toLowerCase().includes(wanted.toLowerCase())) : undefined;
 if (chosen) useStore.getState().loadAssembly(chosen);
 
+// `?step=<id>` resumes where the operator was.
+//
+// This is the hand-off to iOS: an iPad's browser has no WebXR, so the way to
+// real tracking is an App Clip, and a clip is a separate browsing context —
+// nothing but the address carries across. Landing back on step one of a
+// fourteen-bay rack because you asked for better tracking is the kind of small
+// insult that stops people using the better thing.
+const step = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('step');
+if (step) {
+  const assembly = useStore.getState().assembly;
+  if (assembly.steps.some((s) => s.id === step)) useStore.getState().setActiveStep(step);
+}
+
 const root = document.getElementById('root');
 if (root) createRoot(root).render(<StrictMode><App config={config} /></StrictMode>);
 
