@@ -272,6 +272,8 @@ export class SceneManager {
   private xrLoadError: string | undefined;
   /** True from the session's first frame until it ends. */
   private inXrSession = false;
+  /** True from the moment a session is requested until it is in or refused. */
+  private xrEntering = false;
   /** A tap arrived before the session helper was built, so nothing was asked. */
   private xrMissedTap = false;
   /** In-flight preparation, so a tap can wait for it instead of missing it. */
@@ -321,6 +323,23 @@ export class SceneManager {
   private checkRenderLoop = (): void => {
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
       this.watchdogFrames = this.frames;      // hidden: stopping is correct
+      return;
+    }
+    // Hands off while a session owns the loop.
+    //
+    // Entering XR, Babylon cancels the window's animation frame and drives
+    // rendering from the session's own `requestAnimationFrame` instead. Between
+    // the request and the first XR frame — ARCore taking a second or two to
+    // start — no frames are drawn, and that is not a stall to rescue: it is the
+    // handover. Rescuing it was catastrophic. The timer clock below calls
+    // `scene.render()` from a `setInterval`, outside any XR frame, so Babylon
+    // draws into the page canvas instead of the session's framebuffer. The
+    // session then gets no frames at all: a black passthrough with a healthy
+    // frame counter ticking beside it, which is exactly what was reported —
+    // 36 fps, 13 meshes, assembly in view, nothing on screen. A session that
+    // genuinely dies ends, and ending is handled elsewhere.
+    if (this.inXrSession || this.xrEntering) {
+      this.watchdogFrames = this.frames;
       return;
     }
     if (this.frames === this.watchdogFrames) {
@@ -925,7 +944,14 @@ export class SceneManager {
     prepared.callbacks.onPlace = onPlace;
     prepared.callbacks.onEnd = onEnd;
     this.xrPrepared = undefined;
-    const controller = await prepared.enter();
+    // An earlier stall may have left the loop on the timer clock, which cannot
+    // drive a session. Hand over a loop the session can actually use.
+    this.xrEntering = true;
+    if (this.frameClock !== 'raf') {
+      this.frameClock = 'raf';
+      this.restartRenderLoop();
+    }
+    const controller = await prepared.enter().finally(() => { this.xrEntering = false; });
     if (!controller) {
       prepared.dispose();
       // Build the next one now, in the background, so a retry costs only the
@@ -1437,6 +1463,9 @@ export class SceneManager {
     this.engine.stopRenderLoop();
     window.clearInterval(this.frameTimer);
     this.frameTimer = 0;
+    // A session drives frames through Babylon's XR frame requester, which
+    // `runRenderLoop` honours and a `setInterval` bypasses entirely.
+    if (this.inXrSession || this.xrEntering) this.frameClock = 'raf';
     if (this.frameClock === 'raf') {
       this.engine.runRenderLoop(this.renderFrame);
       return;
