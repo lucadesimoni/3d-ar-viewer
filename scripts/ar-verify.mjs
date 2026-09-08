@@ -1475,6 +1475,16 @@ const context = await browser.newContext({
   check('and the page gets both back when the session ends',
     after.canvas === true && after.video === true,
     `canvas=${after.canvas}, video=${after.video}`);
+
+  // Two switches, not one. The session helper marks the overlay root, and the
+  // app marks itself from its own state — because a black screen with a
+  // working HUD reads exactly like a session that never started, and one of
+  // them failing must not be enough to produce it.
+  await page.evaluate(() => document.querySelector('.app').classList.add('xr'));
+  const stateDriven = await paints();
+  check('the app hides them from its own state as well as the session helper',
+    stateDriven.canvas === false && stateDriven.video === false,
+    `canvas=${stateDriven.canvas}, video=${stateDriven.video}`);
   await page.close();
 }
 

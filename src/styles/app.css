@@ -124,7 +124,15 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
    nothing re-measures on the way in or out of a session. */
 .app.xr-session .viewer-canvas,
 .app.xr-session .viewport-canvas,
-.app.xr-session .passthrough { visibility: hidden; }
+.app.xr-session .passthrough,
+/* The same rule from the app's own state rather than the session helper's:
+   in a WebXR session there is no camera video at all, and the render canvas
+   holds nothing but a stale frame. Two independent switches, because a black
+   screen with a working HUD is indistinguishable from a session that never
+   started, and one of them failing must not be enough to produce it. */
+.app.xr .viewer-canvas,
+.app.xr .viewport-canvas,
+.app.xr .passthrough { visibility: hidden; }
 
 /* ---------- AR HUD (phone + tablet) ---------- */
 /* A normal flex child at the end of the app column, deliberately *not*

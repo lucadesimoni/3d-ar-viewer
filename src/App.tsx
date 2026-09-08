@@ -71,9 +71,16 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
   const [notesOpen, setNotesOpen] = useState(true);
   const mobileSheet = arActive ? null : sheet;
 
+  // A second, independent way to keep the page's own surfaces out of the
+  // compositor's way. The session helper marks the overlay root too, but that
+  // depends on Babylon's session observer firing and on my CSS being right;
+  // this one is React state, and in a WebXR session there is no camera video at
+  // all — the compositor supplies the image.
+  const xrSource = useStore((st) => st.arSource) === 'webxr';
   const rootClass = [
     'app',
     arActive ? 'ar' : '',
+    arActive && xrSource ? 'xr' : '',
     ui.embedded ? 'embedded' : '',
     `density-${ui.density}`,
     `preset-${ui.preset}`,
