@@ -59,7 +59,21 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
 :focus:not(:focus-visible) { outline: none; }
 
 /* ---------- Layout ---------- */
-.app { display: flex; flex-direction: column; height: 100%; height: -webkit-fill-available; height: 100dvh; position: relative; overflow: hidden; }
+/* Height: measured, not assumed.
+ *
+ * `100dvh` is the page's *guess* at the visible area, and two devices have now
+ * disagreed with it in opposite directions. On iOS Safari a `position: fixed`
+ * bar anchors to the layout viewport — the tall one, without the toolbars — and
+ * hides behind them, which is why the HUD sits in the flow of this column and
+ * must keep doing so. And an iPad running through the Needle App Clip reported
+ * the other half: the bottom bar and the step strip simply absent, which is what
+ * the last row of a column taller than the host's visible area looks like.
+ *
+ * `--app-h` is set from `visualViewport`, which is neither a guess nor a
+ * constant: it is what the operator can actually see, toolbars and host chrome
+ * excluded, updated when either changes. The dvh fallback covers the moment
+ * before the first measurement and any browser without it. */
+.app { display: flex; flex-direction: column; height: 100%; height: -webkit-fill-available; height: 100dvh; height: var(--app-h, 100dvh); position: relative; overflow: hidden; }
 .passthrough {
   position: fixed; inset: 0; width: 100%; height: 100%;
   object-fit: cover; z-index: 0; display: none; background: #000;
@@ -169,7 +183,7 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
 
 /* Panels in AR live in a sheet that never takes more than half the view. */
 .ar-sheet {
-  max-height: 46dvh; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  max-height: min(46dvh, 46%); overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   background: rgba(9, 14, 20, 0.9); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
   border: 1px solid var(--edge); border-radius: 16px;
 }

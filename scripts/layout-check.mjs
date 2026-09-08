@@ -11,7 +11,7 @@
  * Usage: node scripts/layout-check.mjs   (with the app served on PREVIEW_URL)
  */
 import { chromium } from 'playwright';
-import { launchOptions } from './chrome.mjs';
+import { launchOptions, FAKE_CAMERA } from './chrome.mjs';
 
 const URL = process.env.PREVIEW_URL ?? 'http://localhost:4173/';
 const OUT = process.argv[2] ?? '/tmp/layout-check';
@@ -96,6 +96,64 @@ for (const vp of VIEWPORTS) {
 
   await page.screenshot({ path: `${OUT}/${vp.name.replace(/ /g, '-')}.png` });
   await context.close();
+}
+
+// --- The HUD when the host disagrees about the viewport. -------------------
+// Reported from an iPad running the app through the Needle App Clip: AR works,
+// but the bottom bar and the step strip are sometimes not there.
+//
+// The app is a column as tall as the viewport with the HUD as its last row, and
+// that row has to stay in the flow: iOS Safari anchors a `position: fixed`
+// element to the *layout* viewport — the tall one without the toolbars — so a
+// bar pinned to the bottom hides behind them, which is a check of its own in
+// ar-verify. The column's height therefore has to be right, and `100dvh` is a
+// guess. `--app-h` is measured from `visualViewport` instead.
+{
+  const cam = await chromium.launch(launchOptions(FAKE_CAMERA));
+  for (const vp of [
+    { name: 'tablet portrait', w: 820, h: 1180 },
+    { name: 'tablet landscape', w: 1180, h: 820 },
+    { name: 'phone portrait', w: 390, h: 844 },
+  ]) {
+    const context = await cam.newContext({
+      viewport: { width: vp.w, height: vp.h }, isMobile: true, hasTouch: true,
+    });
+    const page = await context.newPage();
+    await page.goto(URL, { waitUntil: 'networkidle' });
+    await page.click('.ar-enter');
+    await page.waitForSelector('.ar-bar', { timeout: 20000 });
+    await page.evaluate(() => document.querySelector('.app').classList.add('xr-session'));
+
+    // Twice: as opened, and after the visible area changes under the app — a
+    // toolbar sliding in, a clip resizing its presentation, the device turning.
+    for (const [when, size] of [['as opened', null], ['after the host resizes', { width: vp.w, height: vp.h - 220 }]]) {
+      if (size) { await page.setViewportSize(size); await page.waitForTimeout(300); }
+      const seen = await page.evaluate(() => {
+        const box = (sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { bottom: Math.round(r.bottom), top: Math.round(r.top), h: Math.round(r.height) };
+        };
+        return {
+          app: box('.app'), bar: box('.ar-bar'), now: box('.ar-now'),
+          measured: getComputedStyle(document.documentElement).getPropertyValue('--app-h').trim(),
+          h: window.innerHeight,
+        };
+      });
+      const on = (b) => b && b.h > 0 && b.bottom <= seen.h + 1 && b.top >= -1;
+      check(`${vp.name}: the app measures the visible height rather than assuming it (${when})`,
+        seen.measured === `${seen.h}px`, `--app-h ${seen.measured || 'unset'} for ${seen.h}px`);
+      check(`${vp.name}: its box is no taller than what can be seen (${when})`,
+        seen.app && seen.app.h <= seen.h + 1, `${seen.app?.h} of ${seen.h}`);
+      check(`${vp.name}: the control bar is on screen (${when})`,
+        on(seen.bar), seen.bar ? `bottom ${seen.bar.bottom} of ${seen.h}` : 'not rendered');
+      check(`${vp.name}: and so is the step strip (${when})`,
+        on(seen.now), seen.now ? `bottom ${seen.now.bottom} of ${seen.h}` : 'not rendered');
+    }
+    await context.close();
+  }
+  await cam.close();
 }
 
 await browser.close();
