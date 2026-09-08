@@ -319,6 +319,73 @@ export function useArController(
     return true;
   }, [capabilities]);
 
+  /**
+   * Take a granted session and make it the app's only source of pose.
+   *
+   * There were two of these — one for entering AR, one for the retry from
+   * inside camera passthrough — and they had drifted apart: the retry tore down
+   * the camera path and reset the store, the entry did not, and only the entry
+   * held the wake lock. Two ways in that behave differently is two things to
+   * debug from one report. This is the only one, and the camera teardown in it
+   * is a no-op when the camera path never ran.
+   */
+  const startXr = useCallback(async (
+    manager: SceneManager, current: () => boolean,
+  ): Promise<boolean> => {
+    let owned: { end: () => Promise<void> } | undefined;
+    // Until the session is ours, "ours" means the entry attempt is still current.
+    const owns = () => (owned ? xrSession.current === owned : current());
+    const session = await manager.startWebXr(
+      (pose) => { if (owns()) useStore.getState().setAnchor(pose, 0.9, 'floor'); },
+      // Leaving the session (the system back gesture, the headset's own exit)
+      // has to take the app out of AR too, or the UI claims to be in a session
+      // that ended.
+      () => { if (owns()) stop(); },
+    );
+    if (!current()) {
+      void session?.end().catch(() => undefined);
+      return false;
+    }
+    if (!session) return false;
+    owned = session;
+
+    // Stop every producer of camera-space poses before accepting XR poses. In
+    // particular, ground placement owns its own reticle observer and the
+    // preview timer can otherwise drop an anchor during XR surface detection.
+    recognitionGeneration.current++;
+    pipelineRef.current?.resetTemporal();
+    stopPlacement.current?.();
+    stopPlacement.current = undefined;
+    if (previewTimer.current) window.clearTimeout(previewTimer.current);
+    previewTimer.current = undefined;
+    if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
+    rafRef.current = undefined;
+    objectAnchor.current = undefined;
+    markerRef.current?.stop();
+    markerRef.current = undefined;
+    videoGeometryCleanup.current?.();
+    videoGeometryCleanup.current = undefined;
+    trackerRef.current?.stop();
+    trackerRef.current = undefined;
+    releaseVideo(videoRef.current);
+    cameraSuspended.current = false;
+
+    xrSession.current = session;
+    const store = useStore.getState();
+    store.setRecognition(undefined);
+    store.setArMotion(false);
+    store.setArSource('webxr');
+    // Camera fallback coordinates have no relationship to the new XR origin.
+    store.setAnchor(undefined, 0, 'awaiting');
+    armPlacement(manager, 'webxr');
+    setArActive(true);
+
+    const lock = await takeWakeLock();
+    if (current()) wakeLock.current = lock;
+    else void lock?.release().catch(() => undefined);
+    return true;
+  }, [stop, videoRef]);
+
   const enterAr = useCallback(async () => {
     if (arActive || entryPending.current) { stop(); return; }
     const store = useStore.getState();
@@ -349,33 +416,7 @@ export function useArController(
     // through on failure, which the camera path handles anyway.
     const xrDenied = capabilities.permissionsPolicy?.['xr-spatial-tracking'] === 'denied';
     if ((capabilities.immersiveAr || capabilities.webxrSupported) && !xrDenied && manager) {
-      let ownedSession: { end: () => Promise<void> } | undefined;
-      const ownsSession = () => ownedSession ? xrSession.current === ownedSession : current();
-      const session = await manager.startWebXr(
-        (pose) => { if (ownsSession()) useStore.getState().setAnchor(pose, 0.9, 'floor'); },
-        // Leaving the session (the system back gesture, or the headset's own
-        // exit) has to take the app out of AR too, or the UI claims to be in a
-        // session that ended.
-        () => { if (ownsSession()) stop(); },
-      );
-      if (!current()) {
-        void session?.end().catch(() => undefined);
-        return;
-      }
-      if (session) {
-        ownedSession = session;
-        xrSession.current = session;
-        const lock = await takeWakeLock();
-        if (!current()) {
-          void lock?.release().catch(() => undefined);
-          return;
-        }
-        wakeLock.current = lock;
-        useStore.getState().setArSource('webxr');
-        armPlacement(manager, 'webxr');
-        setArActive(true);
-        return;
-      }
+      if (await startXr(manager, current)) return;
       // The session was refused or could not be entered — fall through to
       // camera passthrough rather than leaving a transparent canvas over a
       // black page, which is what "AR" looked like before this fell through.
@@ -555,57 +596,16 @@ export function useArController(
     const generation = ++sessionGeneration.current;
     const startAssembly = useStore.getState().assembly;
     retryPending.current = true;
-    let ownedSession: { end: () => Promise<void> } | undefined;
     const current = () => generation === sessionGeneration.current && useStore.getState().assembly === startAssembly;
-    const ownsSession = () => ownedSession ? xrSession.current === ownedSession : current();
     try {
-    const session = await manager.startWebXr(
-      (pose) => { if (ownsSession()) useStore.getState().setAnchor(pose, 0.9, 'floor'); },
-      () => { if (ownsSession()) stop(); },
-    );
-    if (!current()) {
-      void session?.end().catch(() => undefined);
-      return false;
-    }
-    if (!session) return false;
-    ownedSession = session;
-    recognitionGeneration.current++;
-    pipelineRef.current?.resetTemporal();
-    // Stop every producer of camera-space poses before accepting XR poses.
-    // In particular, ground placement owns its own reticle observer and the
-    // preview timer can otherwise drop an anchor during XR surface detection.
-    stopPlacement.current?.();
-    stopPlacement.current = undefined;
-    if (previewTimer.current) window.clearTimeout(previewTimer.current);
-    previewTimer.current = undefined;
-    if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
-    rafRef.current = undefined;
-    objectAnchor.current = undefined;
-    markerRef.current?.stop();
-    markerRef.current = undefined;
-    videoGeometryCleanup.current?.();
-    videoGeometryCleanup.current = undefined;
-    trackerRef.current?.stop();
-    trackerRef.current = undefined;
-    releaseVideo(videoRef.current);
-    cameraSuspended.current = false;
-    xrSession.current = session;
-    const store = useStore.getState();
-    store.setRecognition(undefined);
-    store.setArMotion(false);
-    store.setArSource('webxr');
-    // Camera fallback coordinates have no relationship to the new XR origin.
-    store.setAnchor(undefined, 0, 'awaiting');
-    armPlacement(manager, 'webxr');
-    setArActive(true);
-    return true;
+      return await startXr(manager, current);
     } catch (error) {
       if (current()) useStore.getState().setArError(`WebXR could not start; camera/3D preview remains available: ${String(error)}`);
       return false;
     } finally {
       if (generation === sessionGeneration.current) retryPending.current = false;
     }
-  }, [capabilities, stop, videoRef]);
+  }, [capabilities, startXr]);
 
   /**
    * Move the assembly into view, now, without a placement gesture.

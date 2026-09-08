@@ -57,6 +57,39 @@ describe('why real AR is not running', () => {
     perf: { tier: 'low', antialias: false, adaptive: false, maxPixelRatio: 1, targetFps: 30, recognitionIntervalMs: 1000 },
   });
 
+  it('waits for a build that is still running instead of losing the tap to it', async () => {
+    // The helper is built ahead of the tap because `requestSession` needs the
+    // tap's activation. On a cold load that race can be lost, and losing it used
+    // to drop the operator on the camera path without a word.
+    const ended = vi.fn(async () => {});
+    prepare.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return { enter: async () => ({ end: ended }), dispose: vi.fn() };
+    });
+    const m = manager();
+    try {
+      const building = m.prepareWebXr({ onPlace: vi.fn(), onEnd: vi.fn() });
+      expect(m.xrReady()).toBe(false);
+      expect(await m.startWebXr(vi.fn(), vi.fn())).toBeDefined();
+      await building;
+    } finally {
+      m.dispose();
+    }
+  });
+
+  it('builds once however many callers ask for it', async () => {
+    prepare.mockClear();
+    prepare.mockImplementation(async () => ({ enter: async () => undefined, dispose: vi.fn() }));
+    const m = manager();
+    try {
+      const hooks = { onPlace: vi.fn(), onEnd: vi.fn() };
+      await Promise.all([m.prepareWebXr(hooks), m.prepareWebXr(hooks), m.prepareWebXr(hooks)]);
+      expect(prepare).toHaveBeenCalledTimes(1);
+    } finally {
+      m.dispose();
+    }
+  });
+
   it('says the tap outran the loading rather than blaming the device', async () => {
     prepare.mockImplementation(async () => ({ enter: async () => undefined, dispose: vi.fn() }));
     const m = manager();
