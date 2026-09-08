@@ -1549,47 +1549,39 @@ const context = await browser.newContext({
 // --- 21. A still phone must cost nothing. ----------------------------------
 // The on-part labels are projected every animation frame, and they used to be
 // *published* every frame too: a fresh array into React state sixty times a
-// second — sixty reconciliations for labels that had not moved a pixel. React
-// writes no DOM when the output is identical, so the waste is invisible to a
-// mutation observer and shows up only as scripting time. Measured against the
-// same app with the labels switched off, in the same run on the same machine,
-// so the number means something wherever this runs.
+// second — sixty reconciliations for labels that had not moved a pixel.
+//
+// This is the second version of this check and the first two were both wrong,
+// which is worth writing down. The first counted DOM mutations: React writes
+// no DOM when the output is identical, so it passed with the fix removed. The
+// second measured scripting time against the same app with labels switched
+// off — real, but a duration, and the threshold I tuned here failed CI on
+// correct code at 0.48 ms against 0.45. The rule is a property, not a
+// duration: a frame that changes nothing publishes nothing. Count that.
 {
   const page = await context.newPage();
-  const cdp = await context.newCDPSession(page);
-  await cdp.send('Performance.enable');
   await open(page, `${URL}?assembly=kallax-4x4`);
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(2500);
+  const publishes = () => page.evaluate(() => window.spatialLabelPublishes ?? 0);
+  const settled = await publishes();
+  const before = await page.evaluate(() => window.spatialScene().renderStats().frames);
+  await page.waitForTimeout(3000);
+  const after = await page.evaluate(() => window.spatialScene().renderStats().frames);
+  const frames = after - before;
+  const churn = (await publishes()) - settled;
+  check('frames are being drawn to measure against', frames > 30, `${frames} frames`);
+  check('a still view publishes no new label state at all',
+    churn === 0, `${churn} publishes over ${frames} frames`);
 
-  const perFrame = async (seconds) => {
-    const metric = async () => {
-      const { metrics } = await cdp.send('Performance.getMetrics');
-      return metrics.find((m) => m.name === 'ScriptDuration')?.value ?? 0;
-    };
-    const t0 = await metric();
-    const f0 = await page.evaluate(() => window.spatialScene().renderStats().frames);
-    await page.waitForTimeout(seconds * 1000);
-    const t1 = await metric();
-    const f1 = await page.evaluate(() => window.spatialScene().renderStats().frames);
-    return { ms: ((t1 - t0) * 1000) / Math.max(1, f1 - f0), frames: f1 - f0 };
-  };
-
-  const withLabels = await perFrame(4);
-  // The same app with nothing to label: the floor this machine runs at.
-  await page.evaluate(() => window.spatialStore.getState().setViewMode('inspect'));
-  await page.waitForTimeout(500);
-  const without = await perFrame(4);
-
-  check('frames are being drawn to measure against',
-    withLabels.frames > 30 && without.frames > 30,
-    `${withLabels.frames} and ${without.frames} frames`);
-  const cost = withLabels.ms - without.ms;
-  // Measured on this machine: 0.36 ms with the guard, 0.52 without it. The
-  // threshold sits between them rather than at a round number pulled from air.
-  check('a still view costs almost nothing to keep labelled',
-    cost < 0.45,
-    `${cost.toFixed(2)} ms per frame over a view with no labels (${
-      withLabels.ms.toFixed(2)} vs ${without.ms.toFixed(2)})`);
+  // And it must still publish when something actually moves, or the guard
+  // would be a way of showing nothing.
+  await page.evaluate(() => {
+    const store = window.spatialStore.getState();
+    store.setActiveStep(store.assembly.steps[2].id);
+  });
+  await page.waitForTimeout(600);
+  check('and publishes again when the view changes', (await publishes()) > settled,
+    `${(await publishes()) - settled} publishes after changing step`);
   await page.close();
 }
 

@@ -61,6 +61,7 @@ export function StepAnnotations(): JSX.Element | null {
   // What the DOM currently shows, so a frame that changes nothing costs nothing.
   const published = useRef<Tag[]>([]);
   const hiddenCount = useRef(0);
+  const publishes = useRef(0);
 
   const step = assembly.steps.find((s) => s.id === activeStepId);
   const enabled = viewMode === 'guide' && Boolean(step);
@@ -93,6 +94,15 @@ export function StepAnnotations(): JSX.Element | null {
       }
       if (tagsDiffer(next, published.current)) {
         published.current = next;
+        publishes.current += 1;
+        // A counted handle, alongside the `spatialStore` and `spatialScene`
+        // ones this app already exposes for driving it from a browser check.
+        // The rule this layer lives by — a frame that changes nothing costs
+        // nothing — is a property, not a duration, and a duration is what my
+        // first check measured: a threshold tuned on one machine, which then
+        // failed CI on correct code at 0.48 ms against 0.45.
+        (window as unknown as { spatialLabelPublishes?: number })
+          .spatialLabelPublishes = publishes.current;
         setTags(next);
       }
       if (dropped !== hiddenCount.current) {
