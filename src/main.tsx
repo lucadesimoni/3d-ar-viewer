@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import './styles/app.css';
+import { trackVisibleHeight } from './ui/visibleHeight';
 import { useStore } from './state/store';
 import { parseUiConfigFromParams } from './ui/config';
 import { ASSEMBLIES } from './data';
@@ -46,3 +47,7 @@ if ('serviceWorker' in navigator && window.isSecureContext && !import.meta.env.D
     navigator.serviceWorker.register('/sw.js').catch(() => undefined);
   });
 }
+
+// The app is exactly as tall as what the operator can see — measured, not
+// assumed from `100dvh`. See the module for the two devices that disagreed.
+trackVisibleHeight();
