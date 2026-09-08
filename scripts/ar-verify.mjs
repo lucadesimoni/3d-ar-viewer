@@ -1229,6 +1229,53 @@ const context = await browser.newContext({
   const worst = Math.max(...off.filter((v) => v !== null));
   check('and keeps the same face towards the operator at every heading',
     worst < 5, `worst ${worst.toFixed(1)}° off`);
+
+  // Nor may it be a hoop around the operator's feet. A ring of fixed size in
+  // the world fills the screen when you aim close, and aiming close is what
+  // holding a phone at a natural angle does: measured at a 30° tilt it was
+  // 0.68 m away and 91% of the screen wide. A target reads as a target at a
+  // constant apparent size, so the marker is scaled by its distance.
+  const span = () => page.evaluate(() => {
+    const m = window.spatialScene();
+    const r = m.scene.getMeshByName('ar-reticle');
+    if (!r || !r.isEnabled()) return null;
+    const cam = m.scene.activeCamera;
+    const eng = m.scene.getEngine();
+    const w = eng.getRenderWidth(), h = eng.getRenderHeight();
+    const tm = m.scene.getTransformMatrix();
+    const V = Object.getPrototypeOf(cam.position).constructor;
+    const M = Object.getPrototypeOf(tm).constructor;
+    const vp = cam.viewport.toGlobal(w, h);
+    r.computeWorldMatrix(true);
+    const xs = [], ys = [];
+    for (const v of r.getBoundingInfo().boundingBox.vectorsWorld) {
+      const p = V.Project(v, M.Identity(), tm, vp);
+      xs.push(p.x); ys.push(p.y);
+    }
+    return {
+      distance: cam.position.subtract(r.getAbsolutePosition()).length(),
+      wide: (Math.max(...xs) - Math.min(...xs)) / w,
+      tall: (Math.max(...ys) - Math.min(...ys)) / h,
+    };
+  });
+  const spans = [];
+  for (const b of [30, 45, 60, 75]) {
+    await page.evaluate((beta) => { window.__o = { ...window.__o, beta }; }, b);
+    await page.waitForTimeout(700);
+    const sp = await span();
+    if (sp) spans.push({ b, ...sp });
+  }
+  const widest = Math.max(...spans.map((v) => v.wide));
+  const narrowest = Math.min(...spans.map((v) => v.wide));
+  const near = spans.find((v) => v.distance < 1);
+  check('the aiming marker is a target, not a hoop around the operator',
+    widest < 0.35, `worst ${(widest * 100).toFixed(0)}% of the width at ${
+      spans.find((v) => v.wide === widest)?.distance.toFixed(2)} m`);
+  check('and it reads the same size near and far',
+    widest - narrowest < 0.08,
+    `${(narrowest * 100).toFixed(0)}–${(widest * 100).toFixed(0)}% across ${spans.length} angles`);
+  check('the close aim that used to fill the screen is measured, not assumed',
+    Boolean(near), near ? `${near.distance.toFixed(2)} m at ${near.b}°` : 'no close aim tested');
   await page.close();
 }
 
