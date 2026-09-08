@@ -263,7 +263,9 @@ export class SceneManager {
   private baseScalingLevel = 1;
   private reticle: Mesh | undefined;
   private xrLoadError: string | undefined;
-  private xrPrepared: import('./xr').XrPrepared | undefined;
+  private xrPrepared: (import('./xr').XrPrepared & {
+    callbacks: { onPlace: (pose: Pose) => void; onEnd?: () => void };
+  }) | undefined;
   private groundShadow: Mesh | undefined;
   private groundOutline: import('@babylonjs/core/Meshes/linesMesh').LinesMesh | undefined;
   private showBackground = true;
@@ -887,6 +889,10 @@ export class SceneManager {
       void this.prepareWebXr({ onPlace, onEnd });
       return undefined;
     }
+    // Preparation may belong to a failed attempt. The current entry owns the
+    // callbacks, not the gesture that happened to build this helper.
+    prepared.callbacks.onPlace = onPlace;
+    prepared.callbacks.onEnd = onEnd;
     this.xrPrepared = undefined;
     const controller = await prepared.enter();
     if (!controller) {
@@ -921,20 +927,27 @@ export class SceneManager {
     try {
       const { prepareImmersiveAr } = await import('./xr');
       const overlayRoot = this.canvas.closest('.app') as HTMLElement | null;
-      this.xrPrepared = await prepareImmersiveAr(this.scene, overlayRoot ?? document.body, {
+      const callbacks = { ...hooks };
+      const prepared = await prepareImmersiveAr(this.scene, overlayRoot ?? document.body, {
         onReticle: (pose) => this.setReticle(this.placementActive ? pose : undefined),
         onSelectAnchor: (pose) => {
           if (!this.placementActive) return;
           if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) return;
-          hooks.onPlace(this.placementPose(pose));
+          callbacks.onPlace(this.placementPose(pose));
           this.setPlacementActive(false);
         },
         onStateChange: (inXr) => {
-          this.arMode = inXr;
-          this.setTransparent(inXr);
-          if (!inXr) { this.setReticle(undefined); hooks.onEnd?.(); }
+          if (inXr) {
+            this.arMode = true;
+            this.setTransparent(true);
+          } else {
+            this.setArMode(false);
+            this.setReticle(undefined);
+            callbacks.onEnd?.();
+          }
         },
       });
+      this.xrPrepared = prepared ? { ...prepared, callbacks } : undefined;
     } catch (err) {
       this.xrLoadError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     }

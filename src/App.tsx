@@ -19,6 +19,7 @@ import { UiConfigProvider } from './ui/UiConfigContext';
 import { resolveUiConfig, type UiConfig } from './ui/config';
 import { useMediaQuery } from './ui/useMediaQuery';
 import { useStore } from './state/store';
+import type { PipelineConfig } from './vision/pipeline';
 
 type Drawer = 'register' | 'collab' | 'bom' | undefined;
 /** What the phone's bottom sheet is showing. */
@@ -54,11 +55,11 @@ function SheetTab({ id, current, onPick, label, icon, count }: {
   );
 }
 
-export function App({ config }: { config?: Partial<UiConfig> }): JSX.Element {
+export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>; recognitionConfig?: PipelineConfig }): JSX.Element {
   const ui = useMemo(() => resolveUiConfig(config), [config]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const { capabilities, pipelineStatus, arActive, enterAr, replaceAnchor, bringInFront, retryWebXr } =
-    useArController(videoRef);
+    useArController(videoRef, recognitionConfig);
   const [drawer, setDrawer] = useState<Drawer>(undefined);
   // On a phone/tablet the three-column desktop layout does not fit: the viewport
   // is the app, and the panels live in a collapsible sheet with one visible at a

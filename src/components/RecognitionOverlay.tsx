@@ -46,7 +46,7 @@ export function RecognitionOverlay(): JSX.Element | null {
       const limit = arChromeTop();
       if (manager) {
         for (const o of recognition.objects) {
-          if (!partIds.has(o.label)) continue; // only on known assembly parts
+          if (o.status === 'unknown' || !partIds.has(o.label)) continue;
           const p = manager.projectPart(o.label);
           // Below the AR HUD a pin is just a fragment behind the control bar.
           if (!p || !p.onScreen || p.y > limit) continue;
@@ -91,8 +91,9 @@ export function VerdictBanner(): JSX.Element | null {
     .join(', ');
 
   let text: string;
-  if (recognition.verdict === 'correct') text = `Correct part in view — ${expectedNames}`;
+  if (recognition.verdict === 'correct') text = `Expected part label in view — ${expectedNames} (pose and seating not verified)`;
   else if (recognition.verdict === 'wrong') text = `Wrong part: ${recognition.wrongName ?? recognition.wrongLabel} — expected ${expectedNames}`;
+  else if (recognition.objects.some((o) => o.status === 'unknown')) text = 'Unmapped or ambiguous part — occurrence not verified';
   else text = `Looking for ${expectedNames}…`;
 
   return (

@@ -19,6 +19,7 @@ export function useSceneManager(
 ): { manager: SceneManager | undefined } {
   const [manager, setManager] = useState<SceneManager>();
   const managerRef = useRef<SceneManager | undefined>(undefined);
+  const loadedAssembly = useRef<AssemblyDef | undefined>(undefined);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -32,6 +33,7 @@ export function useSceneManager(
       if (disposed) { m.dispose(); return; }
       if (opts.grid) m.addGroundGrid();
       m.frameCamera();
+      loadedAssembly.current = assembly;
       managerRef.current = m;
       setActiveManager(m);
       setManager(m);
@@ -60,7 +62,6 @@ export function useSceneManager(
 
   // Push store state into the manager whenever the relevant slices change.
   useEffect(() => {
-    let lastAssemblyId: string | undefined;
     const push = (): void => {
       const m = managerRef.current;
       if (!m) return;
@@ -68,10 +69,10 @@ export function useSceneManager(
       // Rebuild the scene when the assembly itself changes — otherwise the
       // picker (and the Mendix assembly binding) would swap the data while the
       // 3D view kept rendering the previous model's meshes.
-      if (lastAssemblyId !== undefined && s.assembly.id !== lastAssemblyId) {
+      if (s.assembly !== loadedAssembly.current) {
         m.loadAssembly(s.assembly);
       }
-      lastAssemblyId = s.assembly.id;
+      loadedAssembly.current = s.assembly;
       const step = s.assembly.steps.find((st) => st.id === s.activeStepId);
       const partIds = new Set(s.assembly.parts.map((p) => p.id));
       const recognitionByPart = new Map<string, RecognitionStatus>();

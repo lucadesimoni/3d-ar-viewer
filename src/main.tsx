@@ -6,6 +6,7 @@ import { useStore } from './state/store';
 import { parseUiConfigFromParams } from './ui/config';
 import { ASSEMBLIES } from './data';
 import { getActiveManager } from './render/babylon/managerRegistry';
+import { installEmbedBridge } from './embed/bridge';
 
 // Config for the standalone/iframe build comes from URL params, e.g.
 //   /?ui=minimal&embedded=1&accent=%23ff7a00
@@ -23,6 +24,20 @@ if (root) createRoot(root).render(<StrictMode><App config={config} /></StrictMod
 // Expose the store and the live scene for demo/e2e driving (read-only handles).
 (window as unknown as { spatialStore?: typeof useStore }).spatialStore = useStore;
 (window as unknown as { spatialScene?: typeof getActiveManager }).spatialScene = getActiveManager;
+
+const parentOrigin = new URLSearchParams(window.location.search).get('parentOrigin');
+if (parentOrigin && window.parent !== window) {
+  try {
+    const disposeBridge = installEmbedBridge(parentOrigin);
+    window.addEventListener('pagehide', (event) => {
+      if (!event.persisted) disposeBridge();
+    });
+    import.meta.hot?.dispose(disposeBridge);
+  } catch (error) {
+    console.error('Viewer host integration could not start', error);
+    useStore.getState().setArError('Host integration is unavailable: parentOrigin must be an exact HTTP(S) origin.');
+  }
+}
 
 // Register the offline app-shell service worker in production (secure contexts
 // only; skipped in dev and where unsupported).

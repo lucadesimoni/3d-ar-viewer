@@ -41,6 +41,8 @@ export interface ModelConfig {
 
 export interface Detection {
   label: string;
+  /** Explicit candidate occurrence IDs. Empty/multiple candidates are not an identity. */
+  partIds?: readonly string[];
   classId: number;
   score: number;
   /** Normalised 0..1 box in the *preprocessed* frame: x, y, w, h. */
@@ -49,6 +51,7 @@ export interface Detection {
 
 export interface Classification {
   label: string;
+  partIds?: readonly string[];
   classId: number;
   score: number;
 }
@@ -106,6 +109,11 @@ export class VisionModel {
   private session: InferenceSession | undefined;
   private ort: typeof import('onnxruntime-web') | undefined;
   provider: ExecutionProvider | undefined;
+  /** Last load failure, including a failed WebGPU attempt when WASM succeeds. */
+  error: string | undefined;
+  private disposed = false;
+  private loading: Promise<boolean> | undefined;
+  private activeRuns = 0;
 
   constructor(
     readonly config: ModelConfig,
@@ -113,35 +121,49 @@ export class VisionModel {
   ) {}
 
   get ready(): boolean {
-    return this.session !== undefined;
+    return !this.disposed && this.session !== undefined;
   }
 
-  async load(): Promise<boolean> {
-    this.ort = await loadOrt();
-    if (!this.ort) return false;
-    const providers = await pickProviders();
+  load(): Promise<boolean> {
+    if (this.disposed) return Promise.resolve(false);
+    return this.loading ??= this.loadSession();
+  }
+
+  private async loadSession(): Promise<boolean> {
     try {
-      this.session = await this.ort.InferenceSession.create(this.config.url, {
-        executionProviders: providers,
-        graphOptimizationLevel: 'all',
-      });
-      this.provider = providers[0];
-      return true;
-    } catch {
-      // WebGPU can fail to compile a graph; retry once pinned to WASM.
-      if (providers[0] !== 'wasm') {
-        try {
-          this.session = await this.ort.InferenceSession.create(this.config.url, {
-            executionProviders: ['wasm'],
-          });
-          this.provider = 'wasm';
-          return true;
-        } catch {
-          return false;
-        }
-      }
+      validateModelConfig(this.config);
+    } catch (error) {
+      this.error = errorMessage(error);
       return false;
     }
+    this.ort = await loadOrt();
+    if (this.disposed) return false;
+    if (!this.ort) {
+      this.error = 'ONNX Runtime could not be loaded.';
+      return false;
+    }
+    const providers = await pickProviders();
+    const attempts = providers[0] === 'wasm' ? [providers] : [providers, ['wasm'] as ExecutionProvider[]];
+    for (const executionProviders of attempts) {
+      if (this.disposed) return false;
+      try {
+        const session = await this.ort.InferenceSession.create(this.config.url, {
+          executionProviders,
+          graphOptimizationLevel: 'all',
+        });
+        if (this.disposed) {
+          await session.release();
+          return false;
+        }
+        this.session = session;
+        this.provider = executionProviders[0];
+        return true;
+      } catch (error) {
+        const message = `${executionProviders[0]}: ${errorMessage(error)}`;
+        this.error = this.error ? `${this.error}; ${message}` : message;
+      }
+    }
+    return false;
   }
 
   /** Aspect-correct preprocessing into the model's input tensor. */
@@ -183,11 +205,19 @@ export class VisionModel {
   }
 
   private async run(image: ImageData, useLetterbox = false): Promise<{ out: Record<string, Tensor>; lb?: LetterboxResult }> {
-    if (!this.session || !this.ort) throw new Error('Model not loaded');
+    if (!this.ready || !this.session || !this.ort) throw new Error('Model not loaded');
+    const session = this.session;
     const { tensor, lb } = this.makeInputTensor(image, useLetterbox);
-    const name = this.config.inputName ?? this.session.inputNames[0];
-    const out = (await this.session.run({ [name]: tensor })) as unknown as Record<string, Tensor>;
-    return { out, lb };
+    const name = this.config.inputName ?? session.inputNames[0];
+    this.activeRuns++;
+    try {
+      const out = (await session.run({ [name]: tensor })) as unknown as Record<string, Tensor>;
+      return { out, lb };
+    } finally {
+      tensor.dispose();
+      this.activeRuns--;
+      if (this.disposed && this.activeRuns === 0) this.releaseSession();
+    }
   }
 
   private label(classId: number): string {
@@ -199,6 +229,7 @@ export class VisionModel {
     const { out } = await this.run(image, false);
     const logits = firstTensor(out);
     if (!logits) return [];
+    this.validateLabelCount(logits.data.length);
     const scores = softmax(Array.from(logits.data as Float32Array));
     return scores
       .map((score, classId) => ({ classId, score, label: this.label(classId) }))
@@ -237,6 +268,7 @@ export class VisionModel {
     const attrs = v8 ? a : b;
     const numClasses = v8 ? attrs - 4 : attrs - 5;
     if (numClasses <= 0) return [];
+    this.validateLabelCount(numClasses);
 
     // Reading one attribute of box i: v8 is channel-major (stride numBoxes),
     // v5 is box-major (stride attrs).
@@ -277,6 +309,7 @@ export class VisionModel {
     if (!t) return undefined;
     const [, classes, h, w] = t.dims as number[];
     if (!classes || !h || !w) return undefined;
+    this.validateLabelCount(classes);
     const data = t.data as Float32Array;
     const mask = new Uint8Array(h * w);
     const plane = h * w;
@@ -296,8 +329,45 @@ export class VisionModel {
   }
 
   dispose(): void {
-    void this.session?.release?.();
+    this.disposed = true;
+    this.provider = undefined;
+    if (this.activeRuns === 0) this.releaseSession();
+  }
+
+  private releaseSession(): void {
+    void this.session?.release?.().catch(() => undefined);
     this.session = undefined;
+  }
+
+  private validateLabelCount(count: number): void {
+    if (this.config.labels && this.config.labels.length !== count) {
+      throw new Error(`Model outputs ${count} classes but ${this.config.labels.length} labels were configured.`);
+    }
+  }
+}
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Validate deployment metadata before downloading a graph. Labels are never inferred from CAD. */
+export function validateModelConfig(config: ModelConfig): void {
+  if (typeof config.url !== 'string' || !config.url.trim()) throw new Error('Model URL must be non-empty.');
+  if (!Number.isInteger(config.inputSize) || config.inputSize < 1 || config.inputSize > 4096) {
+    throw new Error('Model inputSize must be an integer between 1 and 4096.');
+  }
+  if (config.layout !== undefined && !['nchw', 'nhwc'].includes(config.layout)) throw new Error('Unsupported tensor layout.');
+  if (config.format !== undefined && !['auto', 'yolov5', 'yolov8'].includes(config.format)) throw new Error('Unsupported detector format.');
+  if (config.inputName !== undefined && !config.inputName.trim()) throw new Error('Model inputName must be non-empty.');
+  for (const key of ['mean', 'std'] as const) {
+    const values = config[key];
+    if (values && (values.length !== 3 || values.some((v) => !Number.isFinite(v) || (key === 'std' && v <= 0)))) {
+      throw new Error(`Model ${key} must contain three finite ${key === 'std' ? 'positive ' : ''}numbers.`);
+    }
+  }
+  if (config.labels && (!config.labels.length || config.labels.some((label) => typeof label !== 'string' || !label.trim() || label !== label.trim())
+    || new Set(config.labels).size !== config.labels.length)) {
+    throw new Error('Model labels must be unique, non-empty strings without surrounding whitespace.');
   }
 }
 

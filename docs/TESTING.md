@@ -7,7 +7,7 @@ cannot.
 | Layer | Command | Covers | Blind to |
 | --- | --- | --- | --- |
 | Types | `npm run typecheck` | The whole repo compiles | Everything about behaviour |
-| Unit | `npm test` | Geometry, snapping, diagnostics, sequencing, vision maths — 161 tests | Anything needing a canvas, a camera or a layout |
+| Unit | `npm test` | Geometry, assembly import, iframe protocol, camera lifecycle, recognition identity and inference lifecycle, snapping, diagnostics, sequencing, vision maths | Real camera optics, device GPU/sensors, and browser layout |
 | Browser | `ar:verify`, `steps:check`, `layout:check`, `place:check` | AR anchoring and tracking, the HUD on phone/tablet viewports, step guidance, placing and snapping — against a real Chromium and the real build | Real camera optics, real motion sensors, real WebXR |
 | Deployment | `deploy:check` | First visit, offline, redeploy with new bundle names, offline again — against a deliberately dumb static host | Whether the actual host sets the headers |
 | Production | the same browser checks with `PREVIEW_URL=https://…` | The site that is actually serving: bad deploy, stale worker, missing header | Same hardware blind spots |
@@ -35,6 +35,14 @@ PREVIEW_URL=https://your-deployment.example/ npm run ar:verify
 ```
 
 ## What the browser checks actually do
+
+Focused platform regressions also cover external assembly validation and
+occurrence identities (`assemblyImport.test.ts`), origin-checked host messages
+and private-resource cache routing (`src/embed/`), Mendix validation/configuration
+and completion events, and same-id CAD revision updates in the scene manager.
+Camera tests simulate late permission/playback completion; recognition tests
+simulate model outputs, failures, class mappings and invalidated in-flight work.
+These do not measure production recognition accuracy against real parts.
 
 They are not smoke tests. Each asserts a number or a state that a person
 reported wrong at some point:
@@ -68,6 +76,11 @@ reported wrong at some point:
 
 ## The part no machine can do
 
+The XR unit regressions in `xrSession.test.ts`, `xrPlacement.test.ts`, and
+`useArController.test.ts` cover first-frame startup, native selection independent
+of scene picking, HUD input suppression, world-relative reference-space requests,
+and camera-to-XR handoff cleanup. They use simulated sessions, not ARCore.
+
 A headless Chromium has a fake camera, no gyroscope, no compass, and no WebXR
 device. These need a person and a phone, and there is no honest way around it:
 
@@ -84,6 +97,12 @@ device. These need a person and a phone, and there is no honest way around it:
       on it as you walk sideways.
 - [ ] **WebXR** (Android/Quest) — the session enters, the HUD stays visible over
       the camera, the anchor holds when you walk around it.
+- [ ] **WebXR placement** — aim at a detected surface, tap the viewport, then
+      walk sideways. The assembly stays on that surface. Move re-arms placement;
+      tapping HUD controls must not drop the assembly.
+- [ ] **Camera-to-WebXR retry** — after camera fallback, use "Try real AR
+      tracking". Placement starts fresh in the XR reference frame; the old
+      camera reticle, preview timer, and marker tracker must not move the anchor.
 - [ ] **iOS Safari** — the HUD is not hidden behind the browser toolbar, and
       Exit → Enter AR works twice in a row.
 - [ ] **Sleep** — the screen stays on during a session (wake lock).
