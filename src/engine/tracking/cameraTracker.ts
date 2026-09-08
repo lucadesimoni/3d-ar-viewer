@@ -152,7 +152,16 @@ const CAMERA_ATTEMPTS: MediaStreamConstraints[] = [
 /** How long to wait before trying again after a busy device, ms. */
 const RETRY_DELAY_MS = 450;
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number, signal: AbortSignal): Promise<void> => new Promise((resolve) => {
+  const finish = (): void => {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', finish);
+    resolve();
+  };
+  const timer = setTimeout(finish, ms);
+  signal.addEventListener('abort', finish, { once: true });
+  if (signal.aborted) finish();
+});
 
 /**
  * Open the camera, or explain in a sentence why not.
@@ -165,7 +174,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
  * before troubling the operator; the first needs a message that says which
  * thing to go and close.
  */
-async function openCamera(): Promise<MediaStream | string> {
+async function openCamera(signal: AbortSignal): Promise<MediaStream | string | undefined> {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
     return 'This browser exposes no camera API. AR needs a secure (HTTPS) context.';
   }
@@ -173,12 +182,21 @@ async function openCamera(): Promise<MediaStream | string> {
   let last: unknown;
   for (let attempt = 0; attempt < CAMERA_ATTEMPTS.length; attempt++) {
     for (const wait of [0, RETRY_DELAY_MS]) {
-      if (wait) await sleep(wait);
+      if (wait) await sleep(wait, signal);
+      if (signal.aborted) return;
       try {
-        return await navigator.mediaDevices.getUserMedia(CAMERA_ATTEMPTS[attempt]);
+        const stream = await navigator.mediaDevices.getUserMedia(CAMERA_ATTEMPTS[attempt]);
+        // getUserMedia cannot be aborted: a dismissed session must still
+        // release a stream that arrives after the permission prompt closes.
+        if (signal.aborted) {
+          for (const track of stream.getTracks()) track.stop();
+          return;
+        }
+        return stream;
       } catch (err) {
+        if (signal.aborted) return;
         last = err;
-        const name = err instanceof Error ? err.name : '';
+        const name = cameraErrorName(err);
         // A refusal and a missing device will not change on a retry.
         if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'NotFoundError') {
           return describeCameraError(err);
@@ -191,8 +209,14 @@ async function openCamera(): Promise<MediaStream | string> {
   return describeCameraError(last);
 }
 
+function cameraErrorName(err: unknown): string {
+  // DOMException and errors from another frame need not share our Error class.
+  return typeof err === 'object' && err !== null && 'name' in err && typeof err.name === 'string'
+    ? err.name : '';
+}
+
 function describeCameraError(err: unknown): string {
-  const name = err instanceof Error ? err.name : '';
+  const name = cameraErrorName(err);
   switch (name) {
     case 'NotAllowedError':
     case 'SecurityError':
@@ -219,6 +243,8 @@ export class CameraTracker {
 
   readonly options: Required<CameraTrackerOptions>;
   private stream: MediaStream | undefined;
+  private video: HTMLVideoElement | undefined;
+  private session: AbortController | undefined;
   private smoothed = new Quaternion();
   private firstHeading: number | undefined;
   /** Which of the two event names this session listens to. */
@@ -267,26 +293,47 @@ export class CameraTracker {
 
   /** Open the rear camera and start listening to the motion sensors. */
   async start(video: HTMLVideoElement): Promise<void> {
-    const stream = await openCamera();
+    this.session?.abort();
+    this.releaseResources();
+    const session = new AbortController();
+    this.session = session;
+    this.state.error = undefined;
+    const stream = await openCamera(session.signal);
+    if (session.signal.aborted || this.session !== session || !stream) return;
     if (typeof stream === 'string') {
+      this.session = undefined;
       this.state.error = stream;
       this.state.running = false;
       this.emit();
       return;
     }
     this.stream = stream;
+    this.video = video;
 
-    video.srcObject = this.stream;
-    video.setAttribute('playsinline', 'true'); // iOS fullscreens the video without this
-    video.muted = true;
-    await video.play().catch(() => undefined);
+    try {
+      video.srcObject = stream;
+      video.setAttribute('playsinline', 'true'); // iOS fullscreens the video without this
+      video.muted = true;
+      await video.play();
+    } catch (err) {
+      if (session.signal.aborted || this.session !== session) return;
+      this.session = undefined;
+      session.abort();
+      this.releaseResources();
+      this.state.error = `Camera playback failed. Try starting AR again: ${String(err)}`;
+      this.emit();
+      return;
+    }
+    if (session.signal.aborted || this.session !== session) return;
 
     // Two event names, because Android is split on which one it fires: Chrome
     // and Samsung Internet deliver `deviceorientationabsolute` on many devices
     // and nothing at all on the plain name. Listening only for the plain one
     // left the scene camera level while the phone pointed at the floor — the
     // overlay was then placed correctly and rendered somewhere off screen.
-    this.listener = (e: DeviceOrientationEvent) => this.onOrientation(e);
+    this.listener = (e: DeviceOrientationEvent) => {
+      if (!session.signal.aborted && this.session === session) this.onOrientation(e);
+    };
     window.addEventListener('deviceorientation', this.listener, true);
     window.addEventListener('deviceorientationabsolute', this.listener, true);
     this.state.running = true;
@@ -399,6 +446,13 @@ export class CameraTracker {
   }
 
   stop(): void {
+    this.session?.abort();
+    this.session = undefined;
+    this.releaseResources();
+    this.emit();
+  }
+
+  private releaseResources(): void {
     if (this.listener) {
       window.removeEventListener('deviceorientation', this.listener, true);
       window.removeEventListener('deviceorientationabsolute', this.listener, true);
@@ -411,9 +465,17 @@ export class CameraTracker {
     this.confirmations = 0;
     this.turning = false;
     for (const track of this.stream?.getTracks() ?? []) track.stop();
+    // Do not detach a replacement stream installed by the embedding host.
+    if (this.video && this.stream && this.video.srcObject === this.stream) {
+      try { this.video.pause(); } catch { /* Some embedded media implementations throw on pause. */ }
+      this.video.srcObject = null;
+    }
+    this.video = undefined;
     this.stream = undefined;
+    this.firstHeading = undefined;
+    this.state.headingDeg = undefined;
+    this.state.driftDeg = 0;
     this.state.running = false;
     this.state.receivingMotion = false;
-    this.emit();
   }
 }

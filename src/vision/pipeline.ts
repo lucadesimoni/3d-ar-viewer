@@ -22,7 +22,9 @@ import {
   type Point2,
 } from './opencv';
 import { DetectionTracker, ClassificationVoter, type Track } from './tracking';
+import { remapLabels } from './defaultModels';
 import {
+  errorMessage,
   VisionModel,
   type Classification,
   type Detection,
@@ -43,6 +45,13 @@ export interface PipelineConfig {
   temporal?: boolean;
   /** Use soft-NMS instead of hard NMS in detection. */
   softNms?: boolean;
+  /**
+   * Model label -> runtime part/occurrence IDs. When supplied, this is an
+   * allowlist: unmapped classes remain unknown. Multiple IDs describe repeated
+   * indistinguishable parts, not a confirmed occurrence, pose or seating.
+   * Without a mapping, explicitly configured labels are treated as exact IDs.
+   */
+  labelMapping?: Record<string, string | readonly string[]>;
 }
 
 export interface FrameResult {
@@ -55,7 +64,7 @@ export interface FrameResult {
   tracks: Track[];
   classification?: Classification[];
   /** Majority-voted class over a rolling window, when temporal is on. */
-  votedClass?: { classId: number; label: string; confidence: number };
+  votedClass?: { classId: number; label: string; confidence: number; partIds?: readonly string[] };
   segmentation?: Segmentation;
   /** Whole-frame inference wall time, ms. */
   latencyMs: number;
@@ -67,6 +76,8 @@ export interface PipelineStatus {
   classifier: boolean;
   segmenter: boolean;
   provider?: string;
+  /** Per-capability diagnostics; a ready WASM model may retain its WebGPU failure. */
+  errors?: Partial<Record<'config' | 'openCv' | 'detector' | 'classifier' | 'segmenter', string>>;
 }
 
 /**
@@ -83,19 +94,36 @@ export class RecognitionPipeline {
   private segmenter: VisionModel | undefined;
   private busy = false;
   private openCvReady = false;
+  private disposed = false;
+  private generation = 0;
+  private initializing: Promise<PipelineStatus> | undefined;
+  private readonly errors: NonNullable<PipelineStatus['errors']> = {};
   private readonly tracker = new DetectionTracker();
   private readonly voter = new ClassificationVoter();
 
   constructor(private readonly config: PipelineConfig = {}) {}
 
   /** Kick off all lazy loads. Safe to call before the camera is live. */
-  async init(): Promise<PipelineStatus> {
+  init(): Promise<PipelineStatus> {
+    if (this.disposed) return Promise.resolve(this.status());
+    return this.initializing ??= this.initialize();
+  }
+
+  private async initialize(): Promise<PipelineStatus> {
+    try {
+      validatePipelineConfig(this.config);
+    } catch (error) {
+      this.errors.config = errorMessage(error);
+      return this.status();
+    }
     const tasks: Promise<unknown>[] = [];
 
     tasks.push(
       loadOpenCV(this.config.openCvUrl).then((cv) => {
+        if (this.disposed) return;
         this.openCvReady = cv !== undefined;
-      }),
+        if (!cv) this.errors.openCv = 'OpenCV unavailable; using JavaScript image processing.';
+      }).catch((error) => { if (!this.disposed) this.errors.openCv = errorMessage(error); }),
     );
     if (this.config.detector) {
       this.detector = new VisionModel(this.config.detector, 'detection');
@@ -121,6 +149,12 @@ export class RecognitionPipeline {
       classifier: this.classifier?.ready ?? false,
       segmenter: this.segmenter?.ready ?? false,
       provider: this.detector?.provider ?? this.classifier?.provider,
+      errors: {
+        ...(this.detector?.error ? { detector: this.detector.error } : {}),
+        ...(this.classifier?.error ? { classifier: this.classifier.error } : {}),
+        ...(this.segmenter?.error ? { segmenter: this.segmenter.error } : {}),
+        ...this.errors,
+      },
     };
   }
 
@@ -135,15 +169,18 @@ export class RecognitionPipeline {
     image: ImageData,
     opts: { roi?: { x: number; y: number; w: number; h: number }; runSegmentation?: boolean } = {},
   ): Promise<FrameResult | undefined> {
-    if (this.busy) return undefined;
+    if (this.busy || this.disposed || this.errors.config) return undefined;
     this.busy = true;
+    const generation = this.generation;
     const start = performance.now();
     const ts = Date.now();
 
     try {
       const sharp = measureSharpness(image, this.config.sharpnessThreshold ?? 90);
       if (!sharp.sharp) {
-        return { ts, accepted: false, sharpness: sharp.variance, detections: [], tracks: this.tracker.confirmed(), latencyMs: performance.now() - start };
+        this.tracker.update([]);
+        this.voter.reset();
+        return { ts, accepted: false, sharpness: sharp.variance, detections: [], tracks: [], latencyMs: performance.now() - start };
       }
 
       let frame = opts.roi ? crop(image, opts.roi.x, opts.roi.y, opts.roi.w, opts.roi.h) : image;
@@ -151,13 +188,25 @@ export class RecognitionPipeline {
         frame = normalizeIllumination(frame);
       }
 
-      const [detections, classification, segmentation] = await Promise.all([
-        this.detector?.ready ? this.detector.detect(frame, 0.35, 0.45, { soft: this.config.softNms }) : Promise.resolve<Detection[]>([]),
-        this.classifier?.ready ? this.classifier.classify(frame) : Promise.resolve<Classification[] | undefined>(undefined),
+      const [rawDetections, rawClassification, segmentation] = await Promise.all([
+        this.detector?.ready ? this.detector.detect(frame, 0.35, 0.45, { soft: this.config.softNms }).catch((error) => {
+          if (generation === this.generation) this.errors.detector = errorMessage(error);
+          return [];
+        }) : Promise.resolve<Detection[]>([]),
+        this.classifier?.ready ? this.classifier.classify(frame).catch((error) => {
+          if (generation === this.generation) this.errors.classifier = errorMessage(error);
+          return undefined;
+        }) : Promise.resolve<Classification[] | undefined>(undefined),
         opts.runSegmentation && this.segmenter?.ready
-          ? this.segmenter.segment(frame)
+          ? this.segmenter.segment(frame).catch((error) => {
+            if (generation === this.generation) this.errors.segmenter = errorMessage(error);
+            return undefined;
+          })
           : Promise.resolve<Segmentation | undefined>(undefined),
       ]);
+      if (this.disposed || generation !== this.generation) return undefined;
+      const detections = rawDetections.map((d) => this.resolveIdentity(d, this.config.detector));
+      const classification = rawClassification?.map((c) => this.resolveIdentity(c, this.config.classifier));
 
       const temporal = this.config.temporal ?? true;
       const tracks = temporal ? this.tracker.update(detections) : detections.map(detToTrack);
@@ -165,6 +214,11 @@ export class RecognitionPipeline {
       if (temporal && classification && classification[0]) {
         this.voter.push(classification[0].classId, classification[0].label, classification[0].score);
         votedClass = this.voter.vote();
+        if (votedClass) {
+          votedClass.partIds = this.resolveIdentity(votedClass, this.config.classifier).partIds;
+        }
+      } else {
+        this.voter.reset();
       }
 
       return {
@@ -185,14 +239,49 @@ export class RecognitionPipeline {
 
   /** Clear temporal history — call when the active step or the workpiece changes. */
   resetTemporal(): void {
+    this.generation++;
     this.tracker.reset();
     this.voter.reset();
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.resetTemporal();
+    this.openCvReady = false;
     this.detector?.dispose();
     this.classifier?.dispose();
     this.segmenter?.dispose();
+  }
+
+  private resolveIdentity<T extends { classId: number; label: string }>(value: T, model?: ModelConfig): T & { partIds: readonly string[] } {
+    const sourceLabel = model?.labels?.[value.classId];
+    // Numeric fallback labels (class_0 etc.) are display-only, not part IDs.
+    if (!sourceLabel) return { ...value, partIds: [] };
+    const mapping = this.config.labelMapping;
+    const target = mapping
+      ? (Object.hasOwn(mapping, sourceLabel) ? mapping[sourceLabel] : [])
+      : sourceLabel;
+    const partIds = typeof target === 'string' ? [target] : [...target];
+    const label = partIds.length === 1
+      ? remapLabels([sourceLabel], { [sourceLabel]: partIds[0] })[0]
+      : sourceLabel;
+    return { ...value, label, partIds };
+  }
+}
+
+export function validatePipelineConfig(config: PipelineConfig): void {
+  if (config.sharpnessThreshold !== undefined && (!Number.isFinite(config.sharpnessThreshold) || config.sharpnessThreshold < 0)) {
+    throw new Error('sharpnessThreshold must be a finite, non-negative number.');
+  }
+  const labels = new Set([...(config.detector?.labels ?? []), ...(config.classifier?.labels ?? [])]);
+  for (const [label, target] of Object.entries(config.labelMapping ?? {})) {
+    if (!labels.has(label)) throw new Error(`Mapped class "${label}" is not in the detector/classifier labels.`);
+    const ids = typeof target === 'string' ? [target] : target;
+    if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string' || !id.trim() || id !== id.trim())
+      || new Set(ids).size !== ids.length) {
+      throw new Error(`Mapping for "${label}" must contain unique, non-empty part IDs.`);
+    }
   }
 }
 
@@ -218,7 +307,8 @@ export function checkExpectation(
   expectedLabel: string,
   minScore = 0.4,
 ): ExpectationCheck {
-  const strong = detections.filter((d) => d.score >= minScore);
+  const strong = detections.filter((d) => d.score >= minScore
+    && (d.partIds === undefined || d.partIds.length === 1));
   const match = strong.find((d) => d.label === expectedLabel);
   const other = strong
     .filter((d) => d.label !== expectedLabel)
@@ -249,5 +339,5 @@ export function markerCorners(det: Detection, frameW: number, frameH: number): [
 
 /** Wrap a raw detection as a (single-frame) track when temporal fusion is off. */
 function detToTrack(d: Detection, i: number): Track {
-  return { id: i, label: d.label, classId: d.classId, box: d.box, score: d.score, hits: 1, misses: 0, age: 1, confirmed: true };
+  return { id: i, label: d.label, partIds: d.partIds, classId: d.classId, box: d.box, score: d.score, hits: 1, misses: 0, age: 1, confirmed: true };
 }

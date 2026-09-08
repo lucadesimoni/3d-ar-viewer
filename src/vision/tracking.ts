@@ -15,6 +15,7 @@ import { iou, type Detection } from './onnx';
 export interface Track {
   id: number;
   label: string;
+  partIds?: readonly string[];
   classId: number;
   /** Smoothed box (EMA), normalised in the original frame. */
   box: Detection['box'];
@@ -109,6 +110,7 @@ export class DetectionTracker {
       this.tracks.push({
         id: this.nextId++,
         label: det.label,
+        partIds: det.partIds,
         classId: det.classId,
         box: det.box,
         score: det.score,
@@ -127,6 +129,7 @@ export class DetectionTracker {
     track.box = emaBox(track.box, det.box, t);
     track.score = track.score + (det.score - track.score) * t;
     track.label = det.label;
+    track.partIds = det.partIds;
     track.hits += 1;
     track.misses = 0;
     track.age += 1;

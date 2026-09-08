@@ -22,6 +22,12 @@ function stub(model: VisionModel, out: unknown) {
 const img = { data: new Uint8ClampedArray(4), width: 1, height: 1, colorSpace: 'srgb' } as ImageData;
 
 describe('detect() format handling', () => {
+  it('rejects a graph whose class count disagrees with the declared labels', async () => {
+    const m = new VisionModel({ url: 'x', inputSize: 640, labels: ['a'], format: 'yolov8' }, 'detection');
+    stub(m, tensor([1, 6, 1], [320, 320, 64, 64, 0.1, 0.9]));
+    await expect(m.detect(img)).rejects.toThrow('2 classes but 1 labels');
+  });
+
   it('decodes a YOLOv8 ([1, 4+C, N]) output with no objectness', async () => {
     const m = new VisionModel({ url: 'x', inputSize: 640, labels: ['a', 'b'], format: 'yolov8' }, 'detection');
     // cx,cy,w,h then 2 class scores, channel-major with N=1.

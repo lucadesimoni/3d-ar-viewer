@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { detectCapabilities, type Capabilities } from '../engine/tracking/capabilities';
 import { CameraTracker } from '../engine/tracking/cameraTracker';
 import { MarkerTracker } from '../engine/tracking/markerTracking';
-import { RecognitionPipeline, type PipelineStatus } from '../vision/pipeline';
+import { RecognitionPipeline, type PipelineConfig, type PipelineStatus } from '../vision/pipeline';
 import { envModelConfig } from '../vision/defaultModels';
 import { classifyRecognition, type LabelInfo } from '../vision/verdict';
 import { ObjectAnchorTracker } from '../vision/objectAnchor';
@@ -89,13 +89,20 @@ async function takeWakeLock(): Promise<WakeLock | undefined> {
   }
 }
 
-export function useArController(videoRef: React.RefObject<HTMLVideoElement | null>) {
+export function useArController(
+  videoRef: React.RefObject<HTMLVideoElement | null>,
+  recognitionConfig?: PipelineConfig,
+) {
   const [capabilities, setCapabilities] = useState<Capabilities>();
   const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus>();
   const [arActive, setArActive] = useState(false);
   const trackerRef = useRef<CameraTracker | undefined>(undefined);
   const markerRef = useRef<MarkerTracker | undefined>(undefined);
   const pipelineRef = useRef<RecognitionPipeline | undefined>(undefined);
+  const recognitionGeneration = useRef(0);
+  const sessionGeneration = useRef(0);
+  const entryPending = useRef(false);
+  const retryPending = useRef(false);
   const frameTimer = useRef<number | undefined>(undefined);
   const previewTimer = useRef<number | undefined>(undefined);
   const stopPlacement = useRef<(() => void) | undefined>(undefined);
@@ -114,8 +121,61 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
   // part, so clear the tracker/voter history rather than carrying stale votes.
   const activeStepId = useStore((s) => s.activeStepId);
   useEffect(() => {
+    recognitionGeneration.current++;
     pipelineRef.current?.resetTemporal();
-  }, [activeStepId]);
+    useStore.getState().setRecognition(undefined);
+  }, [activeStepId, assembly]);
+
+  useEffect(() => {
+    if (!trackerRef.current) return;
+    objectAnchor.current = assembly.recognition
+      ? new ObjectAnchorTracker(assembly.recognition, { detectIntervalMs: detectPerfProfile().recognitionIntervalMs })
+      : undefined;
+  }, [assembly]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const definition = assembly.marker;
+    if (!arActive || !trackerRef.current || xrSession.current || !video || !definition) return;
+    const marker = new MarkerTracker(definition.sizeM, (obs) => {
+      if (markerRef.current !== marker || xrSession.current || cameraSuspended.current
+        || !trackerRef.current?.state.running || useStore.getState().assembly !== assembly) return;
+      if (obs.id !== definition.id) return;
+      const world = getActiveManager()?.cameraToWorld(obs.pose) ?? obs.pose;
+      const anchor = alignToMarker(world, definition.poseInAssembly);
+      const quality = Math.max(0, Math.min(1, 1 - obs.reprojectionPx / 8));
+      setAnchor(anchor, quality, 'marker');
+      stopPlacement.current?.();
+      stopPlacement.current = undefined;
+      trackerRef.current.markRegistered();
+    });
+    markerRef.current = marker;
+    marker.start(video);
+    return () => {
+      marker.stop();
+      if (markerRef.current === marker) markerRef.current = undefined;
+    };
+  }, [assembly, arActive, videoRef, setAnchor]);
+
+  // A host can replace this immutable configuration without restarting its
+  // camera/XR session. Cleanup owns both loaded and still-loading models.
+  useEffect(() => {
+    let alive = true;
+    recognitionGeneration.current++;
+    setPipelineStatus(undefined);
+    useStore.getState().setRecognition(undefined);
+    const pipeline = new RecognitionPipeline(recognitionConfig ?? envModelConfig());
+    pipelineRef.current = pipeline;
+    void pipeline.init().then((status) => {
+      if (alive) setPipelineStatus(status);
+    });
+    return () => {
+      alive = false;
+      recognitionGeneration.current++;
+      pipeline.dispose();
+      if (pipelineRef.current === pipeline) pipelineRef.current = undefined;
+    };
+  }, [recognitionConfig]);
 
   useEffect(() => {
     let alive = true;
@@ -131,21 +191,14 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       // download inside the tap handler is how that activation gets spent. The
       // session helper is built ahead of time for the same reason — that split
       // is what Babylon's own AR button used to give us for free.
-      if (caps.webxrSupported) {
+      if (caps.webxrSupported && caps.permissionsPolicy?.['xr-spatial-tracking'] !== 'denied') {
         void import('../render/babylon/xr');
         void getActiveManager()?.prepareWebXr({
-          onPlace: (pose) => useStore.getState().setAnchor(pose, 0.9, 'floor'),
-          onEnd: () => stop(),
+          onPlace: (pose) => { if (xrSession.current) useStore.getState().setAnchor(pose, 0.9, 'floor'); },
+          onEnd: () => { if (xrSession.current) stop(); },
         });
       }
     });
-    // Boot the recognition pipeline in the background; no models are bundled, so
-    // this only wires up OpenCV unless a deployment supplies model URLs.
-    // Models come from VITE_* env vars (see .env.example); with none set the
-    // pipeline runs geometry-only and recognition stays quiet.
-    const pipeline = new RecognitionPipeline(envModelConfig());
-    pipelineRef.current = pipeline;
-    pipeline.init().then((s) => alive && setPipelineStatus(s));
     return () => { alive = false; };
   }, [setArMode]);
 
@@ -160,6 +213,11 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     };
 
     setArActive(false);
+    sessionGeneration.current++;
+    entryPending.current = false;
+    retryPending.current = false;
+    recognitionGeneration.current++;
+    safely('recognition', () => pipelineRef.current?.resetTemporal());
     safely('frame loop', () => {
       if (frameTimer.current) window.clearInterval(frameTimer.current);
       if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
@@ -186,20 +244,50 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     store.setArMotion(false);
   }, [videoRef]);
 
+  useEffect(() => {
+    sessionGeneration.current++;
+    retryPending.current = false;
+    // Keep an established session across recognition/assembly updates, but
+    // cancel permission prompts and starts that belonged to the old context.
+    if (entryPending.current || (trackerRef.current && !trackerRef.current.state.running)) stop();
+  }, [assembly, recognitionConfig, stop]);
+
   /**
    * Bring the camera up and wire it to the scene. Used both when entering AR
    * and when resuming a session that was suspended while the tab was in the
    * background, so the two cannot drift apart.
    */
-  const startCamera = useCallback(async (video: HTMLVideoElement): Promise<boolean> => {
+  const startCamera = useCallback(async (
+    video: HTMLVideoElement,
+    generation = sessionGeneration.current,
+  ): Promise<boolean> => {
+    if (capabilities?.permissionsPolicy?.camera === 'denied') {
+      useStore.getState().setArError('Camera is blocked by embedding policy. Ask the host to allow camera access in its iframe and Permissions-Policy header, or use the 3D preview.');
+      return false;
+    }
+    if (generation !== sessionGeneration.current) return false;
+    const startAssembly = useStore.getState().assembly;
     const tracker = new CameraTracker();
+    trackerRef.current?.stop();
     trackerRef.current = tracker;
     await tracker.start(video);
+    if (generation !== sessionGeneration.current || trackerRef.current !== tracker
+      || useStore.getState().assembly !== startAssembly) {
+      tracker.stop();
+      if (trackerRef.current === tracker) trackerRef.current = undefined;
+      return false;
+    }
     if (tracker.state.error) {
       // Say what happened. Doing nothing at all was indistinguishable from a
       // broken build, and the commonest causes are things the operator can fix
       // in two taps once they know what is being asked.
       useStore.getState().setArError(tracker.state.error);
+      tracker.stop();
+      trackerRef.current = undefined;
+      return false;
+    }
+    if (!tracker.state.running) {
+      tracker.stop();
       trackerRef.current = undefined;
       return false;
     }
@@ -224,14 +312,15 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     videoGeometryCleanup.current = () => video.removeEventListener('loadedmetadata', publishGeometry);
 
     tracker.subscribe((st) => {
+      if (trackerRef.current !== tracker) return;
       getActiveManager()?.setDeviceOrientation(st.orientation);
       useStore.getState().setArMotion(st.receivingMotion);
     });
     return true;
-  }, []);
+  }, [capabilities]);
 
   const enterAr = useCallback(async () => {
-    if (arActive) { stop(); return; }
+    if (arActive || entryPending.current) { stop(); return; }
     const store = useStore.getState();
     store.setArError(undefined);
     if (!capabilities) {
@@ -242,6 +331,10 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       store.setArError('AR needs HTTPS. Open this page over a secure connection.');
       return;
     }
+    const generation = ++sessionGeneration.current;
+    entryPending.current = true;
+    const current = () => generation === sessionGeneration.current && useStore.getState().assembly === assembly;
+    try {
     const manager = getActiveManager();
 
     // 1. A device with real AR: let WebXR find the floor and place on a tap.
@@ -254,18 +347,31 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
     // phone that could do real six-degree tracking silently gets an overlay
     // that walks along with the operator. The attempt costs a moment and falls
     // through on failure, which the camera path handles anyway.
-    if ((capabilities.immersiveAr || capabilities.webxrSupported) && manager) {
+    const xrDenied = capabilities.permissionsPolicy?.['xr-spatial-tracking'] === 'denied';
+    if ((capabilities.immersiveAr || capabilities.webxrSupported) && !xrDenied && manager) {
+      let ownedSession: { end: () => Promise<void> } | undefined;
+      const ownsSession = () => ownedSession ? xrSession.current === ownedSession : current();
       const session = await manager.startWebXr(
-        (pose) => useStore.getState().setAnchor(pose, 0.9, 'floor'),
+        (pose) => { if (ownsSession()) useStore.getState().setAnchor(pose, 0.9, 'floor'); },
         // Leaving the session (the system back gesture, or the headset's own
         // exit) has to take the app out of AR too, or the UI claims to be in a
         // session that ended.
-        () => stop(),
+        () => { if (ownsSession()) stop(); },
       );
+      if (!current()) {
+        void session?.end().catch(() => undefined);
+        return;
+      }
       if (session) {
+        ownedSession = session;
         xrSession.current = session;
+        const lock = await takeWakeLock();
+        if (!current()) {
+          void lock?.release().catch(() => undefined);
+          return;
+        }
+        wakeLock.current = lock;
         useStore.getState().setArSource('webxr');
-        wakeLock.current = await takeWakeLock();
         armPlacement(manager, 'webxr');
         setArActive(true);
         return;
@@ -280,6 +386,10 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       store.setArError('The camera surface is missing — reload the page.');
       return;
     }
+    if (capabilities.permissionsPolicy?.camera === 'denied') {
+      store.setArError('Camera is blocked by embedding policy. Ask the host to allow camera access in its iframe and Permissions-Policy header, or use the 3D preview.');
+      return;
+    }
     if (!capabilities.camera) {
       store.setArError('This browser exposes no camera. AR falls back to the 3D preview.');
       return;
@@ -287,10 +397,22 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
 
     // iOS gates motion behind a user gesture — this call is inside the click.
     if (capabilities.motionNeedsPermission) await CameraTracker.requestMotionPermission();
+    if (!current()) return;
 
-    wakeLock.current = await takeWakeLock();
+    const lock = await takeWakeLock();
+    if (!current()) {
+      void lock?.release().catch(() => undefined);
+      return;
+    }
+    wakeLock.current = lock;
 
-    if (!(await startCamera(video))) return;
+    if (!(await startCamera(video, generation)) || !current()) {
+      if (generation === sessionGeneration.current) stop();
+      return;
+    }
+    if (xrDenied) {
+      useStore.getState().setArError('World-tracked AR is blocked by embedding policy. Using camera preview; the host must allow xr-spatial-tracking for WebXR.');
+    }
     useStore.getState().setArSource('camera');
     setArActive(true);
 
@@ -321,24 +443,6 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
 
     }
 
-    // 3. Marker re-registration: when the fiducial is in view, snap the anchor
-    // to it. The observation is in the camera's frame, so it has to be taken
-    // into world space through the live camera before it means anything.
-    if (assembly.marker) {
-      const marker = new MarkerTracker(assembly.marker.sizeM, (obs) => {
-        if (obs.id !== assembly.marker!.id) return;
-        const world = getActiveManager()?.cameraToWorld(obs.pose) ?? obs.pose;
-        const anchor = alignToMarker(world, assembly.marker!.poseInAssembly);
-        const quality = Math.max(0, Math.min(1, 1 - obs.reprojectionPx / 8));
-        setAnchor(anchor, quality, 'marker');
-        stopPlacement.current?.();
-        stopPlacement.current = undefined;
-        trackerRef.current?.markRegistered();
-      });
-      markerRef.current = marker;
-      marker.start(video);
-    }
-
     // Frame loop. Two jobs at two very different rates, driven off one capture:
     // the object anchor runs as fast as the device can take it, because that is
     // what makes the overlay follow the operator, while the CV/ML pipeline stays
@@ -351,11 +455,12 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
 
     let lastTrack = 0;
     let lastPipeline = 0;
-    let pipelineBusy = false;
+    let busyPipeline: RecognitionPipeline | undefined;
 
     const loop = (now: number): void => {
       rafRef.current = requestAnimationFrame(loop);
-      if (video.readyState < 2) return;
+      if (video.readyState < 2 || !trackerRef.current || cameraSuspended.current || xrSession.current) return;
+      const frameState = useStore.getState();
       const anchorDue = objectAnchor.current !== undefined && now - lastTrack >= trackIntervalMs;
       // No part-recognition model, no part recognition. Nothing is bundled and
       // nothing is fine-tuned on these parts, so unless a deployment supplies
@@ -364,9 +469,9 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       // banner then reported as "Looking for Base plate…" forever. Claiming to
       // search for something that can never be found is worse than silence.
       const pipeline = pipelineRef.current;
-      const canRecognize = pipeline !== undefined
-        && (pipeline.status().detector || pipeline.status().classifier);
-      const pipelineDue = canRecognize && !pipelineBusy
+      const canRecognize = pipeline !== undefined && pipeline.status().detector;
+      // A replaced pipeline must not wait for inference on the disposed model.
+      const pipelineDue = canRecognize && busyPipeline !== pipeline
         && now - lastPipeline >= perf.recognitionIntervalMs;
       if (!anchorDue && !pipelineDue) return;
 
@@ -377,7 +482,8 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       if (anchorDue) {
         lastTrack = now;
         if (useStore.getState().arSettings.autoRecognize) {
-          const anchored = applyObjectAnchor(objectAnchor.current!, image, now, manager, assembly.recognition!);
+          const target = frameState.assembly.recognition;
+          const anchored = target && applyObjectAnchor(objectAnchor.current!, image, now, manager, target);
           if (anchored) {
             stopPlacement.current?.();
             stopPlacement.current = undefined;
@@ -390,20 +496,43 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
 
       if (pipelineDue) {
         lastPipeline = now;
-        pipelineBusy = true;
+        busyPipeline = pipeline;
+        const generation = recognitionGeneration.current;
+        const cameraTracker = trackerRef.current;
         void pipeline!.process(image)
           .then((result) => {
-            if (!result) return;
+            if (generation !== recognitionGeneration.current || pipelineRef.current !== pipeline
+              || trackerRef.current !== cameraTracker || cameraSuspended.current || xrSession.current) return;
             // Colour-coded discrepancy: compare confirmed tracks against the
             // parts the active step expects, and publish it for the overlay.
             const st = useStore.getState();
+            if (st.assembly !== frameState.assembly || st.activeStepId !== frameState.activeStepId) return;
+            setPipelineStatus(pipeline!.status());
+            if (!result) { st.setRecognition(undefined); return; }
             st.setRecognition(classifyRecognition(result.tracks, labelInfoFor(st), result.ts));
           })
-          .finally(() => { pipelineBusy = false; });
+          .catch((error) => {
+            if (generation === recognitionGeneration.current && pipelineRef.current === pipeline) {
+              const status = pipeline!.status();
+              setPipelineStatus({
+                ...status, errors: { ...status.errors, detector: `Inference failed: ${String(error)}` },
+              });
+              useStore.getState().setRecognition(undefined);
+            }
+          })
+          .finally(() => { if (busyPipeline === pipeline) busyPipeline = undefined; });
       }
     };
     rafRef.current = requestAnimationFrame(loop);
-  }, [arActive, capabilities, assembly, setAnchor, stop, videoRef]);
+    } catch (error) {
+      if (current()) {
+        stop();
+        useStore.getState().setArError(`AR could not start. Try again or use the 3D preview: ${String(error)}`);
+      }
+    } finally {
+      if (generation === sessionGeneration.current) entryPending.current = false;
+    }
+  }, [arActive, capabilities, assembly, stop, startCamera, videoRef]);
 
   /**
    * Ask for a real AR session again, from this tap.
@@ -416,23 +545,67 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
    * that worked before the app started entering sessions on its own.
    */
   const retryWebXr = useCallback(async () => {
+    if (capabilities?.permissionsPolicy?.['xr-spatial-tracking'] === 'denied') {
+      useStore.getState().setArError('World-tracked AR is blocked by embedding policy. Ask the host to allow xr-spatial-tracking in its iframe and Permissions-Policy header. Camera/3D preview remains available.');
+      return false;
+    }
+    if (entryPending.current || retryPending.current || xrSession.current) return false;
     const manager = getActiveManager();
     if (!manager) return false;
+    const generation = ++sessionGeneration.current;
+    const startAssembly = useStore.getState().assembly;
+    retryPending.current = true;
+    let ownedSession: { end: () => Promise<void> } | undefined;
+    const current = () => generation === sessionGeneration.current && useStore.getState().assembly === startAssembly;
+    const ownsSession = () => ownedSession ? xrSession.current === ownedSession : current();
+    try {
     const session = await manager.startWebXr(
-      (pose) => useStore.getState().setAnchor(pose, 0.9, 'floor'),
-      () => stop(),
+      (pose) => { if (ownsSession()) useStore.getState().setAnchor(pose, 0.9, 'floor'); },
+      () => { if (ownsSession()) stop(); },
     );
+    if (!current()) {
+      void session?.end().catch(() => undefined);
+      return false;
+    }
     if (!session) return false;
-    // Real tracking took over: the camera passthrough is now redundant, and
-    // holding the device would keep it warm for nothing.
+    ownedSession = session;
+    recognitionGeneration.current++;
+    pipelineRef.current?.resetTemporal();
+    // Stop every producer of camera-space poses before accepting XR poses.
+    // In particular, ground placement owns its own reticle observer and the
+    // preview timer can otherwise drop an anchor during XR surface detection.
+    stopPlacement.current?.();
+    stopPlacement.current = undefined;
+    if (previewTimer.current) window.clearTimeout(previewTimer.current);
+    previewTimer.current = undefined;
+    if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
+    rafRef.current = undefined;
+    objectAnchor.current = undefined;
+    markerRef.current?.stop();
+    markerRef.current = undefined;
+    videoGeometryCleanup.current?.();
+    videoGeometryCleanup.current = undefined;
     trackerRef.current?.stop();
     trackerRef.current = undefined;
     releaseVideo(videoRef.current);
+    cameraSuspended.current = false;
     xrSession.current = session;
-    useStore.getState().setArSource('webxr');
+    const store = useStore.getState();
+    store.setRecognition(undefined);
+    store.setArMotion(false);
+    store.setArSource('webxr');
+    // Camera fallback coordinates have no relationship to the new XR origin.
+    store.setAnchor(undefined, 0, 'awaiting');
+    armPlacement(manager, 'webxr');
     setArActive(true);
     return true;
-  }, [stop, videoRef]);
+    } catch (error) {
+      if (current()) useStore.getState().setArError(`WebXR could not start; camera/3D preview remains available: ${String(error)}`);
+      return false;
+    } finally {
+      if (generation === sessionGeneration.current) retryPending.current = false;
+    }
+  }, [capabilities, stop, videoRef]);
 
   /**
    * Move the assembly into view, now, without a placement gesture.
@@ -499,6 +672,11 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
       const video = videoRef.current;
       if (document.visibilityState === 'hidden') {
         if (xrSession.current) return;   // an XR session manages its own lifecycle
+        sessionGeneration.current++;
+        retryPending.current = false;
+        recognitionGeneration.current++;
+        pipelineRef.current?.resetTemporal();
+        useStore.getState().setRecognition(undefined);
         trackerRef.current?.stop();
         trackerRef.current = undefined;
         releaseVideo(video);
@@ -506,16 +684,30 @@ export function useArController(videoRef: React.RefObject<HTMLVideoElement | nul
         return;
       }
       if (wakeLock.current === undefined || wakeLock.current.released) {
-        void takeWakeLock().then((lock) => { wakeLock.current = lock; });
+        const generation = sessionGeneration.current;
+        void takeWakeLock().then((lock) => {
+          if (generation !== sessionGeneration.current) {
+            void lock?.release().catch(() => undefined);
+          } else {
+            wakeLock.current = lock;
+          }
+        });
       }
       if (cameraSuspended.current && video) {
         cameraSuspended.current = false;
-        void startCamera(video);
+        const generation = sessionGeneration.current;
+        void startCamera(video, generation).then((started) => {
+          if (!started && generation === sessionGeneration.current) stop();
+        }).catch((error) => {
+          if (generation !== sessionGeneration.current) return;
+          stop();
+          useStore.getState().setArError(`Camera could not resume. Try AR again: ${String(error)}`);
+        });
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [arActive, startCamera, videoRef]);
+  }, [arActive, startCamera, stop, videoRef]);
 
   useEffect(() => () => stop(), [stop]);
 

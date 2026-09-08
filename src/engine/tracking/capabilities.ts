@@ -8,6 +8,8 @@
  */
 
 export type ArMode = 'webxr' | 'camera' | 'quicklook' | 'preview';
+export type PolicyAccess = 'allowed' | 'denied' | 'unknown';
+type PolicyFeature = 'camera' | 'xr-spatial-tracking' | 'accelerometer' | 'gyroscope' | 'magnetometer';
 
 export interface Capabilities {
   secureContext: boolean;
@@ -15,14 +17,18 @@ export interface Capabilities {
   webxrSupported: boolean;
   /** `immersive-ar` specifically, not just the presence of `navigator.xr`. */
   immersiveAr: boolean;
+  /** Session feature flags remain false until confirmed by a requested session. */
   hitTest: boolean;
   depthSensing: boolean;
   planeDetection: boolean;
   anchors: boolean;
+  /** API presence, not a camera permission grant. See permissionsPolicy. */
   camera: boolean;
   /** iOS 13+ gates motion sensors behind a user gesture. */
   motionNeedsPermission: boolean;
   deviceOrientation: boolean;
+  /** Effective embedding policy, not the user's permission choice. */
+  permissionsPolicy?: Record<PolicyFeature, PolicyAccess>;
   barcodeDetector: boolean;
   quickLook: boolean;
   isIOS: boolean;
@@ -40,6 +46,30 @@ type XrNavigator = Navigator & {
 type MotionCtor = typeof DeviceOrientationEvent & {
   requestPermission?: () => Promise<'granted' | 'denied'>;
 };
+
+type Policy = {
+  allowsFeature?: (feature: string) => boolean;
+  features?: () => string[];
+};
+
+function policyAccess(feature: PolicyFeature): PolicyAccess {
+  if (typeof document === 'undefined') return 'unknown';
+  const doc = document as Document & { permissionsPolicy?: Policy; featurePolicy?: Policy };
+  for (const policy of [doc.permissionsPolicy, doc.featurePolicy]) {
+    if (!policy?.allowsFeature) continue;
+    try {
+      // Unknown directives can return false, exactly like a denial. Only
+      // classify a denial when the browser confirms it knows the directive.
+      const known = policy.features?.();
+      if (known && !known.includes(feature)) continue;
+      if (policy.allowsFeature(feature)) return 'allowed';
+      if (known?.includes(feature)) return 'denied';
+    } catch {
+      // Partial implementations must not rule out an otherwise usable mode.
+    }
+  }
+  return 'unknown';
+}
 
 function detectIOS(): { isIOS: boolean; isIPad: boolean } {
   if (typeof navigator === 'undefined') return { isIOS: false, isIPad: false };
@@ -62,8 +92,12 @@ function hasWebGL2(): boolean {
 
 function supportsQuickLook(): boolean {
   if (typeof document === 'undefined') return false;
-  const a = document.createElement('a');
-  return a.relList?.supports?.('ar') ?? false;
+  try {
+    const a = document.createElement('a');
+    return a.relList?.supports?.('ar') ?? false;
+  } catch {
+    return false;
+  }
 }
 
 /** Probe the device. Cheap enough to call on mount; cache the result yourself. */
@@ -72,11 +106,24 @@ export async function detectCapabilities(): Promise<Capabilities> {
   const notes: string[] = [];
   const secureContext = typeof window !== 'undefined' && window.isSecureContext;
   const webgl2 = hasWebGL2();
+  const permissionsPolicy: Record<PolicyFeature, PolicyAccess> = {
+    camera: policyAccess('camera'),
+    'xr-spatial-tracking': policyAccess('xr-spatial-tracking'),
+    accelerometer: policyAccess('accelerometer'),
+    gyroscope: policyAccess('gyroscope'),
+    magnetometer: policyAccess('magnetometer'),
+  };
+  const cameraBlocked = permissionsPolicy.camera === 'denied';
+  const xrBlocked = permissionsPolicy['xr-spatial-tracking'] === 'denied';
+  // Relative orientation needs accelerometer and gyroscope. Magnetometer
+  // denial removes an absolute heading, not all orientation tracking.
+  const motionBlocked = permissionsPolicy.accelerometer === 'denied'
+    || permissionsPolicy.gyroscope === 'denied';
 
   const nav = typeof navigator !== 'undefined' ? (navigator as XrNavigator) : undefined;
   const webxrSupported = Boolean(nav?.xr);
   let immersiveAr = false;
-  if (nav?.xr) {
+  if (nav?.xr && !xrBlocked) {
     try {
       immersiveAr = await nav.xr.isSessionSupported('immersive-ar');
     } catch {
@@ -95,6 +142,13 @@ export async function detectCapabilities(): Promise<Capabilities> {
   if (!secureContext) {
     notes.push('Not a secure context — camera and WebXR are blocked. Serve the app over HTTPS.');
   }
+  for (const [feature, access] of Object.entries(permissionsPolicy)) {
+    if (access === 'denied') {
+      notes.push(`Permissions Policy blocks ${feature}. The embedding host must allow it in its policy and iframe allow attribute.`);
+    }
+  }
+  if (!camera) notes.push('This browser exposes no camera API.');
+  if (!deviceOrientation) notes.push('Device orientation sensors are unavailable in this browser.');
   // Why the good mode is unavailable matters more than that it is: without
   // WebXR there is no positional tracking, and no amount of work on the
   // passthrough path can invent it. On Android that is usually the *browser*,
@@ -106,11 +160,11 @@ export async function detectCapabilities(): Promise<Capabilities> {
   if (!webxrSupported) {
     notes.push(
       isIOS
-        ? 'iOS Safari does not implement WebXR. Camera passthrough with motion tracking is used instead.'
+        ? 'This iOS browser does not expose WebXR. Camera passthrough requires camera and motion access.'
         : 'This browser does not expose navigator.xr. On Android, Chrome does — open the app there for real AR tracking.',
     );
     if (!isIOS) notes.push(noPositional);
-  } else if (!immersiveAr) {
+  } else if (!immersiveAr && !xrBlocked) {
     notes.push(
       isIOS
         ? 'WebXR is present but immersive-ar is not supported on this device.'
@@ -122,16 +176,16 @@ export async function detectCapabilities(): Promise<Capabilities> {
     notes.push('BarcodeDetector is unavailable — marker re-registration falls back to manual datums.');
   }
 
-  // Feature flags on the session are only knowable once a session is requested;
-  // WebXR has no capability query, so these are optimistic and re-checked on start.
-  const hitTest = immersiveAr;
-  const depthSensing = immersiveAr;
-  const planeDetection = immersiveAr;
-  const anchors = immersiveAr;
+  // Session features are not knowable from isSessionSupported. False means
+  // unconfirmed here, not that a later session cannot negotiate the feature.
+  const hitTest = false;
+  const depthSensing = false;
+  const planeDetection = false;
+  const anchors = false;
 
   let recommended: ArMode = 'preview';
-  if (immersiveAr && webgl2) recommended = 'webxr';
-  else if (camera && secureContext && deviceOrientation) recommended = 'camera';
+  if (immersiveAr && webgl2 && secureContext) recommended = 'webxr';
+  else if (camera && secureContext && deviceOrientation && !cameraBlocked && !motionBlocked) recommended = 'camera';
   else if (quickLook) recommended = 'quicklook';
 
   return {
@@ -146,6 +200,7 @@ export async function detectCapabilities(): Promise<Capabilities> {
     camera,
     motionNeedsPermission,
     deviceOrientation,
+    permissionsPolicy,
     barcodeDetector,
     quickLook,
     isIOS,
@@ -163,7 +218,7 @@ export const MODE_LABELS: Record<ArMode, string> = {
 };
 
 export const MODE_BLURBS: Record<ArMode, string> = {
-  webxr: 'Full 6-DoF tracking with plane detection and real-world occlusion.',
+  webxr: 'Full 6-DoF tracking. Placement and optional sensing features depend on the device and session.',
   camera: 'Live camera behind the overlay, orientation from the device sensors — 3 degrees of freedom. '
     + 'Turning is tracked; walking is not, so the overlay travels with you.',
   quicklook: 'Hands the model to the system AR viewer. Great tracking, no live diagnostics.',

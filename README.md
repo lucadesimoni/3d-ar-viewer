@@ -178,6 +178,139 @@ Presets: `full` (everything) · `compact` (denser, no drawers/picker) ·
 `minimal` (viewport + active-step guide + recognition) · `viewer` (bare canvas
 with the on-part recognition tint only). See `src/ui/config.ts`.
 
+### Host integration and future Teamcenter assemblies
+
+The iframe is the supported isolation boundary for multiple viewers on a host
+page: each iframe owns its store, renderer, and camera lifecycle. The React/Mendix
+shim still uses a singleton store and is not a multi-instance widget package.
+
+An iframe host can opt into the **version 1 messaging contract** with an exact
+`parentOrigin` (scheme, hostname, and optional port; no path or trailing slash):
+
+```html
+<iframe
+  id="assembly-viewer"
+  src="https://viewer.example/?ui=compact&amp;embedded=1&amp;parentOrigin=https%3A%2F%2Fplm.example.com"
+  allow="camera; xr-spatial-tracking; accelerometer; gyroscope; magnetometer; fullscreen"
+  title="Assembly viewer">
+</iframe>
+```
+
+Both host and viewer must use HTTPS for AR. The host's Permissions Policy must
+also permit those features for the viewer origin; an iframe `allow` attribute
+cannot override a denial by an ancestor. AR entry remains a direct user gesture,
+not a message command.
+
+Listen for `ready`, then send a command. **Check both origin and source on
+responses**, just as the viewer does on incoming requests:
+
+```js
+const frame = document.getElementById('assembly-viewer');
+const viewerOrigin = 'https://viewer.example';
+window.addEventListener('message', (event) => {
+  if (event.origin !== viewerOrigin || event.source !== frame.contentWindow) return;
+  if (event.data?.channel !== 'spatial-ar-viewer' || event.data.version !== 1) return;
+  if (event.data.type === 'ready') {
+    frame.contentWindow.postMessage({
+      channel: 'spatial-ar-viewer', version: 1, requestId: 'load-1',
+      type: 'load-assembly', assembly: exportedAssembly,
+    }, viewerOrigin);
+  }
+  if (event.data.type === 'response' && !event.data.ok) {
+    console.error(event.data.error.code, event.data.error.message);
+  }
+});
+```
+
+`ready` means the host bridge is listening, not that external meshes or recognition
+models have finished downloading. Every command needs a unique `requestId`
+(1-128 characters). Responses echo it with `ok` and either a state snapshot or a
+structured error. The bridge is disabled without `parentOrigin`.
+
+| Command | Payload | Behavior |
+| --- | --- | --- |
+| `load-assembly` | `assembly`: object or JSON string | Validates before replacing live state; returns field-level errors without losing the current assembly |
+| `get-state` | none | Assembly identity/revision/source, part count, active step, selected occurrence, completed steps, progress, AR source |
+| `select-part` | `partId`: occurrence id or `null` | Selects a known part or clears selection |
+| `set-step` | `stepId` | Selects a known instruction step; does not sign it off |
+| `reset` | none | Resets the current assembly |
+
+Exit AR before `load-assembly` or `reset`; otherwise the response is `ar-active`.
+Loading a revised manifest with the same assembly id rebuilds the scene and clears
+old recognition, placements, and animation state.
+
+**Teamcenter is an export boundary in this release, not a live connector.**
+A trusted server-side adapter must authenticate to Teamcenter, resolve the BOM
+revision/configuration and occurrences, convert JT/STEP/CAD geometry to glTF 2.0
+or GLB, and produce an `AssemblyDef`. Keep Teamcenter credentials out of the viewer
+and manifest. Resource URLs need normal browser access/CORS; arbitrary protected
+PLM endpoints cannot be read by the browser without a host-managed delivery path.
+
+| Teamcenter/export concept | Runtime field |
+| --- | --- |
+| Unique assembly occurrence | `PartDef.id` (never collapse repeated bolts into one id) |
+| Item/part number and revision | `sku`, `revision` |
+| Original PLM identifiers | Optional `source: { system: "teamcenter", itemId, revisionId, occurrenceId }` on assembly/parts |
+| Occurrence transform | `targetPose`, normalized to metres and the viewer's left-handed Y-up assembly frame |
+| Tessellated geometry | `mesh: { type: "url", url, bounds, scale? }`; glTF loader handles glTF's native handedness |
+| Work instructions, mates, tolerances | `steps`, `connectors`, `defaultTolerance`; these must be authored, not inferred from a mesh |
+
+`sourceUnits` records CAD authoring units for display only; it does **not** convert
+transforms or dimensions. `bounds` are full local dimensions in runtime metres.
+Use unit quaternions `[x,y,z,w]`. A geometry-only export can use `steps: []`,
+`background: []`, and empty connector arrays until instructions are authored.
+Imports reject duplicate occurrence ids, non-finite transforms, invalid resource
+URLs, dangling part/connector/step references, and cyclic work instructions.
+
+The offline worker caches the app shell and runtime bundles only. It does not
+intercept CAD/GLB files, ONNX model files, or PLM API responses; authenticated and
+`no-store` requests bypass it, and it leaves other host applications' caches alone.
+Reserve `/assets/` for public build resources. Serve private CAD textures and
+other protected resources outside that directory with appropriate HTTP cache
+headers; the service worker is not a replacement for server-side access control.
+
+**Recognition is not inferred from CAD.** Production recognition requires a
+catalogue-specific trained model, explicit class-to-part mapping, and a held-out
+camera dataset covering devices, lighting, occlusion, and visually similar
+revisions. A 2D class match does not establish an occurrence's 6-DoF pose,
+manufacturing tolerance, seating, or revision identity. Repeated occurrences of
+the same item must remain ambiguous unless separate spatial evidence resolves
+them. The built-in grid/marker trackers are specialized registration aids, not
+general Teamcenter part recognition.
+
+React hosts can pass a stable `recognitionConfig` to `App`. Class names must match
+the ONNX output order; mapping values identify runtime **occurrences**, not SKUs:
+
+```tsx
+const recognitionConfig = {
+  detector: {
+    url: '/models/validated-catalogue.onnx',
+    inputSize: 640,
+    format: 'yolov8' as const,
+    labels: ['bracket', 'bolt'],
+  },
+  labelMapping: {
+    bracket: 'bracket-occurrence-1',
+    bolt: ['bolt-occurrence-1', 'bolt-occurrence-2'],
+  },
+};
+// Define this config outside render, or memoize it when host inputs change.
+<App config={{ embedded: true }} recognitionConfig={recognitionConfig} />
+```
+
+With a mapping, unmapped classes are unknown; multiple candidate occurrences are
+ambiguous and are not painted as a confirmed match. Classifier-only models do
+not create localized overlays. Configuration/model errors appear in AR settings,
+and changing a catalogue, step, or recognition configuration invalidates stale
+inference results.
+
+The Mendix shim now forwards `detectorModelUrl` / `classifierModelUrl`, with
+`detectorLabelsJson` / `classifierLabelsJson` required for the corresponding model
+and optional `labelMappingJson` using the same mapping contract. Invalid host
+class JSON visibly disables inference instead of guessing a label order.
+The iframe message API does not yet replace models dynamically; deploy a
+catalogue-configured viewer or use the React/Mendix configuration API.
+
 ```html
 <!-- Drop the guided viewer into any page -->
 <iframe src="https://your-host/?ui=minimal&embedded=1"

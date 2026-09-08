@@ -256,8 +256,12 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
             what made "Looking for Base plate…" look like a live search. */}
         <div>
           <dt>Part recognition</dt>
-          <dd>{pipeline?.detector ? 'model loaded' : 'no model — off'}</dd>
+          <dd>{pipeline?.detector ? '2D label model loaded — pose/seating unverified'
+            : pipeline?.errors?.detector || pipeline?.errors?.config ? 'model unavailable — see diagnostics' : 'no detector — off'}</dd>
         </div>
+        {Object.entries(pipeline?.errors ?? {}).map(([capability, message]) => (
+          <div key={capability}><dt>Recognition · {capability}</dt><dd>{message}</dd></div>
+        ))}
         <div><dt>Drawn</dt><dd>{stats ? `${stats.activeMeshes} of ${stats.meshes} · ${stats.partMeshes} parts` : '—'}</dd></div>
         <div><dt>Canvas</dt><dd>{stats ? `${stats.cssSize.join('×')} → ${stats.bufferSize.join('×')}` : '—'}</dd></div>
         <div><dt>Effective FOV</dt><dd>{stats ? `${stats.fovDeg.toFixed(1)}°` : '—'}</dd></div>

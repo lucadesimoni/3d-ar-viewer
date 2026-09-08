@@ -290,6 +290,10 @@ export const useStore = create<AppState>((set, get) => {
         arSettings: { ...get().arSettings, surfaceHeightM: a.workSurfaceM ?? 0 },
         selectedPartId: undefined,
         explodeFactor: 0,
+        recognition: undefined,
+        animationTimeline: undefined,
+        animationT: 0,
+        lastSnap: undefined,
         ...derive(next),
       });
     },

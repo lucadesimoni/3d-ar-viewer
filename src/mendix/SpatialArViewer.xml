@@ -27,6 +27,21 @@
         <description>URL of an ONNX classification model for part verification.</description>
         <returnType type="String"/>
       </property>
+      <property key="detectorLabelsJson" type="expression" required="false">
+        <caption>Detector class names (JSON)</caption>
+        <description>Non-empty JSON string array in the detector's output order. Required when a detector model URL is provided.</description>
+        <returnType type="String"/>
+      </property>
+      <property key="classifierLabelsJson" type="expression" required="false">
+        <caption>Classifier class names (JSON)</caption>
+        <description>Non-empty JSON string array in the classifier's output order. Required when a classifier model URL is provided.</description>
+        <returnType type="String"/>
+      </property>
+      <property key="labelMappingJson" type="expression" required="false">
+        <caption>Class to occurrence mapping (JSON)</caption>
+        <description>Map class names to runtime part occurrence ids. Arrays represent indistinguishable candidate occurrences, not confirmed identity.</description>
+        <returnType type="String"/>
+      </property>
     </propertyGroup>
     <propertyGroup caption="Layout">
       <property key="uiPreset" type="enumeration" defaultValue="full">

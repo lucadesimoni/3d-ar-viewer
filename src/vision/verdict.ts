@@ -60,13 +60,17 @@ export function classifyRecognition(
   now = Date.now(),
 ): RecognitionState {
   const objects: RecognizedObject[] = tracks.map((t) => {
-    const isExpected = info.expected.has(t.label);
-    const isKnown = info.known.has(t.label);
+    // A repeated SKU's 2D class does not identify which assembly occurrence is
+    // in view. Never resolve ambiguity using the active step as a guess.
+    const label = t.partIds?.length === 1 ? t.partIds[0] : t.label;
+    const unambiguous = t.partIds === undefined || t.partIds.length === 1;
+    const isKnown = unambiguous && info.known.has(label);
+    const isExpected = isKnown && info.expected.has(label);
     const status: RecognitionStatus = isExpected ? 'match' : isKnown ? 'mismatch' : 'unknown';
     return {
       id: t.id,
-      label: t.label,
-      name: info.known.get(t.label),
+      label,
+      name: isKnown ? info.known.get(label) : undefined,
       score: t.score,
       box: t.box,
       status,

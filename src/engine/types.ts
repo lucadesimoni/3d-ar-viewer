@@ -1,7 +1,7 @@
 /**
  * Domain model for a mechanical assembly rendered as an AR overlay.
  *
- * Everything is expressed in the *assembly frame*: a right-handed, Y-up frame
+ * Everything is expressed in the *assembly frame*: a left-handed, Y-up frame
  * whose origin sits at the assembly datum (usually the fixture's locating pin).
  * Linear units are metres, because that is what WebXR reports; authoring tools
  * that speak millimetres should convert on import (see `data/` for examples).
@@ -75,11 +75,20 @@ export interface MaterialSpec {
   opacity?: number;
 }
 
+/** Identity retained from a PLM export; runtime part ids identify occurrences. */
+export interface SourceReference {
+  system: string;
+  itemId: string;
+  revisionId?: string;
+  occurrenceId?: string;
+}
+
 export interface PartDef {
   id: string;
   name: string;
   /** Manufacturer / ERP part number, shown in the picker and in error reports. */
   sku?: string;
+  source?: SourceReference;
   mesh: MeshSpec;
   material?: MaterialSpec;
   /** Nominal pose of this part once installed, in the assembly frame. */
@@ -230,6 +239,7 @@ export interface AssemblyDef {
   id: string;
   name: string;
   revision: string;
+  source?: SourceReference;
   /** Source units of the authoring CAD system, for display only. */
   sourceUnits?: 'mm' | 'cm' | 'm' | 'in';
   defaultTolerance: Tolerance;

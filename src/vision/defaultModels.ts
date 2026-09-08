@@ -94,5 +94,5 @@ export function envModelConfig(): PipelineConfig {
  * stand in for during a demo. Returns a relabelled label list applier.
  */
 export function remapLabels(labels: string[], mapping: Record<string, string>): string[] {
-  return labels.map((l) => mapping[l] ?? l);
+  return labels.map((l) => Object.hasOwn(mapping, l) ? mapping[l] : l);
 }

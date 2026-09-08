@@ -7,8 +7,8 @@
  *   /assets/*  Vite fingerprints these, so the name changes whenever the bytes
  *              do. Cache-first, forever, no revalidation — this is where the
  *              offline speed comes from.
- *   everything Network-first with a short timeout, falling back to cache. The
- *   else       HTML shell lives here, and it must never be served stale: it
+ *   shell      Network-first with a short timeout, falling back to cache. The
+ *              HTML shell lives here, and it must never be served stale: it
  *              names the fingerprinted bundles, so a cached copy from an older
  *              deployment points at asset URLs that no longer exist. That is a
  *              blank screen, not a stale screen.
@@ -16,7 +16,7 @@
  * Cross-origin requests (the OpenCV / ONNX CDN bundles) are left to the network
  * and degrade to nothing when offline — the geometry-driven app still runs.
  */
-const CACHE = 'spatial-ar-v2';
+const CACHE = 'spatial-ar-v3';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
 /** How long a navigation waits for the network before using the cached shell. */
 const NETWORK_TIMEOUT_MS = 3000;
@@ -41,11 +41,15 @@ self.addEventListener('install', (e) => {
  */
 async function precache() {
   const cache = await caches.open(CACHE);
-  await Promise.allSettled(SHELL.map((url) => cache.add(url)));
+  const add = async (url) => {
+    const response = await fetch(url, { cache: 'no-store' });
+    if (cacheable(response)) await cache.put(url, response);
+  };
+  await Promise.allSettled(SHELL.map(add));
   try {
     const html = await (await fetch('/index.html', { cache: 'no-store' })).text();
     const assets = [...html.matchAll(/\/assets\/[A-Za-z0-9._-]+\.(?:js|css)/g)].map((m) => m[0]);
-    await Promise.allSettled([...new Set(assets)].map((url) => cache.add(url)));
+    await Promise.allSettled([...new Set(assets)].map(add));
   } catch (err) {
     // Offline at install time: the shell is cached, the bundles will be picked
     // up by the fetch handler on the first online visit.
@@ -55,7 +59,7 @@ async function precache() {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('spatial-ar-') && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });
@@ -65,8 +69,13 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+  if (req.headers.has('authorization') || req.cache === 'no-store') return;
 
-  e.respondWith(url.pathname.startsWith('/assets/') ? cacheFirst(req) : networkFirst(req));
+  // The offline shell is not a cache for a host's private CAD, model weights,
+  // or PLM API responses, even when those resources share the viewer's origin.
+  const bundledAsset = /^\/assets\/[^/]+\.(?:m?js|css|wasm|woff2?|svg|png|jpe?g|webp)$/.test(url.pathname);
+  if (bundledAsset) e.respondWith(cacheFirst(req));
+  else if (SHELL.includes(url.pathname) || req.mode === 'navigate') e.respondWith(networkFirst(req));
 });
 
 /** Fingerprinted asset: if it is in the cache it is by definition current. */
@@ -76,7 +85,7 @@ async function cacheFirst(req) {
   if (hit) return hit;
   try {
     const res = await fetch(req);
-    if (res && res.status === 200) cache.put(req, res.clone());
+    if (cacheable(res)) await cache.put(req, res.clone());
     return res;
   } catch (err) {
     return Response.error();
@@ -88,7 +97,7 @@ async function networkFirst(req) {
   const cache = await caches.open(CACHE);
   try {
     const res = await withTimeout(fetch(req), NETWORK_TIMEOUT_MS);
-    if (res && res.status === 200) cache.put(req, res.clone());
+    if (cacheable(res)) await cache.put(req, res.clone());
     return res;
   } catch (err) {
     const hit = await cache.match(req);
@@ -99,6 +108,11 @@ async function networkFirst(req) {
     }
     return Response.error();
   }
+}
+
+function cacheable(response) {
+  return response && response.status === 200
+    && !/\b(?:no-store|private)\b/i.test(response.headers.get('cache-control') || '');
 }
 
 function withTimeout(promise, ms) {

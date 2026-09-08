@@ -53,7 +53,8 @@ export let grantedFeatures: string[] = [];
  * positional tracking, and losing all of it over the origin's height would be
  * a poor trade.
  */
-const SPACES: XRReferenceSpaceType[] = ['local-floor', 'local', 'viewer'];
+// A viewer space moves with the phone and cannot hold a world-locked assembly.
+const SPACES: XRReferenceSpaceType[] = ['local-floor', 'local'];
 let spaceIndex = 0;
 export const clearXrError = (): void => { lastXrError = undefined; };
 const noteXrError = (stage: string, err: unknown): undefined => {
@@ -122,6 +123,26 @@ export interface XrPrepared {
   dispose(): void;
 }
 
+/** Real-world placement must not depend on picking a virtual mesh. */
+export function bindXrPlacement(
+  session: Pick<XRSession, 'addEventListener' | 'removeEventListener'>,
+  overlayRoot: HTMLElement,
+  canvas: HTMLCanvasElement | null,
+  onSelect: () => void,
+): () => void {
+  // DOM controls still receive their normal clicks, but must not also place
+  // the assembly through the touchscreen's XR input source.
+  const beforeSelect = (event: Event): void => {
+    if (event.target !== canvas) event.preventDefault();
+  };
+  session.addEventListener('select', onSelect);
+  overlayRoot.addEventListener('beforexrselect', beforeSelect);
+  return () => {
+    session.removeEventListener('select', onSelect);
+    overlayRoot.removeEventListener('beforexrselect', beforeSelect);
+  };
+}
+
 /**
  * Build the session helper without entering it.
  *
@@ -155,6 +176,8 @@ export async function prepareImmersiveAr(
     disableDefaultUI: true,
     optionalFeatures: true,
     disableTeleportation: true,
+    disablePointerSelection: true,
+    disableNearInteraction: true,
   }).catch((err) => noteXrError('creating the session', err));
   if (!xr) {
     lastXrError ??= 'creating the session — Babylon returned nothing';
@@ -179,6 +202,7 @@ export async function prepareImmersiveAr(
     const hitTest = xr.baseExperience.featuresManager.enableFeature(
       WebXRFeatureName.HIT_TEST, 'latest', {}, true, false,
     ) as InstanceType<typeof WebXRHitTest>;
+    hitTest.autoCloneTransformation = true;
 
     hitTest.onHitTestResultObservable.add((results) => {
       const first = results[0];
@@ -216,17 +240,30 @@ export async function prepareImmersiveAr(
   // out of the camera passthrough they were already using. A failed entry has
   // to leave everything exactly as it found it.
   let everEntered = false;
-  xr.baseExperience.onStateChangedObservable.add((state) => {
-    const inXr = state === WebXRState.IN_XR;
-    if (inXr) everEntered = true;
-    else if (!everEntered) return;
-    hooks.onStateChange?.(inXr);
-  });
-
-  // A tap in-session drops the anchor at the current reticle.
-  scene.onPointerDown = () => {
-    if (xr.baseExperience.state === WebXRState.IN_XR && reticle) hooks.onSelectAnchor?.(reticle);
+  let stopInput: (() => void) | undefined;
+  const clearPlacement = (): void => {
+    stopInput?.();
+    stopInput = undefined;
+    reticle = undefined;
+    hooks.onReticle?.(undefined);
   };
+  const sessionObserver = xr.baseExperience.sessionManager.onXRSessionInit.add((session) => {
+    clearPlacement();
+    stopInput = bindXrPlacement(session, overlayRoot, scene.getEngine().getRenderingCanvas(), () => {
+      if (xr.baseExperience.state === WebXRState.IN_XR && reticle) hooks.onSelectAnchor?.(reticle);
+    });
+  });
+  xr.baseExperience.onStateChangedObservable.add((state) => {
+    if (state === WebXRState.IN_XR) {
+      everEntered = true;
+      hooks.onStateChange?.(true);
+    } else if (state === WebXRState.NOT_IN_XR) {
+      clearPlacement();
+      if (!everEntered) return;
+      everEntered = false;
+      hooks.onStateChange?.(false);
+    }
+  });
 
   const enter = async (): Promise<XrController | undefined> => {
     // One `requestSession` per tap. Exactly one.
@@ -244,7 +281,12 @@ export async function prepareImmersiveAr(
     // rules it out for the next one.
     const space = SPACES[Math.min(spaceIndex, SPACES.length - 1)];
     try {
-      await xr.baseExperience.enterXRAsync('immersive-ar', space, xr.renderTarget);
+      // Babylon silently substitutes a head-relative viewer space when an
+      // optional space is refused. Require this space so AR cannot appear to
+      // succeed with anchors that follow the phone.
+      await xr.baseExperience.enterXRAsync('immersive-ar', space, xr.renderTarget, {
+        requiredFeatures: [space],
+      });
     } catch (err) {
       noteXrError(`entering the session (${space})`, err);
       const activation = /user activation/i.test(lastXrError ?? '');
@@ -252,7 +294,7 @@ export async function prepareImmersiveAr(
       // must not cost us one. Anything else did rule this space out.
       if (!activation && spaceIndex < SPACES.length - 1) spaceIndex++;
       await xr.baseExperience.exitXRAsync().catch(() => undefined);
-      scene.onPointerDown = undefined;
+      clearPlacement();
       return undefined;
     }
     // The promise above resolves before the session is in XR — see
@@ -269,7 +311,7 @@ export async function prepareImmersiveAr(
       // a fault that had nothing to do with either.
       lastXrError = `entering the session (${space}) — no first frame, state ${xr.baseExperience.state}`;
       await xr.baseExperience.exitXRAsync().catch(() => undefined);
-      scene.onPointerDown = undefined;
+      clearPlacement();
       return undefined;
     }
     clearXrError();
@@ -285,7 +327,14 @@ export async function prepareImmersiveAr(
     };
   };
 
-  return { enter, dispose: () => xr.dispose() };
+  return {
+    enter,
+    dispose: () => {
+      clearPlacement();
+      xr.baseExperience.sessionManager.onXRSessionInit.remove(sessionObserver);
+      xr.dispose();
+    },
+  };
 }
 
 /** Prepare and enter in one call, for callers already inside a gesture. */
