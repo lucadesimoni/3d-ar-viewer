@@ -58,6 +58,13 @@ const MIN_PLACEMENT_M = 0.4;
 
 /** How long after arming placement the first tap is ignored, ms. */
 const PLACEMENT_ARM_DELAY_MS = 350;
+/**
+ * How long a tap will wait for the WebXR helper to finish building.
+ *
+ * Chrome keeps transient activation for five seconds and an await does not
+ * spend it, so this is well inside what `requestSession` will still accept.
+ */
+const XR_PREPARE_WAIT_MS = 2000;
 
 export interface SceneRenderState {
   placements: Map<string, PlacementState>;
@@ -267,6 +274,8 @@ export class SceneManager {
   private inXrSession = false;
   /** A tap arrived before the session helper was built, so nothing was asked. */
   private xrMissedTap = false;
+  /** In-flight preparation, so a tap can wait for it instead of missing it. */
+  private xrPreparing: Promise<void> | undefined;
   private xrPrepared: (import('./xr').XrPrepared & {
     callbacks: { onPlace: (pose: Pose) => void; onEnd?: () => void };
   }) | undefined;
@@ -888,6 +897,22 @@ export class SceneManager {
     // with "requires user activation" every single time it was pressed. If
     // nothing is prepared, start preparing and let the operator tap again: one
     // wasted tap beats a button that can never work.
+    // Wait for the helper rather than losing the tap to it.
+    //
+    // Building the helper is deliberately done ahead of time, because
+    // `requestSession` needs the tap's transient activation and building it
+    // first spends it. But "ahead of time" is a race on a cold load, and losing
+    // it took the operator silently down the camera path: a phone that can do
+    // real AR behaved exactly like one that cannot, and the only way back was a
+    // button in a settings sheet. Waiting is safe — an await does not consume
+    // the activation, and Chrome's window for it is five seconds — so wait a
+    // couple of them for work that is normally already finished.
+    if (!this.xrPrepared && this.xrPreparing) {
+      await Promise.race([
+        this.xrPreparing,
+        new Promise((resolve) => setTimeout(resolve, XR_PREPARE_WAIT_MS)),
+      ]);
+    }
     const prepared = this.xrPrepared;
     if (!prepared) {
       this.xrMissedTap = true;
@@ -930,6 +955,16 @@ export class SceneManager {
     onEnd?: () => void;
   }): Promise<void> {
     if (this.xrPrepared) return;
+    if (this.xrPreparing) return this.xrPreparing;
+    this.xrPreparing = this.buildXr(hooks).finally(() => { this.xrPreparing = undefined; });
+    return this.xrPreparing;
+  }
+
+  /** The build itself; `prepareWebXr` owns making it happen exactly once. */
+  private async buildXr(hooks: {
+    onPlace: (pose: Pose) => void;
+    onEnd?: () => void;
+  }): Promise<void> {
     try {
       const { prepareImmersiveAr } = await import('./xr');
       const overlayRoot = this.canvas.closest('.app') as HTMLElement | null;
