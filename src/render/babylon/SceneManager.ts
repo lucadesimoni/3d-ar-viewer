@@ -45,6 +45,7 @@ import {
   buildMesh,
   makeMaterial,
   makeOverlayMaterial,
+  poseMatrix,
 } from './meshFactory';
 
 /** How often to check that the render loop is still producing frames, ms. */
@@ -295,6 +296,13 @@ export class SceneManager {
   private xrMissedTap = false;
   /** In-flight preparation, so a tap can wait for it instead of missing it. */
   private xrPreparing: Promise<void> | undefined;
+  /**
+   * Where the platform's anchor was when the operator placed, and what they
+   * placed — so a correction can be applied as a *motion* rather than a fresh
+   * placement. See `followAnchor`.
+   */
+  private anchorOrigin: Matrix | undefined;
+  private anchorPlaced: Matrix | undefined;
   private xrPrepared: (import('./xr').XrPrepared & {
     callbacks: { onPlace: (pose: Pose) => void; onEnd?: () => void };
   }) | undefined;
@@ -843,6 +851,37 @@ export class SceneManager {
   }
 
   /**
+   * Follow the platform's correction to the placed spot.
+   *
+   * The anchor tells us where that spot really is now, and the assembly has to
+   * make the same move — not be placed again. My first version ran each update
+   * back through `placementPose`, which turns the assembly to face wherever the
+   * operator is standing: correct once, at the tap, and wrong every time after.
+   * Walking around a placed gearbox made it rotate to keep facing you, which is
+   * the one thing an anchored object must never do.
+   *
+   * So: take the rigid motion that carried the anchor from where it was to
+   * where it is, and apply that same motion to what was placed. The first
+   * report establishes "where it was" — Babylon's anchor frame need not agree
+   * with the hit-test result it was made from, and a difference there would be
+   * indistinguishable from a correction.
+   */
+  private followAnchor(pose: Pose): void {
+    const now = poseMatrix(pose);
+    if (!this.anchorOrigin) { this.anchorOrigin = now; return; }
+    if (!this.anchorPlaced) return;
+    const motion = Matrix.Invert(this.anchorOrigin).multiply(now);
+    const moved = this.anchorPlaced.multiply(motion);
+    const position = new Vector3();
+    const rotation = new Quaternion();
+    if (!moved.decompose(undefined, rotation, position)) return;
+    this.setAnchor({
+      position: [position.x, position.y, position.z],
+      rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
+    });
+  }
+
+  /**
    * Aim-and-tap floor placement for the camera-passthrough fallback.
    *
    * iOS Safari has no WebXR and therefore no real plane detection, but it does
@@ -1041,13 +1080,18 @@ export class SceneManager {
         // store keeps the placement the operator made — this is the same
         // placement, where it now is, and re-announcing it would re-arm
         // placement and re-run everything that watches for a new anchor.
-        onAnchorPose: (pose) => {
-          if (this.inXrSession) this.setAnchor(this.placementPose(pose));
-        },
+        onAnchorPose: (pose) => { if (this.inXrSession) this.followAnchor(pose); },
         onSelectAnchor: (pose) => {
           if (!this.placementActive) return;
           if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) return;
-          callbacks.onPlace(this.placementPose(pose));
+          const placed = this.placementPose(pose);
+          // Remember what was placed, so later anchor corrections move it
+          // instead of re-deciding it. `placementPose` turns the assembly to
+          // face wherever the operator is standing, which is exactly right
+          // once and exactly wrong every time after.
+          this.anchorOrigin = undefined;
+          this.anchorPlaced = poseMatrix(placed);
+          callbacks.onPlace(placed);
           this.setPlacementActive(false);
         },
         onStateChange: (inXr) => {

@@ -1,5 +1,5 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color';
-import { Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Matrix, Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { CSG } from '@babylonjs/core/Meshes/csg';
 import { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
@@ -69,6 +69,15 @@ function buildPlate(scene: Scene, spec: Extract<MeshSpec, { type: 'plate' }>, na
   plate.dispose();
   bore.dispose();
   return result;
+}
+
+/** A pose as a rigid transform, so two of them can be composed. */
+export function poseMatrix(pose: Pose): Matrix {
+  return Matrix.Compose(
+    Vector3.One(),
+    new Quaternion(pose.rotation[0], pose.rotation[1], pose.rotation[2], pose.rotation[3]),
+    new Vector3(pose.position[0], pose.position[1], pose.position[2]),
+  );
 }
 
 export function applyPose(mesh: TransformNode, pose: Pose): void {
