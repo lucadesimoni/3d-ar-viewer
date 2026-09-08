@@ -1380,6 +1380,35 @@ const context = await browser.newContext({
     Boolean(carried && new globalThis.URL(carried).searchParams.get('assembly') === 'kallax-4x4'),
     carried ?? href ?? 'no link');
 
+  // And the place in the job. A clip is a separate browsing context: the
+  // address is the only thing that crosses. Landing back on step one of a
+  // fourteen-bay rack because you asked for better tracking is the kind of
+  // small insult that stops people using the better thing.
+  await page.locator('.step-guide li, .step-row, .ar-step-nav').first().waitFor({ timeout: 5000 })
+    .catch(() => undefined);
+  const third = await page.evaluate(() => {
+    const store = window.spatialStore.getState();
+    const step = store.assembly.steps[2];
+    store.setActiveStep(step.id);
+    return step.id;
+  });
+  await page.waitForTimeout(300);
+  const resumed = await page.locator('a.appclip').getAttribute('href');
+  const target = resumed ? new globalThis.URL(resumed).searchParams.get('url') : null;
+  check('and the step the operator is on, so the clip resumes rather than restarts',
+    Boolean(target && new globalThis.URL(target).searchParams.get('step') === third),
+    target ? `step=${new globalThis.URL(target).searchParams.get('step')} (on ${third})` : 'no link');
+
+  // The other half: arriving with that address has to land on that step.
+  await open(page, `${URL}?assembly=kallax-4x4&step=${encodeURIComponent(third)}`);
+  const landed = await page.evaluate(() => window.spatialStore.getState().activeStepId);
+  check('and arriving on that address opens there', landed === third, `${landed} (wanted ${third})`);
+  // A step id from another assembly, or nonsense, must not blank the guide.
+  await open(page, `${URL}?assembly=kallax-4x4&step=not-a-step`);
+  const fallback = await page.evaluate(() => window.spatialStore.getState().activeStepId);
+  check('and a nonsense step is ignored rather than obeyed',
+    Boolean(fallback) && fallback !== 'not-a-step', String(fallback));
+
   // A deployment has to be able to refuse sending operators to a third party.
   await open(page, `${URL}?appclip=off`);
   check('and a deployment can switch the offer off', await page.locator('a.appclip').count() === 0);

@@ -39,13 +39,16 @@ export function AppClipLink({ capabilities, compact }: {
   compact?: boolean;
 }): JSX.Element | null {
   const assembly = useStore((s) => s.assembly);
+  const activeStepId = useStore((s) => s.activeStepId);
   if (!capabilities?.isIOS || capabilities.immersiveAr) return null;
   const base = appClipBase(typeof window === 'undefined' ? '' : window.location.search);
   if (!base || typeof window === 'undefined') return null;
 
-  // Carry the assembly, so the clip opens on the same job rather than the default.
+  // Carry the job *and the place in it*. A clip is a separate browsing context:
+  // the address is the only thing that crosses, so anything not in it is lost.
   const target = new URL(window.location.href);
   target.searchParams.set('assembly', assembly.id);
+  if (activeStepId) target.searchParams.set('step', activeStepId);
 
   return (
     <a className={`appclip ${compact ? 'compact' : ''}`} href={appClipHref(base, target.href)}>

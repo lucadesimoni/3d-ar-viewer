@@ -622,6 +622,24 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 @keyframes hint-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) { .placement-hint .dot { animation: none; } }
 
+/* Everything that moves, for an operator who has asked for less of it.
+ *
+ * One pulsing dot was already covered here and the other was not, which is the
+ * usual way this goes: the rule is written for the animation in front of you
+ * and the next one is added somewhere else. This covers the class rather than
+ * the instance — a hard stop, since none of the motion in this app carries
+ * meaning that the still state does not. Vestibular symptoms are not a
+ * preference, and a shop floor is exactly where someone is already dealing
+ * with a moving camera image. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ---------- AR settings sheet ---------- */
 .ar-settings { gap: 14px; padding: 16px 14px; }
 .ar-set { display: flex; flex-direction: column; gap: 6px; }
