@@ -144,28 +144,39 @@ describe('WebXR surface placement', () => {
 });
 
 describe('XR DOM overlay input', () => {
-  it('lets canvas taps select but suppresses XR selection from HUD controls', () => {
+  it('places from a tap on the view and swallows only taps on controls', () => {
+    // The rule used to be "only taps on the render canvas place", which was
+    // right while the canvas was the top surface of the overlay. Then the
+    // canvas was hidden so it could not paint over the camera — and a hidden
+    // element is never an event target, so every tap read as a tap on the
+    // chrome and every one was cancelled. Placing in a session stopped working
+    // entirely while the camera path, which never goes through `select`, was
+    // unaffected. The question is whether the tap hit a *control*.
     const root = document.createElement('div');
-    const canvas = document.createElement('canvas');
+    const view = document.createElement('div');          // the window on the world
+    const hud = document.createElement('div');
     const button = document.createElement('button');
-    const label = document.createElement('span');
+    const label = document.createElement('span');        // a child of a control
     button.append(label);
-    root.append(canvas, button);
+    hud.append(button);
+    root.append(view, hud);
     const session = new EventTarget();
     const onSelect = vi.fn();
-    const unbind = bindXrPlacement(session, root, canvas, onSelect);
+    const unbind = bindXrPlacement(session, root, onSelect);
     const selectFrom = (target: HTMLElement) => {
       const event = new Event('beforexrselect', { bubbles: true, cancelable: true });
       if (target.dispatchEvent(event)) session.dispatchEvent(new Event('select'));
       return event.defaultPrevented;
     };
-    expect(selectFrom(canvas)).toBe(false);
-    expect(selectFrom(label)).toBe(true);
-    expect(selectFrom(root)).toBe(true);
-    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(selectFrom(view)).toBe(false);
+    expect(selectFrom(root)).toBe(false);      // the overlay's own background
+    expect(selectFrom(hud)).toBe(false);       // a gap between the buttons
+    expect(selectFrom(button)).toBe(true);
+    expect(selectFrom(label)).toBe(true);      // and anything inside one
+    expect(onSelect).toHaveBeenCalledTimes(3);
     unbind();
     expect(selectFrom(label)).toBe(false);
-    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledTimes(3);
   });
 });
 
