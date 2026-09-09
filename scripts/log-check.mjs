@@ -90,6 +90,10 @@ await page.locator('.ar-btn', { hasText: 'Settings' }).click();
 await page.waitForTimeout(500);
 await page.locator('.ar-details summary').click();
 await page.waitForTimeout(300);
+// A calibration the operator actually set, so the report can be asked whether
+// anything downstream is using it.
+await page.evaluate(() => window.spatialScene().setCameraFov(80));
+await page.waitForTimeout(200);
 
 const report = await save();
 check('the log saves as a file the operator can send',
@@ -112,6 +116,20 @@ check('and the build is on screen too, without exporting anything',
 check('it says whether the field of view was measured or assumed',
   ['xr-camera', 'operator', 'assumed'].includes(report.render?.fovSource),
   `${report.render?.fovDeg}° (${report.render?.fovSource})`);
+// Two different questions, and they had the same answer for too long: what the
+// operator is looking through — cropped by `object-fit: cover`, and equal to
+// the camera's own angle only when nothing is cropped, as here — and what a
+// whole camera frame is read with. Feeding the cropped figure to the frame
+// model counted the crop twice, on top of assuming 60 degrees in the first
+// place. Both are reported now, and the frame model says where it came from.
+check('and reports the camera model, with its own provenance',
+  ['xr-raw', 'xr-camera', 'operator', 'assumed'].includes(report.render?.frameFovSource),
+  `frame ${report.render?.frameFovDeg}° (${report.render?.frameFovSource}) vs screen ${report.render?.fovDeg}°`);
+// The slider moved to 80 above. Nothing downstream used to notice: the marker
+// tracker was constructed without a field of view at all and read 60 for ever.
+check('and the camera model follows the operator, which nothing used to',
+  report.render?.frameFovSource === 'operator' && Math.abs(report.render.frameFovDeg - 80) < 0.01,
+  `${report.render?.frameFovDeg}° from the slider at 80°`);
 check('it reports what was rendered into, measured inside a frame',
   Array.isArray(report.render?.bufferSize) && report.render.bufferSize[0] > 0,
   `${report.render?.bufferSize?.join('x')}`);

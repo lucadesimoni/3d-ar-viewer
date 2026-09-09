@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { detectCapabilities, type Capabilities } from '../engine/tracking/capabilities';
 import { CameraTracker } from '../engine/tracking/cameraTracker';
-import { MarkerTracker } from '../engine/tracking/markerTracking';
+import { MarkerTracker, estimateIntrinsics } from '../engine/tracking/markerTracking';
 import { RecognitionPipeline, type PipelineConfig, type PipelineStatus } from '../vision/pipeline';
 import { envModelConfig } from '../vision/defaultModels';
 import { classifyRecognition, type LabelInfo } from '../vision/verdict';
@@ -138,6 +138,10 @@ export function useArController(
     const video = videoRef.current;
     const definition = assembly.marker;
     if (!arActive || !trackerRef.current || xrSession.current || !video || !definition) return;
+    // The calibration, asked per frame rather than frozen at construction.
+    // This argument was simply never passed, so every marker pose this app has
+    // produced used the 60-degree assumption — including on a device that had
+    // measured 72.2, and including after the operator moved the slider.
     const marker = new MarkerTracker(definition.sizeM, (obs) => {
       if (markerRef.current !== marker || xrSession.current || cameraSuspended.current
         || !trackerRef.current?.state.running || useStore.getState().assembly !== assembly) return;
@@ -149,7 +153,8 @@ export function useArController(
       stopPlacement.current?.();
       stopPlacement.current = undefined;
       trackerRef.current.markRegistered();
-    });
+    }, (width, height) => getActiveManager()?.frameIntrinsics?.({ width, height })
+      ?? estimateIntrinsics(width, height));
     markerRef.current = marker;
     marker.start(video);
     return () => {
@@ -778,7 +783,11 @@ function applyObjectAnchor(
   target: GridTargetDef,
 ): boolean {
   if (!manager) return false;
-  const obs = tracker.update(image, nowMs, manager.effectiveFovDeg());
+  // The frame's own field of view, not the one on screen. `effectiveFovDeg` is
+  // corrected for the `object-fit: cover` crop the operator is looking through;
+  // this image is the whole camera frame, so applying that correction to it
+  // counted the crop twice — on top of assuming 60 degrees in the first place.
+  const obs = tracker.update(image, nowMs, manager.frameIntrinsics(image).fovDeg);
   if (!obs) return false;
 
   const world = manager.cameraToWorld(obs.pose);
