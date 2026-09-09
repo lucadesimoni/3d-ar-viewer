@@ -305,6 +305,9 @@ export async function prepareImmersiveAr(
   /** The anchor the assembly is currently riding, if the device grants them. */
   let placedAnchorId: number | undefined;
   const settle = createSettleTracker();
+  /** When the running session began, and when it first saw a surface. */
+  let sessionAtMs = 0;
+  let firstHitAtMs = 0;
   /**
    * Whether frames are being sampled at all.
    *
@@ -340,6 +343,19 @@ export async function prepareImmersiveAr(
         hooks.onReticle?.(undefined);
         return;
       }
+      // The first surface of each session, once, with how long it took.
+      //
+      // A device log has a second session in the same page load waiting 20
+      // seconds for a surface where the first waited three. That is either the
+      // room or a hit-test source that did not come back with the new session,
+      // and the two readings are indistinguishable without this line.
+      if (!firstHitAtMs) {
+        firstHitAtMs = performance.now();
+        logEvent('xr', 'first surface found', {
+          waitedMs: Math.round(firstHitAtMs - (sessionAtMs || firstHitAtMs)),
+          attached: hitTest.attached,
+        });
+      }
       const p = first.position;
       const r = first.rotationQuaternion;
       lastHit = first;
@@ -372,6 +388,9 @@ export async function prepareImmersiveAr(
       if (!before || now.reason !== before.reason || now.ready !== before.ready) {
         logEvent('xr', `tracking ${now.reason}`, {
           waitedMs: Math.round(now.waitedMs), emulated: now.emulated, hasHit: now.hasHit,
+          // Whether the platform is even being asked. A session whose hit-test
+          // never re-attached looks exactly like a room with no surfaces.
+          hitTest: hitTest.attached,
         });
         hooks.onTracking?.(now);
       }
@@ -462,7 +481,9 @@ export async function prepareImmersiveAr(
   let stopInput: (() => void) | undefined;
   let unmarkOverlay: (() => void) | undefined;
   const clearPlacement = (): void => {
-    settle.reset(performance.now());
+    sessionAtMs = performance.now();
+    firstHitAtMs = 0;
+    settle.reset(sessionAtMs);
     tracking = undefined;
     placedAnchorId = undefined;
     lastHit = undefined;

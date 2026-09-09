@@ -307,6 +307,19 @@ export class SceneManager {
   /** In-flight preparation, so a tap can wait for it instead of missing it. */
   private xrPreparing: Promise<void> | undefined;
   /**
+   * The helper a running session is using.
+   *
+   * Leaving AR and going back in used to land on the camera path, every time,
+   * on any device: entering moved the helper out of `xrPrepared` and nothing
+   * ever put one back, so the second tap of a session found nothing prepared
+   * and fell back with "AR started before WebXR had finished loading". A real
+   * log has it — a session at 77 s, camera passthrough at 159 s, and a real
+   * session again only after the operator pressed a third time.
+   */
+  private xrInUse: (import('./xr').XrPrepared & {
+    callbacks: { onPlace: (pose: Pose) => void; onEnd?: () => void };
+  }) | undefined;
+  /**
    * Where the platform's anchor was when the operator placed, and what they
    * placed — so a correction can be applied as a *motion* rather than a fresh
    * placement. See `followAnchor`.
@@ -1107,7 +1120,11 @@ export class SceneManager {
     // callbacks, not the gesture that happened to build this helper.
     prepared.callbacks.onPlace = onPlace;
     prepared.callbacks.onEnd = onEnd;
+    // Out of `xrPrepared` while it is in use — a second tap must not enter the
+    // same helper twice — but not forgotten: when the session ends it goes back,
+    // so the *next* entry has one ready. See `xrInUse`.
     this.xrPrepared = undefined;
+    this.xrInUse = prepared;
     // An earlier stall may have left the loop on the timer clock, which cannot
     // drive a session. Hand over a loop the session can actually use.
     this.xrEntering = true;
@@ -1135,6 +1152,7 @@ export class SceneManager {
     if (!controller) {
       // Back to whatever the mode says, so a refused session leaves no trace.
       this.setTransparent(this.arMode);
+      this.xrInUse = undefined;
       prepared.dispose();
       // Build the next one now, in the background, so a retry costs only the
       // call that actually needs the tap.
@@ -1224,6 +1242,12 @@ export class SceneManager {
             this.setArMode(false);
             this.setReticle(undefined);
             this.trackingListener?.(undefined);
+            // The session is over and the helper is free. Hand it back, so the
+            // next "Enter AR" is a real session rather than a wasted tap.
+            if (this.xrInUse) {
+              this.xrPrepared ??= this.xrInUse;
+              this.xrInUse = undefined;
+            }
             callbacks.onEnd?.();
           }
         },
@@ -2236,6 +2260,13 @@ export class SceneManager {
   }
 
   dispose(): void {
+    // The XR helper holds Babylon observers on a scene that is about to go.
+    // Built but never entered, or entered and finished — either way it is ours
+    // to let go of.
+    this.xrPrepared?.dispose();
+    this.xrInUse?.dispose();
+    this.xrPrepared = undefined;
+    this.xrInUse = undefined;
     window.clearInterval(this.watchdog);
     window.clearInterval(this.frameTimer);
     this.optimizer?.stop();
