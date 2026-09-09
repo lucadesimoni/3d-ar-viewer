@@ -36,6 +36,34 @@ await page.evaluate(() => window.dispatchEvent(new ErrorEvent('error', {
   message: 'boom inside a render loop', filename: 'bundle.js', lineno: 42, colno: 7,
 })));
 
+// First, without entering AR at all.
+//
+// The log that matters most and is hardest to get is an iPad inside the Needle
+// Go App Clip, where the AR bar has been seen not to appear. Until now the
+// export lived only inside the AR settings sheet: reachable only through the
+// chrome that goes missing. So it has to be reachable from the ordinary UI too,
+// and a check that only ever exports from inside AR would not notice if it
+// stopped being.
+await page.locator('.sheet-tabs button', { hasText: 'More' }).click();
+await page.locator('.drawer-tabs button', { hasText: 'Log' }).click();
+const [outsideAr] = await Promise.all([
+  page.waitForEvent('download', { timeout: 15000 }),
+  page.locator('.ar-log-row button', { hasText: 'Save diagnostics log' }).click(),
+]);
+const outside = JSON.parse(await readFile(await outsideAr.path(), 'utf8'));
+check('the log can be saved without entering AR',
+  outside?.version === 1 && outside.ar?.source === undefined,
+  `source=${String(outside?.ar?.source)}, ${outside?.log?.length} entries`);
+// The route that needs nothing of the platform: a web view that ignores
+// downloads reports no error, so there has to be a second way out that cannot
+// fail silently.
+await page.locator('.ar-log-row button', { hasText: 'Show the log as text' }).click();
+await page.waitForTimeout(400);
+const shown = await page.locator('.ar-log-text').inputValue().catch(() => '');
+check('and shown as text for a host that will not save files',
+  shown.length > 200 && JSON.parse(shown).version === 1,
+  `${Math.round(shown.length / 1024)} kB in the panel`);
+
 // Into camera AR, so there is a session to describe and a frame to attach.
 await page.click('.ar-enter');
 await page.waitForSelector('.ar-bar', { timeout: 20000 });
@@ -97,9 +125,13 @@ check('it says what the device and browser are',
 check('and what AR was actually doing',
   report.ar?.source === 'camera' && typeof report.ar?.placement === 'string',
   `source=${report.ar?.source}, placement=${report.ar?.placement}`);
+// A real rate, not just a number-shaped field. It read `fps: 0` on a device
+// rendering at 55, because the rate was a delta between two calls to the stats
+// and the report makes two of them microseconds apart. The old assertion —
+// "typeof fps === 'number'" — passed happily throughout.
 check('and which renderer, at what rate',
-  Boolean(report.render?.backend) && typeof report.render?.fps === 'number',
-  `${report.render?.backend}, ${Math.round(report.render?.fps ?? -1)} fps, clock=${report.render?.clock}`);
+  Boolean(report.render?.backend) && report.render?.fps > 5 && report.render.frames > 30,
+  `${report.render?.backend}, ${Math.round(report.render?.fps ?? -1)} fps over ${report.render?.frames} frames, clock=${report.render?.clock}`);
 check('it carries the sequence of events, not just a snapshot',
   Array.isArray(report.log) && report.log.some((e) => e.message.includes('camera passthrough')),
   `${report.log?.length} entries`);

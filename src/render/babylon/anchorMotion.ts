@@ -40,3 +40,10 @@ export function anchorMoved(applied: Pose, reported: Pose): boolean {
   return distanceBetween(applied.position, reported.position) >= ANCHOR_POSITION_EPS_M
     || angleBetween(applied.rotation, reported.rotation) >= ANCHOR_ROTATION_EPS_RAD;
 }
+
+/** Two poses the app might ask for: the same one, or a different one. */
+export function samePose(a: Pose | undefined, b: Pose | undefined): boolean {
+  if (!a || !b) return a === b;
+  return a.position.every((v, i) => v === b.position[i])
+    && a.rotation.every((v, i) => v === b.rotation[i]);
+}

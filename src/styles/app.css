@@ -733,6 +733,19 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 .ar-details[open] > summary { color: var(--text); }
 .ar-details { border-top: 1px solid var(--edge); margin-top: 4px; }
 
+/* The log export, in the AR sheet and in the "Log" drawer outside it. */
+.ar-log-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.ar-log-row button { flex: 1 1 auto; min-height: 44px; }
+/* The last resort: a host that will neither save a file nor write the
+   clipboard can still show the text to be selected and copied by hand. */
+.ar-log-text {
+  width: 100%; box-sizing: border-box; min-height: 140px; margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  line-height: 1.4; color: var(--text); background: rgba(0, 0, 0, 0.32);
+  border: 1px solid var(--edge); border-radius: 10px; padding: 8px;
+  resize: vertical;
+}
+
 .ar-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 2px 0 0; }
 .ar-facts div { background: rgba(255,255,255,0.04); border-radius: 10px; padding: 8px 10px; }
 .ar-facts dt { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }

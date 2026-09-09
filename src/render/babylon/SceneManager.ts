@@ -25,6 +25,7 @@ import type { Material } from '@babylonjs/core/Materials/material';
 import type { AssemblyDef, BackgroundRole, PartDef, PlacementState, Pose } from '../../engine/types';
 import type { Severity } from '../../engine/diagnostics';
 import { assemblyCentroid, explodePose, pulseScale, sampleTimeline, type Timeline } from '../../engine/animation';
+import { clonePose } from '../../engine/math';
 import { loadPartModel } from './gltf';
 import {
   HardwareScalingOptimization,
@@ -40,7 +41,7 @@ import { createBestEngine, type RenderBackendKind } from './engineFactory';
 import { STATUS_COLORS, type RecognitionStatus } from '../../vision/verdict';
 import { ASSUMED_CAMERA_FOV_DEG } from '../../engine/tracking/markerTracking';
 import { logEvent } from '../../diagnostics/log';
-import { anchorMoved } from './anchorMotion';
+import { anchorMoved, samePose } from './anchorMotion';
 import type { TrackingState } from '../../engine/tracking/settle';
 import {
   DIAGNOSTIC_COLORS,
@@ -86,6 +87,8 @@ const PLACEMENT_ARM_DELAY_MS = 350;
  * spend it, so this is well inside what `requestSession` will still accept.
  */
 const XR_PREPARE_WAIT_MS = 2000;
+/** The window the frame rate is averaged over, ms. Long enough to be steady. */
+const FPS_WINDOW_MS = 500;
 /** How often anchor corrections are worth a log line, ms. */
 const ANCHOR_LOG_INTERVAL_MS = 5000;
 
@@ -312,6 +315,8 @@ export class SceneManager {
   private anchorPlaced: Matrix | undefined;
   /** The last report we actually moved to — what a new one is measured against. */
   private anchorApplied: Pose | undefined;
+  /** The last pose the *app* asked for, so a repeat of it changes nothing. */
+  private storeAnchor: Pose | undefined;
   /**
    * How the session is tracking, and whether placement is armed.
    *
@@ -345,8 +350,19 @@ export class SceneManager {
   private stalls = 0;
   private paintSampleWanted = false;
   private lastPainted: number | undefined;
-  private lastStatsAtMs = 0;
-  private lastStatsFrames = 0;
+  /**
+   * Frames per second, measured by the loop that produces them.
+   *
+   * It used to be a delta between two calls to `renderStats`, which made the
+   * number depend on who asked and how often. The diagnostics report asks
+   * twice, microseconds apart, and so reported `fps: 0` on a device rendering
+   * at 55 — in a file whose whole purpose is to say what was happening.
+   */
+  private fpsWindowAtMs = 0;
+  private fpsWindowFrames = 0;
+  private fpsValue = 0;
+  /** When the loop last produced a frame — how a stopped loop is recognised. */
+  private lastFrameAtMs = 0;
   private onContextLost = (e: Event): void => {
     // Preventing the default is what allows the browser to restore the context
     // at all; without it the canvas is dead until the page reloads.
@@ -400,10 +416,23 @@ export class SceneManager {
     this.watchdogFrames = this.frames;
   };
 
+  /** Roll the frame-rate window. Called from the loop, not from the reader. */
+  private sampleFps(): void {
+    const now = performance.now();
+    this.lastFrameAtMs = now;
+    if (!this.fpsWindowAtMs) { this.fpsWindowAtMs = now; this.fpsWindowFrames = this.frames; return; }
+    const elapsed = now - this.fpsWindowAtMs;
+    if (elapsed < FPS_WINDOW_MS) return;
+    this.fpsValue = ((this.frames - this.fpsWindowFrames) * 1000) / elapsed;
+    this.fpsWindowAtMs = now;
+    this.fpsWindowFrames = this.frames;
+  }
+
   private renderFrame = (): void => {
     try {
       this.scene.render();
       this.frames++;
+      this.sampleFps();
       this.lastFrameBuffer = [this.engine.getRenderWidth(), this.engine.getRenderHeight()];
       if (this.paintSampleWanted) {
         this.paintSampleWanted = false;
@@ -946,7 +975,10 @@ export class SceneManager {
     const position = new Vector3();
     const rotation = new Quaternion();
     if (!moved.decompose(undefined, rotation, position)) return;
-    this.setAnchor({
+    // `applyAnchor`, not `setAnchor`: this is the same placement where it now
+    // is, not a new one, and putting it through the public entry would re-base
+    // the very anchor it came from.
+    this.applyAnchor({
       position: [position.x, position.y, position.z],
       rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
     });
@@ -1380,8 +1412,47 @@ export class SceneManager {
     this.freezeStatic();
   }
 
-  /** Place the whole assembly at a world anchor pose (AR registration). */
+  /**
+   * Place the whole assembly at a world anchor pose (AR registration).
+   *
+   * Called by the app on *every* store change, with whatever the store holds —
+   * which is why it must do nothing when the store has not moved it. A device
+   * log showed why: the platform's anchor corrections move the assembly in the
+   * scene without announcing themselves to the store (re-announcing would
+   * re-arm placement), so the store still held the pose from the tap. Any
+   * unrelated change — going to the next step, selecting a part — pushed that
+   * stale pose back in and yanked the assembly back to where it had been
+   * placed, by as much as the platform had corrected since: 0.4 m in that log.
+   * The operator sees the model jump when they change step.
+   *
+   * A pose that *is* new is the app placing it: that becomes the placement
+   * later corrections are measured from, so "bring it here" is not quietly
+   * undone by the next correction of an anchor it no longer sits on.
+   */
   setAnchor(pose: Pose | undefined): void {
+    if (samePose(pose, this.storeAnchor)) {
+      // Nothing new from the app — so do not touch where the assembly is. What
+      // still has to be reconciled is whether it should be drawn at all: this
+      // runs on every store change, and entering or leaving AR arrives here as
+      // one. With nothing anchored there is no correction to preserve, so that
+      // case goes through the ordinary path.
+      if (!pose) { this.applyAnchor(undefined); return; }
+      if (this.arMode) this.assemblyRoot.setEnabled(true);
+      this.updateGroundContact();
+      return;
+    }
+    this.storeAnchor = pose ? clonePose(pose) : undefined;
+    // The app has moved it, so the platform's anchor no longer describes where
+    // it is. Re-base: the next report establishes a fresh origin and corrections
+    // move *this* pose from here on.
+    this.anchorOrigin = undefined;
+    this.anchorApplied = undefined;
+    this.anchorPlaced = pose ? poseMatrix(pose) : undefined;
+    this.applyAnchor(pose);
+  }
+
+  /** Move the assembly, without treating the move as a new placement. */
+  private applyAnchor(pose: Pose | undefined): void {
     // An unanchored assembly sits at the world origin — which in AR is the
     // operator's own head. Entering AR therefore started *inside* the model,
     // filling the view with the translucent insides of a gearbox while the
@@ -1923,12 +1994,15 @@ export class SceneManager {
     xr: boolean;
   } {
     const rect = this.canvas.getBoundingClientRect();
-    const now = performance.now();
-    const fps = this.lastStatsAtMs
-      ? ((this.frames - this.lastStatsFrames) * 1000) / Math.max(1, now - this.lastStatsAtMs)
-      : 0;
-    this.lastStatsAtMs = now;
-    this.lastStatsFrames = this.frames;
+    // The window is rolled by the loop, so a loop that has stopped would leave
+    // the last healthy rate standing — and the watchdog that reads this would
+    // be told everything is fine while the overlay sat frozen. So: no frame in
+    // the last two windows is no frames at all, which is zero, measured rather
+    // than assumed. Reading never mutates — the report asks twice, microseconds
+    // apart, and used to get `fps: 0` on a device rendering at 55 for exactly
+    // that reason.
+    const idleMs = performance.now() - this.lastFrameAtMs;
+    const fps = !this.lastFrameAtMs || idleMs > FPS_WINDOW_MS * 2 ? 0 : this.fpsValue;
     const babylonLost = (this.engine as unknown as { _contextWasLost?: boolean })._contextWasLost;
     return {
       frames: this.frames,
