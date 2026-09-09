@@ -1141,10 +1141,18 @@ export class SceneManager {
   }
 
   /** What a running session actually got: reference space and granted features. */
-  async xrSessionInfo(): Promise<{ space?: string; features: string[] }> {
+  async xrSessionInfo(): Promise<{
+    space?: string;
+    features: string[];
+    camera?: Awaited<typeof import('./xr')>['cameraAccess'];
+  }> {
     try {
-      const { referenceSpace, grantedFeatures } = await import('./xr');
-      return { space: referenceSpace, features: grantedFeatures };
+      const { referenceSpace, grantedFeatures, cameraAccess } = await import('./xr');
+      // Whether this device will hand over its camera image in a session is the
+      // question that decides where part inspection can run at all, and it is
+      // not answerable by reading documentation — only by asking a real device.
+      // So it travels in the diagnostics file with everything else.
+      return { space: referenceSpace, features: grantedFeatures, camera: cameraAccess };
     } catch {
       return { features: [] };
     }

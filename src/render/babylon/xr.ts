@@ -56,6 +56,43 @@ export let referenceSpace: string | undefined;
 export let grantedFeatures: string[] = [];
 
 /**
+ * Full pinhole intrinsics, when the platform hands them over.
+ *
+ * The app's field of view is otherwise an assumption — 60 degrees, with a slider
+ * for the operator — and `estimateIntrinsics` turns that assumption into a focal
+ * length. A five-degree error there is roughly a ten per cent range error, which
+ * is fine for placing an overlay and not fine for saying whether a part is
+ * seated. A session that grants raw camera access reports the real numbers.
+ */
+export interface XrCameraIntrinsics {
+  /** Focal lengths in pixels. */
+  ax: number;
+  ay: number;
+  /** Principal point in pixels. */
+  u0: number;
+  v0: number;
+  gamma: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Whether this session can see its own camera image, and what it says about it.
+ *
+ * In an ordinary immersive session the compositor owns the picture and the page
+ * never sees it — which is why part inspection currently runs only in camera
+ * passthrough, the one mode whose pose is weakest. The `camera-access` feature
+ * is the way out, and whether a given device and browser grant it is a question
+ * no amount of reading answers: it is asked for optionally and reported here.
+ */
+export let cameraAccess: {
+  requested: boolean;
+  granted: boolean;
+  intrinsics?: XrCameraIntrinsics;
+  error?: string;
+} = { requested: false, granted: false };
+
+/**
  * Reference spaces to try, best first, one per tap.
  *
  * `local-floor` puts the origin on the floor, which is what a placement on the
@@ -218,6 +255,7 @@ export async function prepareImmersiveAr(
   const { WebXRDefaultExperience } = await import('@babylonjs/core/XR/webXRDefaultExperience');
   const { WebXRHitTest } = await import('@babylonjs/core/XR/features/WebXRHitTest');
   const { WebXRAnchorSystem } = await import('@babylonjs/core/XR/features/WebXRAnchorSystem');
+  const { WebXRRawCameraAccess } = await import('@babylonjs/core/XR/features/WebXRRawCameraAccess');
   const { WebXRFeatureName } = await import('@babylonjs/core/XR/webXRFeaturesManager');
   await import('@babylonjs/core/XR/features/WebXRDOMOverlay');
 
@@ -288,6 +326,39 @@ export async function prepareImmersiveAr(
       reticle = { position: [p.x, p.y, p.z], rotation: [r.x, r.y, r.z, r.w] };
       hooks.onReticle?.(reticle);
     });
+
+    // Raw camera access: the frames part inspection needs, in the mode whose
+    // pose is worth inspecting against.
+    //
+    // Optional, and emphatically so — this is the fifth argument again. A
+    // session refused because the phone cannot hand over camera frames would
+    // trade the whole of AR for a feature nothing yet depends on. What it
+    // buys when granted is two things at once: the camera image inside the
+    // session, and the real intrinsics instead of an assumed 60-degree field
+    // of view.
+    cameraAccess = { requested: true, granted: false };
+    try {
+      const raw = xr.baseExperience.featuresManager.enableFeature(
+        WebXRFeatureName.RAW_CAMERA_ACCESS, 'latest', {}, true, false,
+      ) as InstanceType<typeof WebXRRawCameraAccess>;
+      raw.onTexturesUpdatedObservable.add(() => {
+        const first = raw.cameraIntrinsics?.[0];
+        cameraAccess = {
+          requested: true,
+          granted: true,
+          ...(first ? { intrinsics: {
+            ax: first.ax, ay: first.ay, u0: first.u0, v0: first.v0,
+            gamma: first.gamma, width: first.width, height: first.height,
+          } } : {}),
+        };
+      });
+    } catch (err) {
+      cameraAccess = {
+        requested: true,
+        granted: false,
+        error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+      };
+    }
 
     // Anchors: the answer to an assembly that drifts off the bench.
     //

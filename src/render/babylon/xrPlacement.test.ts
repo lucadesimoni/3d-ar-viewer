@@ -30,6 +30,13 @@ function fixture() {
     onAnchorUpdatedObservable: new Observable<typeof anchor>(),
     addAnchorPointUsingHitTestResultAsync: vi.fn(async () => anchor),
   };
+  const rawCamera = {
+    onTexturesUpdatedObservable: new Observable<unknown>(),
+    cameraIntrinsics: [{
+      ax: 720, ay: 720, u0: 320, v0: 240, gamma: 0, width: 640, height: 480,
+      viewportX: 0, viewportY: 0,
+    }],
+  };
   const sessionManager = {
     session,
     onXRSessionInit: new Observable<EventTarget>(),
@@ -39,7 +46,11 @@ function fixture() {
     onStateChangedObservable: new Observable<WebXRState>(),
     sessionManager,
     featuresManager: {
-      enableFeature: vi.fn((name: string) => (/anchor/i.test(name) ? anchors : hitTest)),
+      enableFeature: vi.fn((name: string, ..._rest: unknown[]) => {
+        if (/anchor/i.test(name)) return anchors;
+        if (/camera/i.test(name)) return rawCamera;
+        return hitTest;
+      }),
     },
     enterXRAsync: vi.fn(async (
       _mode: XRSessionMode, _space: XRReferenceSpaceType, _target: unknown, _options: XRSessionInit,
@@ -61,7 +72,10 @@ function fixture() {
     position: { x: 1, y: 0, z: 2 },
     rotationQuaternion: { x: 0, y: 0, z: 0, w: 1 },
   }]);
-  return { engine, scene, overlay, session, baseExperience, hitTest, anchors, anchor, emit, hit };
+  return {
+    engine, scene, overlay, session, baseExperience, hitTest, anchors, anchor,
+    rawCamera, emit, hit,
+  };
 }
 
 describe('WebXR surface placement', () => {
@@ -264,6 +278,48 @@ describe('holding the spot while the device learns the room', () => {
     f.hit();
     f.session.dispatchEvent(new Event('select'));
     expect(onSelectAnchor).toHaveBeenCalledTimes(1);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+});
+
+describe('seeing the camera image from inside a session', () => {
+  it('asks for it optionally, and reports the intrinsics the platform gives', async () => {
+    const f = fixture();
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, {});
+    const asked = f.baseExperience.featuresManager.enableFeature.mock.calls
+      .find((args) => /camera/i.test(String(args[0])));
+    expect(asked).toBeDefined();
+    // The fifth argument is `required`, and it defaults to true. A session
+    // refused because the phone will not hand over camera frames would trade
+    // all of AR for a feature nothing yet depends on.
+    expect(asked![4]).toBe(false);
+
+    const { cameraAccess } = await import('./xr');
+    expect(cameraAccess.requested).toBe(true);
+    expect(cameraAccess.granted).toBe(false);   // nothing has arrived yet
+
+    f.rawCamera.onTexturesUpdatedObservable.notifyObservers([]);
+    const after = (await import('./xr')).cameraAccess;
+    expect(after.granted).toBe(true);
+    // Measured focal length, not one derived from an assumed field of view.
+    expect(after.intrinsics?.ax).toBe(720);
+    expect(after.intrinsics?.width).toBe(640);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+
+  it('enters the session even when the device refuses the camera image', async () => {
+    const f = fixture();
+    f.baseExperience.featuresManager.enableFeature = vi.fn((name: string, ..._rest: unknown[]) => {
+      if (/camera/i.test(name)) throw new Error('camera-access not supported');
+      return f.hitTest;
+    });
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, {});
+    expect(await prepared!.enter()).toBeDefined();
+    const { cameraAccess } = await import('./xr');
+    expect(cameraAccess.granted).toBe(false);
+    expect(cameraAccess.error).toMatch(/not supported/);
     prepared!.dispose();
     f.engine.dispose();
   });
