@@ -418,7 +418,13 @@ export const useStore = create<AppState>((set, get) => {
       const placements = new Map(get().placements);
       const pl = placements.get(partId);
       if (!pl) return;
-      placements.set(partId, { ...pl, pose, status: pl.status === 'ghost' ? 'placed' : pl.status });
+      // Position only — the status is the *release*'s to change.
+      //
+      // This promoted `ghost` to `placed` on every pointer move, so brushing a
+      // part changed the build state and could raise error diagnostics before
+      // the operator had decided anything, and an abandoned drag left the
+      // promotion behind. `placePart` is where a decision is made.
+      placements.set(partId, { ...pl, pose });
       set({ ...derive({ ...get(), placements }) });
     },
 

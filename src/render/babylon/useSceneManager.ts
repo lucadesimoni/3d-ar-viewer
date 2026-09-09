@@ -90,7 +90,11 @@ export function useSceneManager(
         timeline: s.animationTimeline,
         timelineT: s.animationT,
         showBackground: true,
-        showGhosts: s.viewMode === 'guide' || s.viewMode === 'explore',
+        // Animate too, and for the reason the mode exists: on an untouched build
+        // every part is a ghost, so entering Animate hid everything but the
+        // active step and the timeline then moved the invisible. "The animation
+        // doesn't seem to work yet" was a fair reading of that.
+        showGhosts: s.viewMode === 'guide' || s.viewMode === 'explore' || s.viewMode === 'animate',
         recognitionByPart,
       };
       m.update(state);

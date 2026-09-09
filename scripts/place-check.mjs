@@ -104,6 +104,131 @@ check('a part dropped out of range is not silently teleported home', far.mm > 10
 check('and the operator is told why it is wrong', far.errors.length > 0, far.errors.join(', ') || 'no diagnostic');
 
 await page.screenshot({ path: '/tmp/place-check.png' });
+// --- Only the step in hand can be moved. -----------------------------------
+// A tester: "what irritates me is that I can move the elements by drag and
+// drop". Every part was draggable at any moment, in every view mode, with no
+// cursor, no hover, no warning — including parts of steps that are not due. And
+// two harder consequences: a move promoted a ghost to placed on every pointer
+// event, before the operator had decided anything; and during a build animation
+// the animated pose wins, so a drag moved nothing visibly, wrote to the store
+// throughout, and committed the animated position on release.
+{
+  const page = await browser.newPage({ viewport: { width: 1100, height: 800 }, deviceScaleFactor: 1 });
+  await page.goto(`${URL_BASE}?assembly=bench-gearbox`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('canvas.viewer-canvas');
+  await page.waitForTimeout(2000);
+
+  /**
+   * A screen point where this part is actually the frontmost thing.
+   *
+   * Projecting a part's centre is not enough: parts overlap, and the first
+   * version of this check pressed the baseplate's centre and hit the housing
+   * standing in front of it — then read the app's correct refusal as a bug.
+   * Probe outwards from the centre until the pick agrees.
+   */
+  const canvasPoint = (id) => page.evaluate((partId) => {
+    const scene = window.spatialScene();
+    const p = scene.projectPart(partId);
+    if (!p) return null;
+    const r = document.querySelector('canvas.viewer-canvas').getBoundingClientRect();
+    const cx = p.x * r.width;
+    const cy = p.y * r.height;
+    for (let radius = 0; radius <= 90; radius += 10) {
+      for (let a = 0; a < 360; a += radius === 0 ? 360 : 30) {
+        const x = cx + Math.cos((a * Math.PI) / 180) * radius;
+        const y = cy + Math.sin((a * Math.PI) / 180) * radius;
+        if (x < 0 || y < 0 || x > r.width || y > r.height) continue;
+        if (scene.pickPartAt(x, y) === partId) return { x: r.left + x, y: r.top + y, exposed: true };
+      }
+    }
+    return { x: r.left + cx, y: r.top + cy, exposed: false };
+  }, id);
+  const statusOf = (id) => page.evaluate(
+    (partId) => window.spatialStore.getState().placements.get(partId)?.status, id,
+  );
+  const drag = async (from, dx, dy) => {
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + dx, from.y + dy, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+  };
+
+  // A part belonging to a step that is not the active one.
+  const later = await page.evaluate(() => {
+    const st = window.spatialStore.getState();
+    const active = st.assembly.steps.find((s) => s.id === st.activeStepId);
+    const other = st.assembly.steps.find((s) => s.id !== st.activeStepId && s.partIds.length);
+    return { id: other.partIds[0], activeStep: active.id, step: other.id };
+  });
+  const at = await canvasPoint(later.id);
+  if (at?.exposed) {
+    const before = await statusOf(later.id);
+    await drag(at, 60, 40);
+    check('a part from a later step cannot be dragged',
+      (await statusOf(later.id)) === before,
+      `${later.id} (step ${later.step}) stayed ${await statusOf(later.id)}`);
+  } else {
+    check('a part from a later step is exposed to try', false, 'never frontmost');
+  }
+
+  // The active step's part still moves — the feature must survive the fix.
+  const activePart = await page.evaluate(() => {
+    const st = window.spatialStore.getState();
+    return st.assembly.steps.find((s) => s.id === st.activeStepId).partIds[0];
+  });
+  const activeAt = await canvasPoint(activePart);
+  // Which part is actually frontmost there: parts overlap, and the previous
+  // gesture orbited the camera because a refused drag leaves the camera in
+  // charge — projecting a centre does not guarantee picking that part.
+  await drag(activeAt, 40, 30);
+  // Not `=== 'placed'`: a placement with no error diagnostic is promoted again,
+  // to `verified`, by `derive()`. The first version of this assertion demanded
+  // 'placed' and reported the app's correct behaviour as a failure.
+  const afterDrag = await statusOf(activePart);
+  check('and the active step\'s part still can be',
+    activeAt.exposed && afterDrag !== 'ghost',
+    `${activePart} is ${afterDrag}${activeAt.exposed ? '' : ' (never exposed)'}`);
+
+  // An abandoned drag must leave nothing behind. Moving used to promote
+  // `ghost → placed` on every pointer event, so brushing a part changed the
+  // build state before the operator had decided anything.
+  await page.evaluate(() => window.spatialStore.getState().reset());
+  await page.waitForTimeout(300);
+  const abandonPart = await page.evaluate(() => {
+    const st = window.spatialStore.getState();
+    return st.assembly.steps.find((s) => s.id === st.activeStepId).partIds[0];
+  });
+  const abandonAt = await canvasPoint(abandonPart);
+  await page.mouse.move(abandonAt.x, abandonAt.y);
+  await page.mouse.down();
+  await page.mouse.move(abandonAt.x + 50, abandonAt.y + 30, { steps: 10 });
+  const midDrag = await statusOf(abandonPart);
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  check('a drag in progress has not yet decided anything', midDrag === 'ghost',
+    `${abandonPart} was ${midDrag} mid-drag`);
+
+  // Nothing may be committed while a timeline is running.
+  await page.evaluate(() => window.spatialStore.getState().reset());
+  await page.waitForTimeout(300);
+  const playing = await page.evaluate(() => {
+    const st = window.spatialStore.getState();
+    const id = st.assembly.steps.find((s) => s.id === st.activeStepId).partIds[0];
+    // A timeline in the store is what `resolvePose` prefers over the placement.
+    st.setAnimation({ durationS: 10, tracks: [], markers: [] }, 0);
+    return id;
+  });
+  const animAt = await canvasPoint(playing);
+  const beforeAnim = await statusOf(playing);
+  if (animAt) await drag(animAt, 50, 30);
+  check('and nothing is dragged while an animation is running',
+    (await statusOf(playing)) === beforeAnim,
+    `${playing} stayed ${await statusOf(playing)}`);
+  await page.evaluate(() => window.spatialStore.getState().setAnimation(undefined, 0));
+  await page.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall placement checks passed');
 process.exit(failures.length ? 1 : 0);
