@@ -37,7 +37,7 @@ export interface DiagnosticsReport {
     error: string | undefined;
     xrReady: boolean;
     xrFailure?: string;
-    xrSession?: { space?: string; features: string[] };
+    xrSession?: Awaited<ReturnType<NonNullable<ReturnType<typeof getActiveManager>>['xrSessionInfo']>>;
   };
   render?: ReturnType<NonNullable<ReturnType<typeof getActiveManager>>['renderStats']>;
   assembly: { id: string; name: string; parts: number; steps: number; activeStep?: string };

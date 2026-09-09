@@ -1326,10 +1326,16 @@ const context = await browser.newContext({
     const required = requested.flatMap((r) => r.required);
     check('the AR session asks for nothing a phone might lack',
       !required.includes('hit-test') && !required.includes('anchors')
-        && !required.includes('plane-detection'),
+        && !required.includes('plane-detection') && !required.includes('camera-access'),
       `required: ${required.join(', ') || 'none'}`);
     const optional = requested.flatMap((r) => r.optional);
     check('and asks for hit-test as an optional extra', optional.includes('hit-test'),
+      `optional: ${optional.join(', ') || 'none'}`);
+    // Camera access is what would let part inspection run in the mode whose
+    // pose is worth inspecting against — and it is the feature most likely to
+    // be refused, so it must never be able to cost the session.
+    check('and for the camera image, also as an extra, never a condition',
+      optional.includes('camera-access') && !required.includes('camera-access'),
       `optional: ${optional.join(', ') || 'none'}`);
   } else {
     check('the AR session request could be observed', requested !== null,
