@@ -41,6 +41,14 @@ export interface XrHooks {
    * why an unasked question cost a placement 78 cm below the floor.
    */
   onTracking?: (state: TrackingState) => void;
+  /**
+   * The platform handed over its real camera calibration.
+   *
+   * Fired when `camera-access` produces intrinsics, which is the one moment
+   * this app stops guessing a focal length. Reported once, and again only if
+   * the numbers change.
+   */
+  onCameraIntrinsics?: (intrinsics: XrCameraIntrinsics) => void;
 }
 
 export interface XrController {
@@ -415,14 +423,29 @@ export async function prepareImmersiveAr(
       ) as InstanceType<typeof WebXRRawCameraAccess>;
       raw.onTexturesUpdatedObservable.add(() => {
         const first = raw.cameraIntrinsics?.[0];
+        const measured = first ? {
+          ax: first.ax, ay: first.ay, u0: first.u0, v0: first.v0,
+          gamma: first.gamma, width: first.width, height: first.height,
+        } : undefined;
+        const changed = measured && (
+          measured.ax !== cameraAccess.intrinsics?.ax
+          || measured.ay !== cameraAccess.intrinsics?.ay
+          || measured.width !== cameraAccess.intrinsics?.width
+          || measured.height !== cameraAccess.intrinsics?.height
+        );
         cameraAccess = {
           requested: true,
           granted: true,
-          ...(first ? { intrinsics: {
-            ax: first.ax, ay: first.ay, u0: first.u0, v0: first.v0,
-            gamma: first.gamma, width: first.width, height: first.height,
-          } } : {}),
+          ...(measured ? { intrinsics: measured } : {}),
         };
+        // Every frame carries these; only a change is worth telling anyone.
+        if (measured && changed) {
+          logEvent('xr', 'camera intrinsics granted', {
+            fovDeg: Number(((2 * Math.atan(measured.height / 2 / measured.ay) * 180) / Math.PI).toFixed(2)),
+            size: [measured.width, measured.height],
+          });
+          hooks.onCameraIntrinsics?.(measured);
+        }
       });
     } catch (err) {
       cameraAccess = {

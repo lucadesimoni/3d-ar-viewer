@@ -18,12 +18,17 @@ const f = vi.hoisted(() => {
     },
     marker: { start: vi.fn(), stop: vi.fn() },
     markerCallback: undefined as ((observation: MarkerObservation) => void) | undefined,
+    markerCalibration: undefined as ((width: number, height: number) => unknown) | undefined,
     session: { end: vi.fn() },
     pipeline: { init: vi.fn(), resetTemporal: vi.fn(), dispose: vi.fn(), process: vi.fn(), create: vi.fn(), status: vi.fn() },
     manager: {
       prepareWebXr: vi.fn(),
       startWebXr: vi.fn(),
       onXrTracking: vi.fn(),
+      frameIntrinsics: vi.fn(({ width, height }: { width: number; height: number }) => ({
+        fx: 1317, fy: 1317, cx: width / 2, cy: height / 2, width, height,
+        fovDeg: 72.18, source: 'xr-raw' as const,
+      })),
       setArMode: vi.fn(),
       setPlacementActive: vi.fn(),
       cameraToWorld: vi.fn((pose) => pose),
@@ -48,12 +53,20 @@ vi.mock('../engine/tracking/cameraTracker', () => ({
 }));
 vi.mock('../engine/tracking/markerTracking', () => ({
   MarkerTracker: class {
-    constructor(_size: number, onObservation: (observation: MarkerObservation) => void) {
+    constructor(
+      _size: number,
+      onObservation: (observation: MarkerObservation) => void,
+      calibration?: (width: number, height: number) => unknown,
+    ) {
       f.markerCallback = onObservation;
+      f.markerCalibration = calibration;
     }
     start = f.marker.start;
     stop = f.marker.stop;
   },
+  estimateIntrinsics: (width: number, height: number) => ({
+    fx: height, fy: height, cx: width / 2, cy: height / 2,
+  }),
 }));
 vi.mock('../vision/pipeline', () => ({
   RecognitionPipeline: class {
@@ -369,5 +382,19 @@ describe('camera to WebXR handoff', () => {
     expect(f.marker.stop).not.toHaveBeenCalled();
     expect(useStore.getState().arSource).toBe('camera');
     expect(controller.arActive).toBe(true);
+  });
+});
+
+describe('what the marker tracker is told about the camera', () => {
+  it('hands it the live calibration instead of leaving it on 60 degrees', async () => {
+    // This argument was never passed. Every marker pose the app has produced
+    // used the assumption — on a device that had measured 72.2 degrees, and
+    // after the operator had moved the slider.
+    expect(f.markerCalibration).toBeDefined();
+    const k = f.markerCalibration?.(1080, 1920) as { fovDeg: number; source: string };
+    expect(k.source).toBe('xr-raw');
+    expect(k.fovDeg).toBeCloseTo(72.18, 2);
+    // The whole frame, not the cropped view on screen.
+    expect(f.manager.frameIntrinsics).toHaveBeenCalledWith({ width: 1080, height: 1920 });
   });
 });

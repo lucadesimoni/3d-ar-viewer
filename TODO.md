@@ -46,14 +46,14 @@ error · **unverified** = correct as far as it can be tested here · **chore**.
   roughly a 10% range error, which is why recognition re-registers rather than
   measures. The AR settings sheet exposes the number, and `?camfov=` presets it.
   `src/engine/tracking/markerTracking.ts`
-  *In* a session this is no longer necessary and no longer done: the reported
-  field of view comes from the XR camera (`fovSource: 'xr-camera'`), and a real
-  Android log measured 72.2° where the assumption said 60. That device also
-  granted `camera-access`, which hands over full pinhole intrinsics
-  (`ax, ay, u0, v0`) — see `ar.xrSession.camera` in a diagnostics file. What is
-  still assumed is `MarkerTracker`'s own FOV: it is constructed without one in
-  `useArController.ts` and therefore uses the hard-coded 60° even when the
-  operator has calibrated. Fixing that is step 1 of the perception plan.
+  It is now assumed only when nothing better exists. `src/perception/intrinsics.ts`
+  ranks the answers — the platform's own intrinsics from `camera-access`, then
+  the field of view measured from the XR projection, then the operator's slider,
+  then the assumption — and every result says which it is (`render.frameFovSource`
+  in a diagnostics file). Both measurements outlive the session that produced
+  them, because they describe the device's camera and the passthrough path looks
+  through the same lens. A real Android device reports 72.2° where the
+  assumption said 60.
 - **approximation — eye height is assumed** (1.45 m) for the iOS floor plane.
   Adjustable live in AR settings; there is no way to measure it from the web.
 - **approximation — grid recognition is axis-aligned.** The facade must be

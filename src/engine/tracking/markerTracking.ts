@@ -344,10 +344,20 @@ export class MarkerTracker {
 
   readonly supported: boolean;
 
+  /**
+   * `calibration` is asked per frame, not taken once.
+   *
+   * It used to be a number with a default of 60, and the app never passed one:
+   * every marker pose this app has ever produced used the assumption, even on
+   * a device that had measured 72.2 degrees and even after the operator moved
+   * the slider. A five-degree error is roughly ten per cent of the range.
+   * Asking each time also means a calibration that arrives mid-session — the
+   * platform granting `camera-access` — is used from the next frame on.
+   */
   constructor(
     private readonly sizeM: number,
     private readonly onObservation: (obs: MarkerObservation) => void,
-    private readonly fovDeg = 60,
+    private readonly calibration?: (width: number, height: number) => Intrinsics,
   ) {
     const ctor = (window as unknown as { BarcodeDetector?: BarcodeCtor }).BarcodeDetector;
     this.supported = typeof ctor === 'function';
@@ -371,7 +381,8 @@ export class MarkerTracker {
     this.busy = true;
     try {
       const results = await this.detector.detect(video);
-      const K = estimateIntrinsics(video.videoWidth, video.videoHeight, this.fovDeg);
+      const K = this.calibration?.(video.videoWidth, video.videoHeight)
+        ?? estimateIntrinsics(video.videoWidth, video.videoHeight);
       for (const r of results) {
         const solved = markerPoseFromCorners(r.cornerPoints, this.sizeM, K);
         if (!solved) continue;

@@ -42,6 +42,12 @@ import { STATUS_COLORS, type RecognitionStatus } from '../../vision/verdict';
 import { ASSUMED_CAMERA_FOV_DEG } from '../../engine/tracking/markerTracking';
 import { logEvent } from '../../diagnostics/log';
 import { anchorMoved, samePose } from './anchorMotion';
+import {
+  cameraIntrinsics,
+  type CameraIntrinsics,
+  type IntrinsicsSource,
+  type RawIntrinsics,
+} from '../../perception/intrinsics';
 import type { TrackingState } from '../../engine/tracking/settle';
 import {
   DIAGNOSTIC_COLORS,
@@ -330,6 +336,16 @@ export class SceneManager {
   private anchorApplied: Pose | undefined;
   /** The last pose the *app* asked for, so a repeat of it changes nothing. */
   private storeAnchor: Pose | undefined;
+  /**
+   * The camera calibration the platform handed over, if it ever did.
+   *
+   * Survives the session on purpose: `camera-access` measures the *device's*
+   * camera, and the passthrough path that runs afterwards looks through the
+   * same lens with nothing better than a 60-degree assumption.
+   */
+  private xrRawIntrinsics: RawIntrinsics | undefined;
+  /** The last vertical FOV measured from an XR view, degrees. Same reasoning. */
+  private measuredFovDeg = 0;
   /**
    * How the session is tracking, and whether placement is armed.
    *
@@ -833,9 +849,37 @@ export class SceneManager {
     return this.assemblyBounds().radius;
   }
 
-  /** Vertical FOV currently on screen, degrees — use this for intrinsics too. */
+  /**
+   * Vertical FOV currently *on screen*, degrees.
+   *
+   * This is the angle the operator looks through after `object-fit: cover` has
+   * cropped the video, which is the right number for drawing the overlay and
+   * the wrong one for reading a whole camera frame. Intrinsics for a frame
+   * come from `frameIntrinsics`.
+   */
   effectiveFovDeg(): number {
     return this.fieldOfView().deg;
+  }
+
+  /**
+   * The best pinhole model available for a frame of this size.
+   *
+   * Everything that turns pixels into rays comes through here, so that one
+   * ranking decides it: the platform's own intrinsics, then the field of view
+   * measured from an XR view, then the operator's slider, then the assumption
+   * — and the answer always says which. Both measurements outlive the session
+   * that produced them, because they describe the device's camera and the
+   * passthrough path is looking through the same lens.
+   */
+  frameIntrinsics(frame: { width: number; height: number }): CameraIntrinsics {
+    return cameraIntrinsics({
+      frame,
+      raw: this.xrRawIntrinsics,
+      xrFovDeg: this.measuredFovDeg || undefined,
+      // The camera's own angle, not the cropped one on screen: a frame is the
+      // whole image, and correcting for a crop that is not in it counts it twice.
+      operatorFovDeg: this.cameraFovDeg,
+    });
   }
 
   /**
@@ -858,7 +902,9 @@ export class SceneManager {
   fieldOfView(): { deg: number; source: 'xr-camera' | 'operator' | 'assumed' } {
     const cam = this.scene.activeCamera;
     if (this.inXrSession && cam && cam.fov > 0) {
-      return { deg: (cam.fov * 180) / Math.PI, source: 'xr-camera' };
+      const deg = (cam.fov * 180) / Math.PI;
+      this.measuredFovDeg = deg;
+      return { deg, source: 'xr-camera' };
     }
     return {
       deg: this.visibleFovDeg,
@@ -1218,6 +1264,10 @@ export class SceneManager {
           this.xrTracking = state;
           this.trackingListener?.(state);
         },
+        // The one moment this app stops guessing a focal length. Kept after
+        // the session too: it is a fact about the device's camera, and the
+        // passthrough path has nothing better.
+        onCameraIntrinsics: (intrinsics) => { this.xrRawIntrinsics = intrinsics; },
         onSelectAnchor: (pose) => {
           if (!this.placementActive) return;
           if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) return;
@@ -2000,6 +2050,9 @@ export class SceneManager {
     fovDeg: number;
     /** Measured from the session's own projection, or assumed. */
     fovSource: 'xr-camera' | 'operator' | 'assumed';
+    /** The camera model pixels are turned into rays with, and where it came from. */
+    frameFovDeg: number;
+    frameFovSource: IntrinsicsSource;
     cssSize: [number, number];
     bufferSize: [number, number];
     scaling: number;
@@ -2042,6 +2095,11 @@ export class SceneManager {
       partMeshes: this.assemblyRoot.getChildMeshes(false, (n) => n.name.startsWith('mesh-')).length,
       fovDeg: Number(this.fieldOfView().deg.toFixed(2)),
       fovSource: this.fieldOfView().source,
+      // The model used to turn pixels into rays, which is a different question
+      // from what is on screen: this one is not corrected for the display crop,
+      // and it can be a measurement where the screen figure is a guess.
+      frameFovDeg: Number(this.frameIntrinsics({ width: 1000, height: 1000 }).fovDeg.toFixed(2)),
+      frameFovSource: this.frameIntrinsics({ width: 1000, height: 1000 }).source,
       cssSize: [Math.round(rect.width), Math.round(rect.height)],
       // Measured *inside* a frame. Outside one, Babylon's framebuffer object is
       // null and these report the canvas instead — so a session used to report
