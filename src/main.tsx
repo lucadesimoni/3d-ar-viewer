@@ -8,6 +8,7 @@ import { parseUiConfigFromParams } from './ui/config';
 import { ASSEMBLIES } from './data';
 import { getActiveManager } from './render/babylon/managerRegistry';
 import { installEmbedBridge } from './embed/bridge';
+import { installErrorCapture, logEvent } from './diagnostics/log';
 
 // Config for the standalone/iframe build comes from URL params, e.g.
 //   /?ui=minimal&embedded=1&accent=%23ff7a00
@@ -64,3 +65,10 @@ if ('serviceWorker' in navigator && window.isSecureContext && !import.meta.env.D
 // The app is exactly as tall as what the operator can see — measured, not
 // assumed from `100dvh`. See the module for the two devices that disagreed.
 trackVisibleHeight();
+
+// What the app never sees otherwise: a render loop that throws, a promise
+// nobody awaited, a script that failed to load. On a desktop those are one
+// keypress away in a console; on a phone they are invisible, and they are the
+// failures most worth having in the log.
+installErrorCapture();
+logEvent('ar', 'app started', { url: location.href });

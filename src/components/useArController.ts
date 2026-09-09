@@ -13,6 +13,7 @@ import { alignToMarker } from '../engine/alignment';
 import { useStore, surfaceDrop } from '../state/store';
 import type { GridTargetDef } from '../engine/types';
 import type { SceneManager } from '../render/babylon/SceneManager';
+import { logEvent } from '../diagnostics/log';
 
 /**
  * Orchestrates the whole AR runtime for the current device.
@@ -346,7 +347,16 @@ export function useArController(
       void session?.end().catch(() => undefined);
       return false;
     }
-    if (!session) return false;
+    if (!session) {
+      // Why, for the log — and never at the cost of the fallback. This runs on
+      // the path where AR is about to hand over to camera passthrough, so a
+      // manager that cannot answer must not take the camera down with it.
+      void Promise.resolve(manager.xrFailure?.())
+        .then((why) => logEvent('xr', 'no session', { why }))
+        .catch(() => logEvent('xr', 'no session', {}));
+      return false;
+    }
+    logEvent('xr', 'session granted');
     owned = session;
 
     // Stop every producer of camera-space poses before accepting XR poses. In
@@ -455,6 +465,7 @@ export function useArController(
       useStore.getState().setArError('World-tracked AR is blocked by embedding policy. Using camera preview; the host must allow xr-spatial-tracking for WebXR.');
     }
     useStore.getState().setArSource('camera');
+    logEvent('ar', 'camera passthrough running', { video: [video.videoWidth, video.videoHeight] });
     setArActive(true);
 
     // Put the 3D scene into AR: transparent clear, head camera, orbit controls

@@ -23,7 +23,8 @@
     "layout:check": "node scripts/layout-check.mjs",
     "start": "npm run build && node server/serve.mjs",
     "serve": "node server/serve.mjs",
-    "notes:check": "node scripts/notes-check.mjs"
+    "notes:check": "node scripts/notes-check.mjs",
+    "log:check": "node scripts/log-check.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^9.24.0",
