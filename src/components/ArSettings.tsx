@@ -5,6 +5,8 @@ import { MODE_LABELS, type Capabilities } from '../engine/tracking/capabilities'
 import type { PipelineStatus } from '../vision/pipeline';
 import { detectGpu, gpuLabel } from '../render/perf';
 import { useEffect, useMemo, useState } from 'react';
+import { buildReport, capturedFrames, downloadReport } from '../diagnostics/report';
+import { captureFrame } from '../diagnostics/capture';
 
 /** Common working surfaces, so the height is one tap rather than a slider hunt. */
 const SURFACES: { label: string; height: number }[] = [
@@ -98,6 +100,7 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
   // Read from the scene, not from a fresh local default: the sheet is unmounted
   // every time it closes, and a switch that forgets what it did reads as a
   // switch that cannot be operated at all.
+  const [saved, setSaved] = useState<string | undefined>();
   const [marker, setMarker] = useState(() => getActiveManager()?.hasTestMarker() ?? false);
   const toggleMarker = (on: boolean) => {
     setMarker(on);
@@ -218,6 +221,33 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
           hands it is noise, so it stays folded away until it is wanted. */}
       <details className="ar-details">
         <summary>Diagnostics</summary>
+
+        {/* One button instead of a round of screenshots. Everything this app
+            knows about the session, in a file the operator can send: what the
+            device is, what the browser granted, what the session did or
+            refused, and the sequence of events with the errors in it. */}
+        <div className="ar-log-row">
+          <button
+            className="secondary"
+            onClick={() => {
+              void buildReport(capabilities).then((report) => {
+                setSaved(`Saved ${downloadReport(report)}`);
+              }).catch((err) => setSaved(`Could not save the log: ${String(err)}`));
+            }}
+          >Save diagnostics log</button>
+          <button
+            className="secondary"
+            onClick={() => {
+              const result = captureFrame(
+                document.querySelector('video.passthrough'), getActiveManager(),
+              );
+              setSaved(result.ok
+                ? `Frame attached (${capturedFrames().length} in the log)`
+                : result.reason);
+            }}
+          >Attach a camera frame</button>
+        </div>
+        {saved && <p className="ar-set-help" role="status">{saved}</p>}
 
         {/* The one control that separates "the overlay is somewhere else" from
             "the overlay is never drawn". Everything else assumes rendering

@@ -39,6 +39,7 @@ import { detectPerfProfile, type PerfProfile } from '../perf';
 import { createBestEngine, type RenderBackendKind } from './engineFactory';
 import { STATUS_COLORS, type RecognitionStatus } from '../../vision/verdict';
 import { ASSUMED_CAMERA_FOV_DEG } from '../../engine/tracking/markerTracking';
+import { logEvent } from '../../diagnostics/log';
 import {
   DIAGNOSTIC_COLORS,
   applyPose,
@@ -329,6 +330,7 @@ export class SceneManager {
     // at all; without it the canvas is dead until the page reloads.
     e.preventDefault();
     this.contextLost = true;
+    logEvent('render', 'WebGL context lost');
   };
   private onContextRestored = (): void => {
     this.contextLost = false;
@@ -369,6 +371,7 @@ export class SceneManager {
     }
     if (this.frames === this.watchdogFrames) {
       this.stalls++;
+      logEvent('render', 'render loop stalled', { frames: this.frames, clock: this.frameClock });
       if (this.frameClock === 'raf') this.frameClock = 'timer';
       this.restartRenderLoop();
     }
@@ -1096,6 +1099,7 @@ export class SceneManager {
         },
         onStateChange: (inXr) => {
           this.inXrSession = inXr;
+          logEvent('xr', inXr ? 'in session' : 'session ended', { clock: this.frameClock });
           if (inXr) {
             this.arMode = true;
             this.setTransparent(true);
@@ -1979,6 +1983,24 @@ export class SceneManager {
       pick.pickedPoint, Matrix.Invert(visual.root.getWorldMatrix()),
     );
     return { partId, local: [local.x, local.y, local.z] };
+  }
+
+  /**
+   * Where the view is looking from, for a captured frame.
+   *
+   * A picture of the bench is not evidence on its own: paired with the pose it
+   * was taken from and the projected positions of the parts, it becomes a
+   * labelled sample — which is what part and change detection has to be built
+   * against.
+   */
+  cameraPose(): { position: number[]; rotation: number[]; fovDeg: number } {
+    const cam = this.scene.activeCamera ?? this.camera;
+    const q = Quaternion.FromRotationMatrix(cam.getWorldMatrix().getRotationMatrix());
+    return {
+      position: [cam.position.x, cam.position.y, cam.position.z].map((v) => Number(v.toFixed(4))),
+      rotation: [q.x, q.y, q.z, q.w].map((v) => Number(v.toFixed(5))),
+      fovDeg: Number(this.visibleFovDeg.toFixed(2)),
+    };
   }
 
   /** Where a note sits on screen now, as fractions of the view. */
