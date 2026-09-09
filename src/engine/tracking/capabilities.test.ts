@@ -41,7 +41,8 @@ describe('capability detection', () => {
     const caps = await detectCapabilities();
     expect(caps).toMatchObject({
       recommended: 'webxr', immersiveAr: true, webxrSupported: true,
-      hitTest: false, anchors: false, depthSensing: false, planeDetection: false,
+      hitTestGranted: false, anchorsGranted: false,
+      depthSensingGranted: false, planeDetectionGranted: false,
     });
     expect(caps.permissionsPolicy?.camera).toBe('unknown');
     expect(caps.notes.join(' ')).not.toContain('Permissions Policy blocks');

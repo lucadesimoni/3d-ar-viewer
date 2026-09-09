@@ -1,10 +1,36 @@
+import { execSync } from 'node:child_process';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+
+/**
+ * Which build is this?
+ *
+ * A diagnostics log without a build identity is a log you cannot act on. One
+ * arrived from a device forty-seven minutes after a merge, missing the field
+ * that merge had added — and there was no way to tell "the device refused the
+ * feature" from "this page is an older bundle". That ambiguity cost a round
+ * trip, which is exactly what the log exists to prevent.
+ *
+ * Resolved at build time and folded into the bundle, so it travels with the
+ * report. A checkout without git (a tarball, some CI images) still builds; it
+ * just says so.
+ */
+function buildStamp(): { commit: string; at: string } {
+  const at = new Date().toISOString();
+  try {
+    const commit = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+    const dirty = execSync('git status --porcelain', { encoding: 'utf8' }).trim().length > 0;
+    return { commit: dirty ? `${commit}+` : commit, at };
+  } catch {
+    return { commit: 'unknown', at };
+  }
+}
 
 // AR requires a secure context. `npm run dev` serves over http://<lan-ip>:5173 which
 // iOS Safari treats as insecure, so camera + WebXR are blocked. Use `npm run dev -- --https`
 // behind a trusted cert, or tunnel the port, when testing on a device.
 export default defineConfig({
+  define: { __BUILD__: JSON.stringify(buildStamp()) },
   plugins: [react()],
   server: { host: true, port: 5173 },
   preview: { host: true, port: 4173 },

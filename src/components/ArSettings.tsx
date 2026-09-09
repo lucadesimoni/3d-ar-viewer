@@ -6,6 +6,7 @@ import type { PipelineStatus } from '../vision/pipeline';
 import { detectGpu, gpuLabel } from '../render/perf';
 import { useEffect, useMemo, useState } from 'react';
 import { buildReport, capturedFrames, downloadReport } from '../diagnostics/report';
+import { buildStamp } from '../diagnostics/build';
 import { captureFrame } from '../diagnostics/capture';
 
 /** Common working surfaces, so the height is one tap rather than a slider hunt. */
@@ -248,6 +249,12 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
           >Attach a camera frame</button>
         </div>
         {saved && <p className="ar-set-help" role="status">{saved}</p>}
+        {/* Which build this is, without exporting anything. A log arrived once
+            from a bundle older than the change it was meant to test, and there
+            was no way to tell that from the file. */}
+        <p className="ar-set-help ar-build" role="status">
+          Build {buildStamp().commit} · {buildStamp().at.slice(0, 16).replace('T', ' ')}
+        </p>
 
         {/* The one control that separates "the overlay is somewhere else" from
             "the overlay is never drawn". Everything else assumes rendering

@@ -17,11 +17,20 @@ export interface Capabilities {
   webxrSupported: boolean;
   /** `immersive-ar` specifically, not just the presence of `navigator.xr`. */
   immersiveAr: boolean;
-  /** Session feature flags remain false until confirmed by a requested session. */
-  hitTest: boolean;
-  depthSensing: boolean;
-  planeDetection: boolean;
-  anchors: boolean;
+  /**
+   * Granted by a session, not offered by the device.
+   *
+   * These are false until a session actually reports them, and they were named
+   * `hitTest` / `anchors` — which reads, in a diagnostics file, as "this phone
+   * cannot do hit-test". A real log showed `hitTest: false` beside a session
+   * that had just been granted hit-test, and the contradiction cost an hour.
+   * `isSessionSupported` says nothing about features; only a session does, and
+   * that answer lives in `ar.xrSession.features`.
+   */
+  hitTestGranted: boolean;
+  depthSensingGranted: boolean;
+  planeDetectionGranted: boolean;
+  anchorsGranted: boolean;
   /** API presence, not a camera permission grant. See permissionsPolicy. */
   camera: boolean;
   /** iOS 13+ gates motion sensors behind a user gesture. */
@@ -177,11 +186,11 @@ export async function detectCapabilities(): Promise<Capabilities> {
   }
 
   // Session features are not knowable from isSessionSupported. False means
-  // unconfirmed here, not that a later session cannot negotiate the feature.
-  const hitTest = false;
-  const depthSensing = false;
-  const planeDetection = false;
-  const anchors = false;
+  // "not confirmed granted", never "this device cannot" — hence the names.
+  const hitTestGranted = false;
+  const depthSensingGranted = false;
+  const planeDetectionGranted = false;
+  const anchorsGranted = false;
 
   let recommended: ArMode = 'preview';
   if (immersiveAr && webgl2 && secureContext) recommended = 'webxr';
@@ -193,10 +202,10 @@ export async function detectCapabilities(): Promise<Capabilities> {
     webgl2,
     webxrSupported,
     immersiveAr,
-    hitTest,
-    depthSensing,
-    planeDetection,
-    anchors,
+    hitTestGranted,
+    depthSensingGranted,
+    planeDetectionGranted,
+    anchorsGranted,
     camera,
     motionNeedsPermission,
     deviceOrientation,
