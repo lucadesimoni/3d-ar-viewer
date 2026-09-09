@@ -85,6 +85,10 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
    camera, so anything opaque behind the HUD would hide the real world. */
 .app.ar, .app.ar .stage { background: transparent; }
 .app.ar .viewport-canvas, .app.ar .viewer-canvas { background: transparent; }
+/* Grabbing is set from JS on hover, only over a part the current step allows to
+   be moved — the cursor is the only warning before the model moves under the
+   pointer, and there was none. */
+.viewer-canvas:active { cursor: grabbing; }
 /* The 3D canvas must be geometrically identical to the video underneath it,
    otherwise the overlay is offset from the real world. Both go full-screen. */
 .app.ar .viewport {
@@ -368,7 +372,11 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
      later in this file — a bare `.stage` here would lose on source order. */
   .app .stage {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) auto auto;
+    /* Four: the viewport, the collapse handle, the panel, the tab bar. It was
+       three, and adding the handle pushed the viewport out of the `1fr` row
+       into an `auto` one — in landscape that left the canvas no height at all
+       and the layout check caught it as an invisible canvas. */
+    grid-template-rows: minmax(0, 1fr) auto auto auto;
     padding: 8px;
     gap: 8px;
   }
@@ -379,6 +387,26 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
     min-height: 0;
   }
   .app.mobile.sheet-collapsed .viewport { min-height: 60dvh; }
+
+  /* The handle. Sits between the 3D view and the panel below it, full width so
+     it reads as the panel's top edge rather than as another button. */
+  .sheet-handle {
+    grid-column: 1;
+    /* No `order`: the viewport takes -1, this sits at the default 0 ahead of
+       the panels by DOM position, and the grid keeps its rows straight. */
+    display: flex; align-items: center; justify-content: center;
+    /* A thumb target, not a decoration — the layout check requires 44 px and
+       was right to reject 29. */
+    width: 100%; min-height: 44px; padding: 0;
+    background: transparent; border: none; color: var(--muted, #93a4b8);
+    font-size: 1.1rem; line-height: 1;
+  }
+  .sheet-handle::before {
+    content: ''; position: absolute;
+    width: 44px; height: 4px; border-radius: 999px;
+    background: var(--edge); transform: translateY(-2px);
+  }
+  .sheet-handle { position: relative; }
 
   /* One bar, always last in the column: steps, errors, view, more, and the way
      into AR. A phone had three stacked bars before this — a tab row, a mode bar
@@ -472,6 +500,11 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   .sheet-tabs { grid-column: 1 / -1; grid-row: 2; }
   .app.mobile.sheet-collapsed .viewport { min-height: 0; }
   .app.mobile.sheet-collapsed .stage { grid-template-columns: 1fr; }
+  /* No collapse handle here: side by side, the panel is not on top of the 3D
+     view and there is nothing to get out of the way. Left in, it took a cell of
+     this explicitly placed grid and squeezed the canvas out of sight — which
+     the layout check reported as an invisible canvas. */
+  .sheet-handle { display: none; }
   /* The header is the first thing to go when height is this scarce. */
   .app.mobile .status-bar { display: none; }
 }
@@ -483,6 +516,18 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   border-radius: 9px; padding: 6px 10px; max-width: 240px;
 }
 .assembly-picker:hover { background: rgba(255,255,255,0.09); }
+/* The options, explicitly.
+ *
+ * They inherited `--text` (#e6edf5, near white) while the operating system
+ * draws the popup on a *light* background of its own — so every unselected
+ * entry was near-white on white and effectively invisible; only the highlighted
+ * row could be read. `color-scheme` on :root does not reach this popup, so it
+ * is declared on the control itself and the colours are set outright. */
+.assembly-picker { color-scheme: dark; }
+.assembly-picker option {
+  background: var(--panel-solid);
+  color: var(--text);
+}
 
 /* iOS AR Quick Look launch chip */
 .quicklook {

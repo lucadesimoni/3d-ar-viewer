@@ -125,6 +125,19 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
         )}
 
         <div className="stage">
+          {/* A handle that says the sheet can be got out of the way.
+              Tapping the active tab already collapsed it — nothing on screen
+              said so, and a tester asked for a way to focus the 3D view that
+              was there all along. An affordance, not a feature. */}
+          {isMobile && !arActive && mobileSheet !== null && (
+            <button
+              className="sheet-handle"
+              aria-label="Collapse the panel and show the 3D view"
+              onClick={() => setSheet(null)}
+            >
+              <span aria-hidden="true">⌄</span>
+            </button>
+          )}
           {ui.showSteps && !arActive && (!isMobile || mobileSheet === 'steps') && <StepGuide />}
           <main className="viewport">
             <Viewer transparent={arActive} />

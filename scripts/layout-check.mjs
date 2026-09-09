@@ -186,6 +186,85 @@ for (const vp of VIEWPORTS) {
   await quiet.close();
 }
 
+// --- Getting the panel out of the way. -------------------------------------
+// A tester asked to be able to focus the 3D view. It was already possible —
+// tapping the active tab collapses the sheet — and nothing on screen said so.
+// An affordance, not a feature: the handle does what the tab already did.
+{
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+  });
+  const page = await context.newPage();
+  await page.goto(URL, { waitUntil: 'networkidle' });
+  await page.waitForSelector('canvas.viewer-canvas');
+  await page.waitForTimeout(2000);
+
+  const share = () => page.evaluate(() => {
+    const c = document.querySelector('canvas.viewer-canvas').getBoundingClientRect();
+    return c.height / window.innerHeight;
+  });
+  const before = await share();
+  const handle = page.locator('.sheet-handle');
+  check('the panel says it can be got out of the way', await handle.count() === 1);
+  const box = await handle.boundingBox().catch(() => null);
+  check('and the handle is a thumb target', Boolean(box) && box.height >= 44,
+    box ? `${Math.round(box.height)} px tall` : 'no handle');
+
+  await handle.click();
+  await page.waitForTimeout(500);
+  const after = await share();
+  check('and using it gives the 3D view the room',
+    after > before + 0.1, `${Math.round(before * 100)}% → ${Math.round(after * 100)}% of the height`);
+  check('and the handle goes with the panel it collapsed',
+    await page.locator('.sheet-handle').count() === 0);
+  await context.close();
+}
+
+// --- The assembly picker's options. ----------------------------------------
+// Reported as "dropdown colours - flaw", and it was: the options inherited
+// `--text` (#e6edf5, near white) while the operating system draws the popup on
+// a light background of its own, so every unselected entry was near-white on
+// white. Only the highlighted row could be read. The popup is drawn by the OS
+// and cannot be screenshotted, but the colours the browser hands it can be read.
+{
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  await page.goto(URL, { waitUntil: 'networkidle' });
+  await page.waitForSelector('.assembly-picker');
+
+  const colours = await page.evaluate(() => {
+    const option = document.querySelector('.assembly-picker option');
+    const select = document.querySelector('.assembly-picker');
+    const st = getComputedStyle(option);
+    return {
+      colour: st.color,
+      background: st.backgroundColor,
+      scheme: getComputedStyle(select).colorScheme,
+    };
+  });
+  const luminance = (css) => {
+    const [r, g, b] = css.match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => {
+      const c = v / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (a, b) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const transparent = /rgba\(0, 0, 0, 0\)|transparent/.test(colours.background);
+  check('the picker\'s options set their own background, not the popup\'s',
+    !transparent, colours.background);
+  check('and they are legible against it',
+    !transparent && contrast(colours.colour, colours.background) >= 4.5,
+    transparent ? 'no background to measure against'
+      : `${contrast(colours.colour, colours.background).toFixed(1)}:1 (${colours.colour} on ${colours.background})`);
+  check('and the control asks the OS for a dark popup',
+    colours.scheme.includes('dark'), colours.scheme);
+  await context.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall layout checks passed');
 process.exit(failures.length ? 1 : 0);

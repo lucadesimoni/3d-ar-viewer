@@ -1,7 +1,7 @@
 import { useStore, type ViewMode } from '../state/store';
 import { assemblyTimeline } from '../engine/animation';
 import { getActiveManager } from '../render/babylon/managerRegistry';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const MODES: { id: ViewMode; label: string; icon: string }[] = [
   { id: 'guide', label: 'Guide', icon: '◎' },
@@ -82,12 +82,24 @@ function AnimationScrubber(): JSX.Element {
   const assembly = useStore((s) => s.assembly);
   const timeline = useRef(assemblyTimeline(assembly));
   const tRef = useRef(0);
-  const playing = useRef(false);
   const rafRef = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  /**
+   * State, not a ref.
+   *
+   * It was a ref, so pressing play re-rendered nothing and the button kept its
+   * "▶ / ❚❚" label whatever it was doing. A control that looks identical before
+   * and after you press it is a control that did not work, as far as anyone
+   * watching is concerned — and that is exactly how this mode was reported.
+   */
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(timeline.current.durationS);
+  /** The loop reads this synchronously; `playing` is for the operator to see. */
+  const running = useRef(false);
 
   useEffect(() => {
     timeline.current = assemblyTimeline(assembly);
+    setDuration(timeline.current.durationS);
     useStore.getState().setAnimation(timeline.current, tRef.current);
   }, [assembly]);
 
@@ -100,41 +112,61 @@ function AnimationScrubber(): JSX.Element {
     if (inputRef.current) inputRef.current.value = String(t);
   };
 
-  const toggle = (): void => {
-    playing.current = !playing.current;
-    if (playing.current) {
-      const start = performance.now() - tRef.current * 1000;
-      const loop = (): void => {
-        if (!playing.current) return;
-        const t = (performance.now() - start) / 1000;
-        if (t >= timeline.current.durationS) {
-          apply(timeline.current.durationS);
-          playing.current = false;
-          return;
-        }
-        apply(t);
-        rafRef.current = requestAnimationFrame(loop);
-      };
-      rafRef.current = requestAnimationFrame(loop);
-    } else {
-      cancelAnimationFrame(rafRef.current);
-    }
+  const stop = (): void => {
+    running.current = false;
+    setPlaying(false);
+    cancelAnimationFrame(rafRef.current);
   };
 
-  useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
+  const start = (from = tRef.current >= timeline.current.durationS ? 0 : tRef.current): void => {
+    running.current = true;
+    setPlaying(true);
+    const origin = performance.now() - from * 1000;
+    const loop = (): void => {
+      if (!running.current) return;
+      const t = (performance.now() - origin) / 1000;
+      if (t >= timeline.current.durationS) {
+        apply(timeline.current.durationS);
+        stop();
+        return;
+      }
+      apply(t);
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    rafRef.current = requestAnimationFrame(loop);
+  };
+
+  // Play once on arrival. A mode whose whole purpose is motion, entered to find
+  // a still picture and one small button, reads as broken — and was reported
+  // as exactly that.
+  useEffect(() => {
+    start(0);
+    return () => {
+      running.current = false;
+      cancelAnimationFrame(rafRef.current);
+    };
+    // Mount only: re-running this on every render would restart the playback
+    // under the operator's hand.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="scrubber">
-      <button className="play" onClick={toggle}>▶ / ❚❚</button>
+      <button
+        className="play"
+        aria-pressed={playing}
+        aria-label={playing ? 'Pause' : 'Play'}
+        onClick={() => (playing ? stop() : start())}
+      >{playing ? '❚❚' : '▶'}</button>
       <input
         ref={inputRef}
         type="range"
         min={0}
-        max={timeline.current.durationS}
+        max={duration}
         step={0.01}
         defaultValue={0}
         onChange={(e) => {
-          playing.current = false;
+          stop();
           apply(Number(e.target.value));
         }}
       />

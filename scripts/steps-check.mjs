@@ -94,6 +94,57 @@ for (const assemblyId of ['kallax-4x4', 'bench-gearbox', 'equipment-rack']) {
     `${anim.placedCount} parts placed`);
 }
 
+// --- The Animate mode, which a tester read as broken. -----------------------
+// "Animation doesn't seem to work yet." Entering the mode used to hide almost
+// the whole model — `showGhosts` covered guide and explore only, and on an
+// untouched build every part is a ghost, so all but the active step vanished
+// and the timeline then moved the invisible. Nothing played by itself either,
+// and the one button kept its "▶ / ❚❚" label whatever it was doing.
+{
+  const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
+  await page.goto(`${URL_BASE}?assembly=bench-gearbox`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('canvas.viewer-canvas');
+  await page.waitForTimeout(1800);
+
+  // `isVisible`, not `isEnabled`: a hidden ghost stays enabled and only stops
+  // being drawn. The first version of this check counted enabled meshes, so it
+  // passed with the fix removed — it was measuring something that never changes.
+  const visibleParts = () => page.evaluate(() => {
+    const scene = window.spatialScene();
+    return window.spatialStore.getState().assembly.parts.filter((p) => {
+      const mesh = scene.scene.getMeshByName(`mesh-${p.id}`);
+      return Boolean(mesh?.isEnabled() && mesh.isVisible);
+    }).length;
+  });
+  const total = await page.evaluate(() => window.spatialStore.getState().assembly.parts.length);
+  const inGuide = await visibleParts();
+
+  await page.evaluate(() => window.spatialStore.getState().setViewMode('animate'));
+  await page.waitForTimeout(400);
+  const inAnimate = await visibleParts();
+  check('entering Animate does not hide the assembly it is meant to animate',
+    inAnimate >= inGuide, `${inAnimate} of ${total} parts visible (guide shows ${inGuide})`);
+
+  // It has to move by itself: a mode whose whole point is motion, entered to
+  // find a still picture, reads as broken.
+  const samples = [];
+  for (let i = 0; i < 4; i++) {
+    samples.push(await page.evaluate(() => window.spatialStore.getState().animationT));
+    await page.waitForTimeout(250);
+  }
+  const advanced = samples.filter((t, i) => i > 0 && t > samples[i - 1]).length;
+  check('and it plays on arrival rather than waiting to be found',
+    advanced >= 2, `t = ${samples.map((t) => t.toFixed(2)).join(' → ')}`);
+
+  // And the button must say which of the two things it will do.
+  const label = await page.locator('.scrubber .play').textContent();
+  const pressed = await page.locator('.scrubber .play').getAttribute('aria-pressed');
+  check('the play control shows its state instead of both glyphs at once',
+    (label.trim() === '▶' || label.trim() === '❚❚') && ['true', 'false'].includes(pressed),
+    `label "${label.trim()}", aria-pressed ${pressed}`);
+  await page.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall step checks passed');
 process.exit(failures.length ? 1 : 0);
