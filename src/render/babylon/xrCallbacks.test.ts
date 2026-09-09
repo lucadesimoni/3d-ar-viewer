@@ -6,7 +6,17 @@ import type { XrHooks } from './xr';
 import type { Scene } from '@babylonjs/core/scene';
 
 const prepare = vi.hoisted(() => vi.fn());
-vi.mock('./xr', () => ({ prepareImmersiveAr: prepare }));
+// The whole module surface, not just the entry point: `xrSessionInfo` reads the
+// session's own account of itself from these, and a namespace missing them
+// throws rather than yielding undefined — which the report would then swallow.
+vi.mock('./xr', () => ({
+  prepareImmersiveAr: prepare,
+  lastXrError: undefined,
+  referenceSpace: undefined,
+  grantedFeatures: [],
+  cameraAccess: { requested: false, granted: false },
+  tracking: undefined,
+}));
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -212,6 +222,41 @@ describe('an anchored assembly when the operator walks around it', () => {
       expect(turnedBy).toBeCloseTo(10, 2);
       const root = m.scene.getTransformNodeByName('assembly')!;
       expect(root.position.x).not.toBeCloseTo(0, 3);
+    } finally {
+      m.dispose();
+    }
+  });
+});
+
+describe('what the report can still say after the session has gone', () => {
+  it('keeps the tracking state a finished session ended on', async () => {
+    const hooks: XrHooks[] = [];
+    prepare.mockImplementation(async (_s: Scene, _o: HTMLElement, callbacks: XrHooks) => {
+      hooks.push(callbacks);
+      return { enter: async () => ({ end: vi.fn(async () => {}) }), dispose: vi.fn() };
+    });
+    const m = new SceneManager(document.createElement('canvas'), gearbox, {}, {
+      engine: new NullEngine(), kind: 'webgl',
+      perf: { tier: 'low', antialias: false, adaptive: false, maxPixelRatio: 1, targetFps: 30, recognitionIntervalMs: 1000 },
+    });
+    try {
+      const seen: (unknown)[] = [];
+      m.onXrTracking((state) => seen.push(state));
+      await m.prepareWebXr({ onPlace: vi.fn(), onEnd: vi.fn() });
+      await m.startWebXr(vi.fn(), vi.fn());
+      const hook = hooks[hooks.length - 1];
+      hook.onStateChange?.(true);
+      hook.onTracking?.({
+        ready: true, reason: 'timeout', goodFrames: 3, emulated: true, hasHit: false, waitedMs: 8000,
+      });
+      hook.onStateChange?.(false);
+      // The HUD is told the session is over and stops saying anything about it.
+      expect(seen[seen.length - 1]).toBeUndefined();
+      // The report is not: "it took eight seconds and never settled" is the
+      // answer to the question the report gets written to ask.
+      const info = await m.xrSessionInfo();
+      expect(info.tracking?.reason).toBe('timeout');
+      expect(info.tracking?.waitedMs).toBe(8000);
     } finally {
       m.dispose();
     }

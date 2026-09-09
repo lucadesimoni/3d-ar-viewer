@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { ArMode } from '../engine/tracking/capabilities';
+import type { TrackingState } from '../engine/tracking/settle';
 import { runDiagnostics, severityByPart, type Diagnostic, type Severity } from '../engine/diagnostics';
 import { buildSequenceView, suggestNextStep, type SequenceView } from '../engine/sequencer';
 import { clonePose } from '../engine/math';
@@ -121,6 +122,13 @@ export interface AppState {
    * sits still while they move.
    */
   arMotion: boolean;
+  /**
+   * How well the WebXR session is tracking, and whether it will accept a tap.
+   *
+   * Undefined outside a session. A real log had an operator place three seconds
+   * in, 78 cm below the floor, because nobody was asking this question.
+   */
+  arTracking: TrackingState | undefined;
   arMode: ArMode;
   viewMode: ViewMode;
   explodeFactor: number;
@@ -162,6 +170,7 @@ export interface AppState {
   setArError(message: string | undefined): void;
   setArSource(source: 'webxr' | 'camera' | undefined): void;
   setArMotion(receiving: boolean): void;
+  setArTracking(state: TrackingState | undefined): void;
   setArMode(mode: ArMode): void;
   setViewMode(mode: ViewMode): void;
   setExplodeFactor(f: number): void;
@@ -286,6 +295,7 @@ export const useStore = create<AppState>((set, get) => {
     arError: undefined,
     arSource: undefined,
     arMotion: false,
+    arTracking: undefined as TrackingState | undefined,
     arSettings: {
       cameraFovDeg: readFovOverride() ?? 60,
       eyeHeightM: 1.45,
@@ -358,6 +368,13 @@ export const useStore = create<AppState>((set, get) => {
     },
     setArMotion(receiving) {
       if (get().arMotion !== receiving) set({ arMotion: receiving });
+    },
+    setArTracking(state) {
+      // Reason and readiness are what anything downstream renders; the frame
+      // count changes every frame and would re-render the HUD for nothing.
+      const before = get().arTracking;
+      if (before?.reason === state?.reason && before?.ready === state?.ready) return;
+      set({ arTracking: state });
     },
     setArSettings(patch) {
       const next = { ...get().arSettings, ...patch };

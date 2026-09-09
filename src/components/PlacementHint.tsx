@@ -21,6 +21,7 @@ export function PlacementHint(): JSX.Element | null {
   const target = useStore((s) => s.assembly.recognition);
   const source = useStore((s) => s.arSource);
   const motion = useStore((s) => s.arMotion);
+  const tracking = useStore((s) => s.arTracking);
   const surface = surfaceName(useStore((s) => s.arSettings.surfaceHeightM));
 
   if (placement === 'idle') return null;
@@ -32,13 +33,29 @@ export function PlacementHint(): JSX.Element | null {
 
   if (placement === 'awaiting') {
     const looking = target ? ' — or point it at the shelf' : '';
+    // Placement is not armed until the platform has stopped guessing where it
+    // is. Saying "tap" before then invites exactly the placement a real device
+    // log recorded: three seconds in, 78 cm below the floor, and the assembly
+    // too far away to read. Say what is being waited for instead.
+    if (tracking && !tracking.ready) {
+      return (
+        <div className="placement-hint">
+          <span className="dot" />
+          Finding the floor — move the phone slowly across it
+        </div>
+      );
+    }
     return (
       <div className={`placement-hint ${blind ? 'warn' : ''}`}>
         <span className={`dot ${blind ? 'warn' : ''}`} />
         {blind
           ? 'No motion sensor — tap to place it straight ahead'
           : source === 'webxr'
-            ? `Move the phone to find a surface, then tap${looking}`
+            ? tracking?.reason === 'timeout'
+              // Armed by the clock, not by the tracking: it can be placed, and
+              // the operator should expect the platform to move it afterwards.
+              ? `Tracking is still settling — tap to place anyway${looking}`
+              : `Move the phone to find a surface, then tap${looking}`
             : `Tap the ${surface} to place${looking}`}
       </div>
     );

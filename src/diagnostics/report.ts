@@ -78,10 +78,32 @@ export function clearCaptures(): void {
   captures.length = 0;
 }
 
+/**
+ * Let a session that actually ran answer the questions capability probing cannot.
+ *
+ * `isSessionSupported` says nothing about features, so `capabilities.ts` reports
+ * the four feature flags as `false` — honestly meaning "not confirmed". In a
+ * report that also lists `hit-test`, `anchors` and `camera-access` as granted by
+ * the running session, that reads as a contradiction, and it cost me an hour of
+ * reading the first real device log. A session knows; use what it knows.
+ */
+export function reconcileGranted(caps: Capabilities, features: string[]): Capabilities {
+  if (!features.length) return caps;
+  const has = (name: string): boolean => features.includes(name);
+  return {
+    ...caps,
+    hitTestGranted: caps.hitTestGranted || has('hit-test'),
+    anchorsGranted: caps.anchorsGranted || has('anchors'),
+    depthSensingGranted: caps.depthSensingGranted || has('depth-sensing'),
+    planeDetectionGranted: caps.planeDetectionGranted || has('plane-detection'),
+  };
+}
+
 export async function buildReport(capabilities?: Capabilities): Promise<DiagnosticsReport> {
   const manager = getActiveManager();
   const state = useStore.getState();
   const nav = navigator as Navigator & { deviceMemory?: number };
+  const xrSession = manager ? await manager.xrSessionInfo() : undefined;
   return {
     version: 1,
     build: buildStamp(),
@@ -100,7 +122,9 @@ export async function buildReport(capabilities?: Capabilities): Promise<Diagnost
       hardwareConcurrency: navigator.hardwareConcurrency,
       ...(typeof nav.deviceMemory === 'number' ? { deviceMemoryGB: nav.deviceMemory } : {}),
     },
-    capabilities,
+    ...(capabilities
+      ? { capabilities: reconcileGranted(capabilities, xrSession?.features ?? []) }
+      : {}),
     ar: {
       source: state.arSource,
       placement: state.arPlacement,
@@ -110,7 +134,7 @@ export async function buildReport(capabilities?: Capabilities): Promise<Diagnost
       error: state.arError,
       xrReady: manager?.renderStats().xr ? 'in-session' : (manager?.xrReady() ?? false),
       ...(manager ? { xrFailure: await manager.xrFailure() } : {}),
-      ...(manager ? { xrSession: await manager.xrSessionInfo() } : {}),
+      ...(xrSession ? { xrSession } : {}),
     },
     ...(manager ? { render: manager.renderStats() } : {}),
     assembly: {

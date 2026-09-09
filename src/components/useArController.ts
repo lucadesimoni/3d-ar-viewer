@@ -336,6 +336,13 @@ export function useArController(
     let owned: { end: () => Promise<void> } | undefined;
     // Until the session is ours, "ours" means the entry attempt is still current.
     const owns = () => (owned ? xrSession.current === owned : current());
+    // Before the session, so the HUD can say what is being waited for from the
+    // first frame. Setting it here rather than at prepare time is deliberate:
+    // preparation can happen before this manager exists, entry cannot.
+    // Optional on purpose: a HUD hint is not worth a session. The last time an
+    // auxiliary call to the manager was made unconditionally here it threw and
+    // took the whole camera fallback down with it.
+    manager.onXrTracking?.((state) => useStore.getState().setArTracking(state));
     const session = await manager.startWebXr(
       (pose) => { if (owns()) useStore.getState().setAnchor(pose, 0.9, 'floor'); },
       // Leaving the session (the system back gesture, the headset's own exit)

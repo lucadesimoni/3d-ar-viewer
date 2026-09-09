@@ -5,6 +5,7 @@ import { Observable } from '@babylonjs/core/Misc/observable';
 import { Matrix } from '@babylonjs/core/Maths/math.vector';
 import { WebXRState } from '@babylonjs/core/XR/webXRTypes';
 import { XR_OVERLAY_CLASS, bindXrPlacement, prepareImmersiveAr } from './xr';
+import { SETTLE_FRAMES, SETTLE_TIMEOUT_MS } from '../../engine/tracking/settle';
 
 const createExperience = vi.hoisted(() => vi.fn());
 vi.mock('@babylonjs/core/XR/webXRDefaultExperience', () => ({
@@ -37,9 +38,13 @@ function fixture() {
       viewportX: 0, viewportY: 0,
     }],
   };
+  const viewerPose = { emulatedPosition: true };
+  const frame = { getViewerPose: () => viewerPose } as unknown as XRFrame;
   const sessionManager = {
     session,
+    referenceSpace: {} as XRReferenceSpace,
     onXRSessionInit: new Observable<EventTarget>(),
+    onXRFrameObservable: new Observable<XRFrame>(),
   };
   const baseExperience = {
     state: WebXRState.NOT_IN_XR,
@@ -72,9 +77,16 @@ function fixture() {
     position: { x: 1, y: 0, z: 2 },
     rotationQuaternion: { x: 0, y: 0, z: 0, w: 1 },
   }]);
+  /** Pump frames as a tracking device would, so placement arms. */
+  const frames = (n: number, emulated = false) => {
+    viewerPose.emulatedPosition = emulated;
+    for (let i = 0; i < n; i++) sessionManager.onXRFrameObservable.notifyObservers(frame);
+  };
+  /** A surface under the reticle and a platform that knows where it is. */
+  const settled = () => { hit(); frames(SETTLE_FRAMES); };
   return {
     engine, scene, overlay, session, baseExperience, hitTest, anchors, anchor,
-    rawCamera, emit, hit,
+    rawCamera, emit, hit, frames, settled, viewerPose,
   };
 }
 
@@ -88,7 +100,7 @@ describe('WebXR surface placement', () => {
     expect(f.scene.onPointerDown).toBe(cameraHandler);
     await prepared!.enter();
     f.scene.onPointerDown = undefined;
-    f.hit();
+    f.settled();
     f.session.dispatchEvent(new Event('select'));
     expect(onSelectAnchor).toHaveBeenCalledExactlyOnceWith({
       position: [1, 0, 2], rotation: [0, 0, 0, 1],
@@ -245,7 +257,7 @@ describe('holding the spot while the device learns the room', () => {
     const onSelectAnchor = vi.fn();
     const prepared = await prepareImmersiveAr(f.scene, f.overlay, { onAnchorPose, onSelectAnchor });
     await prepared!.enter();
-    f.hit();
+    f.settled();
     f.session.dispatchEvent(new Event('select'));
     expect(onSelectAnchor).toHaveBeenCalledTimes(1);
     await vi.waitFor(() =>
@@ -275,6 +287,72 @@ describe('holding the spot while the device learns the room', () => {
     const onSelectAnchor = vi.fn();
     const prepared = await prepareImmersiveAr(f.scene, f.overlay, { onSelectAnchor });
     await prepared!.enter();
+    f.settled();
+    f.session.dispatchEvent(new Event('select'));
+    expect(onSelectAnchor).toHaveBeenCalledTimes(1);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+});
+
+describe('waiting for the platform before taking a placement', () => {
+  it('ignores a tap while the device is still guessing where it is', async () => {
+    const f = fixture();
+    const onSelectAnchor = vi.fn();
+    const onTracking = vi.fn();
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, { onSelectAnchor, onTracking });
+    await prepared!.enter();
+    f.hit();
+    // A surface is reported, but the pose is emulated: ARCore has not decided
+    // where the floor is. Placing here is what put an anchor 78 cm below it.
+    f.frames(SETTLE_FRAMES * 2, true);
+    f.session.dispatchEvent(new Event('select'));
+    expect(onSelectAnchor).not.toHaveBeenCalled();
+
+    // Once it is tracking, the same tap places.
+    f.frames(SETTLE_FRAMES);
+    f.session.dispatchEvent(new Event('select'));
+    expect(onSelectAnchor).toHaveBeenCalledTimes(1);
+    // And the app was told — from the first frame, so the HUD says what it is
+    // waiting for instead of inviting a tap that will be swallowed.
+    expect(onTracking.mock.calls.map(([s]) => s.reason)).toEqual(['settling', 'settled']);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+
+  it('does not trap an operator whose device never settles', async () => {
+    const f = fixture();
+    const onSelectAnchor = vi.fn();
+    const onTracking = vi.fn();
+    const now = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, { onSelectAnchor, onTracking });
+    await prepared!.enter();
+    f.hit();
+    f.frames(1, true);
+    f.session.dispatchEvent(new Event('select'));
+    expect(onSelectAnchor).not.toHaveBeenCalled();
+
+    now.mockReturnValue(SETTLE_TIMEOUT_MS + 1);
+    f.frames(1, true);
+    f.session.dispatchEvent(new Event('select'));
+    expect(onSelectAnchor).toHaveBeenCalledTimes(1);
+    expect(onTracking.mock.calls.map(([s]) => s.reason)).toEqual(['settling', 'timeout']);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+
+  it('starts the wait over for the next session', async () => {
+    const f = fixture();
+    const onSelectAnchor = vi.fn();
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, { onSelectAnchor });
+    await prepared!.enter();
+    f.settled();
+    f.session.dispatchEvent(new Event('select'));
+    expect(onSelectAnchor).toHaveBeenCalledTimes(1);
+
+    // A second session on the same helper is a fresh room as far as the
+    // platform is concerned, and gets the same wait as the first.
+    f.baseExperience.sessionManager.onXRSessionInit.notifyObservers(f.session);
     f.hit();
     f.session.dispatchEvent(new Event('select'));
     expect(onSelectAnchor).toHaveBeenCalledTimes(1);

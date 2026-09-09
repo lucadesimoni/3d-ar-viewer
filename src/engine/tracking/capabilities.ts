@@ -187,6 +187,9 @@ export async function detectCapabilities(): Promise<Capabilities> {
 
   // Session features are not knowable from isSessionSupported. False means
   // "not confirmed granted", never "this device cannot" — hence the names.
+  // A session that has actually run does know, and the diagnostics report puts
+  // what it knows back over these before writing them out — see
+  // `reconcileGranted` in `diagnostics/report.ts`.
   const hitTestGranted = false;
   const depthSensingGranted = false;
   const planeDetectionGranted = false;
