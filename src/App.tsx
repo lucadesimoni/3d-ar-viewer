@@ -16,13 +16,14 @@ import { PlacementHint } from './components/PlacementHint';
 import { StepAnnotations } from './components/StepAnnotations';
 import { Annotations } from './components/Annotations';
 import { ArHud } from './components/ArHud';
+import { DiagnosticsExport } from './components/DiagnosticsExport';
 import { UiConfigProvider } from './ui/UiConfigContext';
 import { resolveUiConfig, type UiConfig } from './ui/config';
 import { useMediaQuery } from './ui/useMediaQuery';
 import { useStore } from './state/store';
 import type { PipelineConfig } from './vision/pipeline';
 
-type Drawer = 'register' | 'collab' | 'bom' | undefined;
+type Drawer = 'register' | 'collab' | 'bom' | 'log' | undefined;
 /** What the phone's bottom sheet is showing. */
 type Sheet = 'steps' | 'errors' | 'view' | 'more' | null;
 
@@ -156,10 +157,14 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
                     <button className={drawer === 'register' ? 'active' : ''} onClick={() => setDrawer(drawer === 'register' ? undefined : 'register')}>Register</button>
                     <button className={drawer === 'collab' ? 'active' : ''} onClick={() => setDrawer(drawer === 'collab' ? undefined : 'collab')}>Collaborate</button>
                     <button className={drawer === 'bom' ? 'active' : ''} onClick={() => setDrawer(drawer === 'bom' ? undefined : 'bom')}>BOM</button>
+                    <button className={drawer === 'log' ? 'active' : ''} onClick={() => setDrawer(drawer === 'log' ? undefined : 'log')}>Log</button>
                   </div>
                   {drawer === 'register' && <div className="drawer"><RegistrationPanel /></div>}
                   {drawer === 'collab' && <div className="drawer"><CollabPanel /></div>}
                   {drawer === 'bom' && <div className="drawer"><BomPanel /></div>}
+                  {drawer === 'log' && (
+                    <div className="drawer"><DiagnosticsExport capabilities={capabilities} /></div>
+                  )}
                 </>
               )}
               {/* Minimal/viewer layouts still expose AR entry when the header is hidden. */}
@@ -182,8 +187,16 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
                 <button className={drawer === 'register' ? 'active' : ''} onClick={() => setDrawer('register')}>Register</button>
                 <button className={drawer === 'collab' ? 'active' : ''} onClick={() => setDrawer('collab')}>Collaborate</button>
                 <button className={drawer === 'bom' ? 'active' : ''} onClick={() => setDrawer('bom')}>BOM</button>
+                {/* Reachable without entering AR, and without the AR bar, which
+                    on an iPad inside the App Clip has been seen not to appear.
+                    A log you can only reach through missing chrome is a log
+                    nobody can send. */}
+                <button className={drawer === 'log' ? 'active' : ''} onClick={() => setDrawer('log')}>Log</button>
               </div>
-              {drawer === 'collab' ? <CollabPanel /> : drawer === 'bom' ? <BomPanel /> : <RegistrationPanel />}
+              {drawer === 'collab' ? <CollabPanel />
+                : drawer === 'bom' ? <BomPanel />
+                  : drawer === 'log' ? <DiagnosticsExport capabilities={capabilities} />
+                    : <RegistrationPanel />}
             </div>
           )}
 
