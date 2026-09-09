@@ -8,6 +8,7 @@ import { stagedPose, type Timeline } from '../engine/animation';
 import type { RecognitionState } from '../vision/verdict';
 import type { AssemblyDef, PlacementState, Pose } from '../engine/types';
 import { gearbox } from '../data';
+import { logEvent } from '../diagnostics/log';
 import {
   loadAnnotations, makeAnnotation, saveAnnotations,
   type Annotation, type AnnotationsByAssembly,
@@ -332,6 +333,14 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     setAnchor(pose, quality, placement) {
+      // The one funnel every real placement goes through. A report of "it
+      // drifted" that contains nothing about the placement it drifted from is
+      // a report about nothing — the first device log had exactly that shape.
+      logEvent('place', pose ? 'anchor set' : 'anchor cleared', {
+        placement,
+        quality: Number(quality.toFixed(2)),
+        ...(pose ? { at: pose.position.map((v) => Number(v.toFixed(3))) } : {}),
+      });
       set({
         anchor: pose,
         anchorQuality: quality,

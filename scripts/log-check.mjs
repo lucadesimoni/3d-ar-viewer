@@ -39,7 +39,16 @@ await page.evaluate(() => window.dispatchEvent(new ErrorEvent('error', {
 // Into camera AR, so there is a session to describe and a frame to attach.
 await page.click('.ar-enter');
 await page.waitForSelector('.ar-bar', { timeout: 20000 });
-await page.waitForTimeout(2500);
+// Held looking down at the floor, then a tap: a real placement, so the log has
+// a real placement in it. The point of the check is that it does.
+await page.evaluate(() => {
+  setInterval(() => window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', {
+    alpha: 90, beta: 60, gamma: 0, absolute: true,
+  })), 40);
+});
+await page.waitForTimeout(2000);
+await page.mouse.click(195, 500);
+await page.waitForTimeout(1500);
 
 const save = async () => {
   const [download] = await Promise.all([
@@ -57,6 +66,31 @@ await page.waitForTimeout(300);
 const report = await save();
 check('the log saves as a file the operator can send',
   report?.version === 1, `version ${report?.version}`);
+// A log without a build identity is a log you cannot act on: one arrived from a
+// device forty-seven minutes after a merge, missing the field that merge had
+// added, and "the device refused it" was indistinguishable from "this is an
+// older bundle". That ambiguity cost a round trip.
+// A real short hash and a real timestamp. The fallbacks this can degrade to —
+// 'unknown' with no git, 'dev'/'unbuilt' when the Vite define is missing — must
+// not pass, or the check attests to an identity the file does not carry. The
+// first version of this assertion accepted 'dev' and so proved nothing.
+check('it says which build produced it',
+  /^[0-9a-f]{7,}\+?$/.test(report.build?.commit ?? '')
+    && !Number.isNaN(Date.parse(report.build?.at ?? '')),
+  `${report.build?.commit} built ${report.build?.at}`);
+check('and the build is on screen too, without exporting anything',
+  (await page.locator('.ar-build').textContent()).includes(report.build.commit),
+  await page.locator('.ar-build').textContent());
+check('it says whether the field of view was measured or assumed',
+  ['xr-camera', 'operator', 'assumed'].includes(report.render?.fovSource),
+  `${report.render?.fovDeg}° (${report.render?.fovSource})`);
+check('it reports what was rendered into, measured inside a frame',
+  Array.isArray(report.render?.bufferSize) && report.render.bufferSize[0] > 0,
+  `${report.render?.bufferSize?.join('x')}`);
+check('and no capability field claims a device cannot do what a session granted',
+  !('hitTest' in (report.capabilities ?? {})) && 'hitTestGranted' in (report.capabilities ?? {}),
+  Object.keys(report.capabilities ?? {}).filter((k) => /hitTest|anchors/i.test(k)).join(', '));
+
 check('it says what the device and browser are',
   Boolean(report.device?.userAgent) && typeof report.page?.secureContext === 'boolean',
   `${report.device?.userAgent?.slice(0, 40)}…, secure=${report.page?.secureContext}`);
@@ -69,6 +103,12 @@ check('and which renderer, at what rate',
 check('it carries the sequence of events, not just a snapshot',
   Array.isArray(report.log) && report.log.some((e) => e.message.includes('camera passthrough')),
   `${report.log?.length} entries`);
+// A report of "it drifted" that says nothing about the placement it drifted
+// from is a report about nothing. The first real device log had that shape:
+// placed and anchored, and not one line about either.
+check('including the placement it was anchored by',
+  report.log.some((e) => e.kind === 'place' && e.message.includes('anchor set')),
+  report.log.filter((e) => e.kind === 'place').map((e) => e.message).join('; ') || 'none');
 check('including the errors a phone otherwise swallows',
   report.log.some((e) => e.kind === 'error' && e.message.includes('boom')),
   report.log.filter((e) => e.kind === 'error').map((e) => e.message).join('; ') || 'none');

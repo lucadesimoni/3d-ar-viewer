@@ -84,6 +84,8 @@ const PLACEMENT_ARM_DELAY_MS = 350;
  * spend it, so this is well inside what `requestSession` will still accept.
  */
 const XR_PREPARE_WAIT_MS = 2000;
+/** How often anchor corrections are worth a log line, ms. */
+const ANCHOR_LOG_INTERVAL_MS = 5000;
 
 export interface SceneRenderState {
   placements: Map<string, PlacementState>;
@@ -291,6 +293,8 @@ export class SceneManager {
   private xrLoadError: string | undefined;
   /** True from the session's first frame until it ends. */
   private inXrSession = false;
+  /** What was actually rendered into, sampled in the frame. See `renderStats`. */
+  private lastFrameBuffer: [number, number] = [0, 0];
   /** True from the moment a session is requested until it is in or refused. */
   private xrEntering = false;
   /** A tap arrived before the session helper was built, so nothing was asked. */
@@ -304,6 +308,8 @@ export class SceneManager {
    */
   private anchorOrigin: Matrix | undefined;
   private anchorPlaced: Matrix | undefined;
+  private anchorCorrections = 0;
+  private anchorLoggedAtMs = 0;
   private xrPrepared: (import('./xr').XrPrepared & {
     callbacks: { onPlace: (pose: Pose) => void; onEnd?: () => void };
   }) | undefined;
@@ -382,6 +388,7 @@ export class SceneManager {
     try {
       this.scene.render();
       this.frames++;
+      this.lastFrameBuffer = [this.engine.getRenderWidth(), this.engine.getRenderHeight()];
       if (this.paintSampleWanted) {
         this.paintSampleWanted = false;
         this.lastPainted = this.samplePainted();
@@ -770,7 +777,35 @@ export class SceneManager {
 
   /** Vertical FOV currently on screen, degrees — use this for intrinsics too. */
   effectiveFovDeg(): number {
-    return this.visibleFovDeg;
+    return this.fieldOfView().deg;
+  }
+
+  /**
+   * The vertical field of view, and whether it is measured or assumed.
+   *
+   * Outside a session this is a *guess*: 60 degrees, adjusted by the operator's
+   * slider and then reduced by however much `object-fit: cover` crops the video.
+   * A five-degree error there is roughly a ten per cent range error, which is
+   * fine for placing an overlay and not fine for saying whether a part is seated.
+   *
+   * Inside a session it need not be a guess at all. Babylon derives the real
+   * value from the XR view's own projection matrix every frame and puts it on
+   * the camera — `webXRCamera.js`, `fov = atan2(1, projectionMatrix[5]) * 2` —
+   * so the platform's number is already sitting there. It costs nothing, needs
+   * no `camera-access`, and it was being ignored in favour of an assumption
+   * derived from a video that does not exist in a session. A measured focal
+   * length and a guessed one must never look alike, so the source travels with
+   * the number.
+   */
+  fieldOfView(): { deg: number; source: 'xr-camera' | 'operator' | 'assumed' } {
+    const cam = this.scene.activeCamera;
+    if (this.inXrSession && cam && cam.fov > 0) {
+      return { deg: (cam.fov * 180) / Math.PI, source: 'xr-camera' };
+    }
+    return {
+      deg: this.visibleFovDeg,
+      source: this.cameraFovDeg === ASSUMED_CAMERA_FOV_DEG ? 'assumed' : 'operator',
+    };
   }
 
   /** Recalibrate the assumed camera FOV live, from the AR settings sheet. */
@@ -873,6 +908,16 @@ export class SceneManager {
     const now = poseMatrix(pose);
     if (!this.anchorOrigin) { this.anchorOrigin = now; return; }
     if (!this.anchorPlaced) return;
+    this.anchorCorrections++;
+    // Throttled: a correction a frame would drown the log it is meant to explain,
+    // and what matters is that they happen and roughly how far they move things.
+    if (performance.now() - this.anchorLoggedAtMs > ANCHOR_LOG_INTERVAL_MS) {
+      this.anchorLoggedAtMs = performance.now();
+      logEvent('place', 'anchor corrected by the platform', {
+        corrections: this.anchorCorrections,
+        at: pose.position.map((v) => Number(v.toFixed(3))),
+      });
+    }
     const motion = Matrix.Invert(this.anchorOrigin).multiply(now);
     const moved = this.anchorPlaced.multiply(motion);
     const position = new Vector3();
@@ -1810,6 +1855,8 @@ export class SceneManager {
     activeMeshes: number;
     partMeshes: number;
     fovDeg: number;
+    /** Measured from the session's own projection, or assumed. */
+    fovSource: 'xr-camera' | 'operator' | 'assumed';
     cssSize: [number, number];
     bufferSize: [number, number];
     scaling: number;
@@ -1847,9 +1894,13 @@ export class SceneManager {
       meshes: this.scene.meshes.length,
       activeMeshes: this.scene.getActiveMeshes().length,
       partMeshes: this.assemblyRoot.getChildMeshes(false, (n) => n.name.startsWith('mesh-')).length,
-      fovDeg: this.visibleFovDeg,
+      fovDeg: Number(this.fieldOfView().deg.toFixed(2)),
+      fovSource: this.fieldOfView().source,
       cssSize: [Math.round(rect.width), Math.round(rect.height)],
-      bufferSize: [this.engine.getRenderWidth(), this.engine.getRenderHeight()],
+      // Measured *inside* a frame. Outside one, Babylon's framebuffer object is
+      // null and these report the canvas instead — so a session used to report
+      // its CSS size as if that were what it rendered.
+      bufferSize: this.lastFrameBuffer,
       scaling: this.engine.getHardwareScalingLevel(),
       cameraY: (this.scene.activeCamera ?? this.camera).position.y,
       xr: this.inXrSession,

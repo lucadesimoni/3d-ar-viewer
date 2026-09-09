@@ -8,12 +8,15 @@
  * sequence of events with the errors in it.
  */
 import { logEntries, type LogEntry } from './log';
+import { buildStamp, type BuildStamp } from './build';
 import { getActiveManager } from '../render/babylon/managerRegistry';
 import { useStore } from '../state/store';
 import type { Capabilities } from '../engine/tracking/capabilities';
 
 export interface DiagnosticsReport {
   version: 1;
+  /** Which build this came from — see `diagnostics/build`. */
+  build: BuildStamp;
   at: string;
   /** Milliseconds the page has been open. */
   uptimeMs: number;
@@ -35,7 +38,8 @@ export interface DiagnosticsReport {
     motion: boolean;
     anchored: boolean;
     error: string | undefined;
-    xrReady: boolean;
+    /** Whether a tap could enter a session — meaningless while one is running. */
+    xrReady: boolean | 'in-session';
     xrFailure?: string;
     xrSession?: Awaited<ReturnType<NonNullable<ReturnType<typeof getActiveManager>>['xrSessionInfo']>>;
   };
@@ -80,6 +84,7 @@ export async function buildReport(capabilities?: Capabilities): Promise<Diagnost
   const nav = navigator as Navigator & { deviceMemory?: number };
   return {
     version: 1,
+    build: buildStamp(),
     at: new Date().toISOString(),
     uptimeMs: Math.round(performance.now()),
     page: {
@@ -103,7 +108,7 @@ export async function buildReport(capabilities?: Capabilities): Promise<Diagnost
       motion: state.arMotion,
       anchored: Boolean(state.anchor),
       error: state.arError,
-      xrReady: manager?.xrReady() ?? false,
+      xrReady: manager?.renderStats().xr ? 'in-session' : (manager?.xrReady() ?? false),
       ...(manager ? { xrFailure: await manager.xrFailure() } : {}),
       ...(manager ? { xrSession: await manager.xrSessionInfo() } : {}),
     },
