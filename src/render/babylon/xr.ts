@@ -5,6 +5,8 @@ import { Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import type { Scene } from '@babylonjs/core/scene';
 import type { IWebXRHitResult } from '@babylonjs/core/XR/features/WebXRHitTest';
 import type { Pose } from '../../engine/types';
+import { createSettleTracker, type TrackingState } from '../../engine/tracking/settle';
+import { logEvent } from '../../diagnostics/log';
 
 /**
  * Babylon-native WebXR for immersive AR on devices that support it (Android
@@ -32,6 +34,13 @@ export interface XrHooks {
    * where it now actually is, rather than the assembly sliding off the bench.
    */
   onAnchorPose?: (pose: Pose) => void;
+  /**
+   * How well the platform is tracking, and whether placement is armed yet.
+   *
+   * Reported whenever the answer changes, not every frame. See `settle.ts` for
+   * why an unasked question cost a placement 78 cm below the floor.
+   */
+  onTracking?: (state: TrackingState) => void;
 }
 
 export interface XrController {
@@ -54,6 +63,8 @@ export let lastXrError: string | undefined;
 export let referenceSpace: string | undefined;
 /** Features the browser actually granted, as reported by the session. */
 export let grantedFeatures: string[] = [];
+/** How the running session is tracking — undefined outside a session. */
+export let tracking: TrackingState | undefined;
 
 /**
  * Full pinhole intrinsics, when the platform hands them over.
@@ -293,6 +304,15 @@ export async function prepareImmersiveAr(
   let anchors: InstanceType<typeof WebXRAnchorSystem> | undefined;
   /** The anchor the assembly is currently riding, if the device grants them. */
   let placedAnchorId: number | undefined;
+  const settle = createSettleTracker();
+  /**
+   * Whether frames are being sampled at all.
+   *
+   * The placement gate is only as good as the signal behind it. A platform that
+   * does not let us watch frames gives no signal, and a gate with no signal
+   * would refuse every tap for ever — so with nothing to go on, it opens.
+   */
+  let watchingFrames = false;
   try {
     // `required: false` — the fifth argument, and it defaults to *true*.
     //
@@ -326,6 +346,39 @@ export async function prepareImmersiveAr(
       reticle = { position: [p.x, p.y, p.z], rotation: [r.x, r.y, r.z, r.w] };
       hooks.onReticle?.(reticle);
     });
+
+    // Is the platform tracking yet, or still guessing?
+    //
+    // `emulatedPosition` is the question WebXR answers for nothing, and not
+    // asking it cost a real placement 78 cm below the floor (see `settle.ts`).
+    // Paired with "the hit-test is returning a surface" over a run of frames it
+    // says when a tap is worth acting on.
+    xr.baseExperience.sessionManager.onXRFrameObservable.add((frame) => {
+      const space = xr.baseExperience.sessionManager.referenceSpace;
+      let emulated = true;
+      try {
+        // A frame can refuse a pose entirely while the device is lost, which is
+        // the same answer as an emulated one: not yet.
+        emulated = space ? (frame.getViewerPose(space)?.emulatedPosition ?? true) : true;
+      } catch {
+        emulated = true;
+      }
+      const before = tracking;
+      const now = settle.sample({ emulated, hasHit: Boolean(reticle) }, performance.now());
+      tracking = now;
+      // The first sample counts as a change. Without it the HUD would sit on
+      // "tap to place" through the whole settling period, inviting exactly the
+      // tap the gate is about to swallow, and say nothing about why.
+      if (!before || now.reason !== before.reason || now.ready !== before.ready) {
+        logEvent('xr', `tracking ${now.reason}`, {
+          waitedMs: Math.round(now.waitedMs), emulated: now.emulated, hasHit: now.hasHit,
+        });
+        hooks.onTracking?.(now);
+      }
+    });
+    // After the subscription, never before: a throw here must leave the gate
+    // open rather than latch it shut on a signal that will never arrive.
+    watchingFrames = true;
 
     // Raw camera access: the frames part inspection needs, in the mode whose
     // pose is worth inspecting against.
@@ -409,6 +462,8 @@ export async function prepareImmersiveAr(
   let stopInput: (() => void) | undefined;
   let unmarkOverlay: (() => void) | undefined;
   const clearPlacement = (): void => {
+    settle.reset(performance.now());
+    tracking = undefined;
     placedAnchorId = undefined;
     lastHit = undefined;
     stopInput?.();
@@ -423,6 +478,15 @@ export async function prepareImmersiveAr(
     unmarkOverlay = markXrOverlay(overlayRoot);
     stopInput = bindXrPlacement(session, overlayRoot, () => {
       if (xr.baseExperience.state !== WebXRState.IN_XR || !reticle) return;
+      // Not before the platform knows where the floor is. The HUD says what is
+      // being waited for, and `SETTLE_TIMEOUT_MS` makes sure the wait ends.
+      if (watchingFrames && !settle.state().ready) {
+        logEvent('xr', 'tap ignored — still finding the floor', {
+          goodFrames: settle.state().goodFrames,
+          waitedMs: Math.round(settle.state().waitedMs),
+        });
+        return;
+      }
       hooks.onSelectAnchor?.(reticle);
       // And ask the platform to hold the spot, so later corrections move the
       // assembly with the room rather than the room out from under it.

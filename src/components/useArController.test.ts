@@ -23,6 +23,7 @@ const f = vi.hoisted(() => {
     manager: {
       prepareWebXr: vi.fn(),
       startWebXr: vi.fn(),
+      onXrTracking: vi.fn(),
       setArMode: vi.fn(),
       setPlacementActive: vi.fn(),
       cameraToWorld: vi.fn((pose) => pose),

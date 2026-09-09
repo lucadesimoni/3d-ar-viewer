@@ -40,6 +40,8 @@ import { createBestEngine, type RenderBackendKind } from './engineFactory';
 import { STATUS_COLORS, type RecognitionStatus } from '../../vision/verdict';
 import { ASSUMED_CAMERA_FOV_DEG } from '../../engine/tracking/markerTracking';
 import { logEvent } from '../../diagnostics/log';
+import { anchorMoved } from './anchorMotion';
+import type { TrackingState } from '../../engine/tracking/settle';
 import {
   DIAGNOSTIC_COLORS,
   applyPose,
@@ -308,7 +310,21 @@ export class SceneManager {
    */
   private anchorOrigin: Matrix | undefined;
   private anchorPlaced: Matrix | undefined;
+  /** The last report we actually moved to — what a new one is measured against. */
+  private anchorApplied: Pose | undefined;
+  /**
+   * How the session is tracking, and whether placement is armed.
+   *
+   * Kept after the session ends, deliberately: "how long did the platform take
+   * to settle" is exactly what a report written afterwards needs to explain a
+   * placement that came out wrong. The HUD's copy in the store is cleared.
+   */
+  private xrTracking: TrackingState | undefined;
+  /** Set once by the app, so a rebound entry cannot lose it. */
+  private trackingListener: ((state: TrackingState | undefined) => void) | undefined;
   private anchorCorrections = 0;
+  /** Of those, the ones that moved anything. See `anchorMoved`. */
+  private anchorApplications = 0;
   private anchorLoggedAtMs = 0;
   private xrPrepared: (import('./xr').XrPrepared & {
     callbacks: { onPlace: (pose: Pose) => void; onEnd?: () => void };
@@ -906,15 +922,22 @@ export class SceneManager {
    */
   private followAnchor(pose: Pose): void {
     const now = poseMatrix(pose);
-    if (!this.anchorOrigin) { this.anchorOrigin = now; return; }
+    if (!this.anchorOrigin) { this.anchorOrigin = now; this.anchorApplied = pose; return; }
     if (!this.anchorPlaced) return;
     this.anchorCorrections++;
+    // Most reports say the anchor is exactly where it already was. Acting on
+    // those costs a full placement write thirty times a second and gives the
+    // display a tremble it has no reason to have.
+    if (this.anchorApplied && !anchorMoved(this.anchorApplied, pose)) return;
+    this.anchorApplied = pose;
+    this.anchorApplications++;
     // Throttled: a correction a frame would drown the log it is meant to explain,
     // and what matters is that they happen and roughly how far they move things.
     if (performance.now() - this.anchorLoggedAtMs > ANCHOR_LOG_INTERVAL_MS) {
       this.anchorLoggedAtMs = performance.now();
       logEvent('place', 'anchor corrected by the platform', {
         corrections: this.anchorCorrections,
+        applied: this.anchorApplications,
         at: pose.position.map((v) => Number(v.toFixed(3))),
       });
     }
@@ -1091,6 +1114,17 @@ export class SceneManager {
     return { end: () => controller.end() };
   }
 
+  /**
+   * Hear about the platform's tracking quality.
+   *
+   * Deliberately not one of `startWebXr`'s callbacks: those are rebound on
+   * every entry and retry, and this one belongs to the app for as long as it
+   * lives. Passing `undefined` means there is no session to report on.
+   */
+  onXrTracking(listener: (state: TrackingState | undefined) => void): void {
+    this.trackingListener = listener;
+  }
+
   /** Whether a session can be entered on the next tap without further setup. */
   xrReady(): boolean {
     return this.xrPrepared !== undefined;
@@ -1129,6 +1163,11 @@ export class SceneManager {
         // placement, where it now is, and re-announcing it would re-arm
         // placement and re-run everything that watches for a new anchor.
         onAnchorPose: (pose) => { if (this.inXrSession) this.followAnchor(pose); },
+        // Not a per-frame feed: this fires when the answer changes.
+        onTracking: (state) => {
+          this.xrTracking = state;
+          this.trackingListener?.(state);
+        },
         onSelectAnchor: (pose) => {
           if (!this.placementActive) return;
           if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) return;
@@ -1138,6 +1177,7 @@ export class SceneManager {
           // face wherever the operator is standing, which is exactly right
           // once and exactly wrong every time after.
           this.anchorOrigin = undefined;
+          this.anchorApplied = undefined;
           this.anchorPlaced = poseMatrix(placed);
           callbacks.onPlace(placed);
           this.setPlacementActive(false);
@@ -1151,6 +1191,7 @@ export class SceneManager {
           } else {
             this.setArMode(false);
             this.setReticle(undefined);
+            this.trackingListener?.(undefined);
             callbacks.onEnd?.();
           }
         },
@@ -1190,14 +1231,21 @@ export class SceneManager {
     space?: string;
     features: string[];
     camera?: Awaited<typeof import('./xr')>['cameraAccess'];
+    tracking?: TrackingState;
   }> {
     try {
-      const { referenceSpace, grantedFeatures, cameraAccess } = await import('./xr');
+      const { referenceSpace, grantedFeatures, cameraAccess, tracking } = await import('./xr');
       // Whether this device will hand over its camera image in a session is the
       // question that decides where part inspection can run at all, and it is
       // not answerable by reading documentation — only by asking a real device.
       // So it travels in the diagnostics file with everything else.
-      return { space: referenceSpace, features: grantedFeatures, camera: cameraAccess };
+      // And how long the platform took to settle, so the next "it was shaky at
+      // first" report carries its own explanation instead of needing a guess.
+      const settling = tracking ?? this.xrTracking;
+      return {
+        space: referenceSpace, features: grantedFeatures, camera: cameraAccess,
+        ...(settling ? { tracking: settling } : {}),
+      };
     } catch {
       return { features: [] };
     }

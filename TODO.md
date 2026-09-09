@@ -41,11 +41,19 @@ error · **unverified** = correct as far as it can be tested here · **chore**.
 
 ## Approximations that are stated, and should eventually stop being approximate
 
-- **approximation — camera intrinsics are assumed.** No browser exposes the real
-  calibration, so a 60° vertical FOV is assumed and corrected for the visible
-  crop. A 5° error is roughly a 10% range error, which is why recognition
-  re-registers rather than measures. The AR settings sheet exposes the number,
-  and `?camfov=` presets it. `src/engine/tracking/markerTracking.ts`
+- **approximation — camera intrinsics are assumed outside a WebXR session.** A
+  60° vertical FOV is assumed and corrected for the visible crop; a 5° error is
+  roughly a 10% range error, which is why recognition re-registers rather than
+  measures. The AR settings sheet exposes the number, and `?camfov=` presets it.
+  `src/engine/tracking/markerTracking.ts`
+  *In* a session this is no longer necessary and no longer done: the reported
+  field of view comes from the XR camera (`fovSource: 'xr-camera'`), and a real
+  Android log measured 72.2° where the assumption said 60. That device also
+  granted `camera-access`, which hands over full pinhole intrinsics
+  (`ax, ay, u0, v0`) — see `ar.xrSession.camera` in a diagnostics file. What is
+  still assumed is `MarkerTracker`'s own FOV: it is constructed without one in
+  `useArController.ts` and therefore uses the hard-coded 60° even when the
+  operator has calibrated. Fixing that is step 1 of the perception plan.
 - **approximation — eye height is assumed** (1.45 m) for the iOS floor plane.
   Adjustable live in AR settings; there is no way to measure it from the web.
 - **approximation — grid recognition is axis-aligned.** The facade must be
