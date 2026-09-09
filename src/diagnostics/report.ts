@@ -20,7 +20,34 @@ export interface DiagnosticsReport {
   at: string;
   /** Milliseconds the page has been open. */
   uptimeMs: number;
-  page: { url: string; secureContext: boolean; embedded: boolean };
+  page: {
+    url: string;
+    secureContext: boolean;
+    embedded: boolean;
+    /**
+     * How big the app's own box actually is, and what it thinks it should be.
+     *
+     * An iPad inside the Needle App Clip came back with a render canvas
+     * measuring 0×0 in a window of 1180×820, and a screenshot of an AR session
+     * with the model correctly composited over the room and not one control
+     * anywhere. A collapsed app box explains both at once — the DOM overlay
+     * shows what the page draws, and a page with no height draws nothing — but
+     * nothing in the file said which of the four measurements had collapsed.
+     */
+    layout?: {
+      /** `window.innerWidth/Height`. */
+      window: [number, number];
+      /** What `visualViewport` reports, which is what `--app-h` is set from. */
+      visual?: [number, number];
+      visualScale?: number;
+      /** The value actually published as `--app-h`, in CSS pixels. */
+      appHeightVar: string;
+      /** The `.app` element's own box. */
+      app: [number, number];
+      /** Which of the classes that hide the canvas are on. */
+      classes: string;
+    };
+  };
   device: {
     userAgent: string;
     platform: string;
@@ -99,6 +126,20 @@ export function reconcileGranted(caps: Capabilities, features: string[]): Capabi
   };
 }
 
+/** Measure the app's box, rather than assume the CSS did what it was told. */
+function pageLayout(): DiagnosticsReport['page']['layout'] {
+  const app = document.querySelector('.app');
+  const rect = app?.getBoundingClientRect();
+  const vv = window.visualViewport;
+  return {
+    window: [window.innerWidth, window.innerHeight],
+    ...(vv ? { visual: [Math.round(vv.width), Math.round(vv.height)], visualScale: vv.scale } : {}),
+    appHeightVar: document.documentElement.style.getPropertyValue('--app-h') || 'unset',
+    app: [Math.round(rect?.width ?? 0), Math.round(rect?.height ?? 0)],
+    classes: app?.className ?? 'no .app element',
+  };
+}
+
 export async function buildReport(capabilities?: Capabilities): Promise<DiagnosticsReport> {
   const manager = getActiveManager();
   const state = useStore.getState();
@@ -113,6 +154,7 @@ export async function buildReport(capabilities?: Capabilities): Promise<Diagnost
       url: location.href,
       secureContext: window.isSecureContext,
       embedded: window.parent !== window,
+      layout: pageLayout(),
     },
     device: {
       userAgent: navigator.userAgent,
