@@ -6,6 +6,7 @@ import { Matrix } from '@babylonjs/core/Maths/math.vector';
 import { WebXRState } from '@babylonjs/core/XR/webXRTypes';
 import { XR_OVERLAY_CLASS, bindXrPlacement, prepareImmersiveAr } from './xr';
 import { SETTLE_FRAMES, SETTLE_TIMEOUT_MS } from '../../engine/tracking/settle';
+import { clearLog, logEntries } from '../../diagnostics/log';
 
 const createExperience = vi.hoisted(() => vi.fn());
 vi.mock('@babylonjs/core/XR/webXRDefaultExperience', () => ({
@@ -21,6 +22,7 @@ function fixture() {
   const session = new EventTarget();
   const hitTest = {
     autoCloneTransformation: false,
+    attached: true,
     onHitTestResultObservable: new Observable<Array<{
       position: { x: number; y: number; z: number };
       rotationQuaternion: { x: number; y: number; z: number; w: number };
@@ -356,6 +358,46 @@ describe('waiting for the platform before taking a placement', () => {
     f.hit();
     f.session.dispatchEvent(new Event('select'));
     expect(onSelectAnchor).toHaveBeenCalledTimes(1);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+});
+
+describe('saying why a session found no surface', () => {
+  it('records the first surface of each session, once, with how long it took', async () => {
+    // A device log has a second session in the same page load waiting 20
+    // seconds for a surface where the first waited three. Without this line
+    // "the room has no planes" and "our hit-test never came back" read alike.
+    clearLog();
+    const f = fixture();
+    f.hitTest.attached = true;
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, {});
+    await prepared!.enter();
+    f.hit();
+    f.hit();
+    const first = logEntries().filter((e) => e.message === 'first surface found');
+    expect(first).toHaveLength(1);
+    expect(first[0].data?.attached).toBe(true);
+    expect(typeof first[0].data?.waitedMs).toBe('number');
+
+    // A second session asks the question again from scratch.
+    f.baseExperience.sessionManager.onXRSessionInit.notifyObservers(f.session);
+    f.hit();
+    expect(logEntries().filter((e) => e.message === 'first surface found')).toHaveLength(2);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+
+  it('says whether the hit-test is even attached when it reports no surface', async () => {
+    clearLog();
+    const f = fixture();
+    f.hitTest.attached = false;
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, {});
+    await prepared!.enter();
+    f.frames(1, true);
+    const settling = logEntries().find((e) => e.message === 'tracking settling');
+    expect(settling?.data?.hitTest).toBe(false);
+    expect(settling?.data?.hasHit).toBe(false);
     prepared!.dispose();
     f.engine.dispose();
   });

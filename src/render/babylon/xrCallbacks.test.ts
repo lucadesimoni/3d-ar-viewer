@@ -262,3 +262,44 @@ describe('what the report can still say after the session has gone', () => {
     }
   });
 });
+
+describe('going back into AR after leaving it', () => {
+  it('has a helper ready for the second entry, instead of falling back', async () => {
+    // Straight out of a device log: a session at 77 s, "AR started before
+    // WebXR had finished loading" at 159 s, camera passthrough, and a real
+    // session again only after a third press. Entering moved the helper out of
+    // `xrPrepared` and nothing ever put one back, so the second entry of every
+    // page load found nothing prepared — on any device, every time.
+    let built = 0;
+    const hooks: XrHooks[] = [];
+    prepare.mockImplementation(async (_s: Scene, _o: HTMLElement, callbacks: XrHooks) => {
+      built++;
+      hooks.push(callbacks);
+      return { enter: async () => ({ end: vi.fn(async () => {}) }), dispose: vi.fn() };
+    });
+    const m = new SceneManager(document.createElement('canvas'), gearbox, {}, {
+      engine: new NullEngine(), kind: 'webgl',
+      perf: { tier: 'low', antialias: false, adaptive: false, maxPixelRatio: 1, targetFps: 30, recognitionIntervalMs: 1000 },
+    });
+    try {
+      await m.prepareWebXr({ onPlace: vi.fn(), onEnd: vi.fn() });
+      expect(m.xrReady()).toBe(true);
+      expect(await m.startWebXr(vi.fn(), vi.fn())).toBeDefined();
+      // In session: nothing is prepared, because the helper is in use and a
+      // second tap must not enter it twice.
+      expect(m.xrReady()).toBe(false);
+
+      hooks[0].onStateChange?.(true);
+      hooks[0].onStateChange?.(false);
+      // Out of the session, and ready again without building anything new.
+      expect(m.xrReady()).toBe(true);
+      expect(built).toBe(1);
+
+      const second = vi.fn();
+      expect(await m.startWebXr(second, vi.fn())).toBeDefined();
+      expect(await m.xrFailure()).toBeUndefined();
+    } finally {
+      m.dispose();
+    }
+  });
+});
