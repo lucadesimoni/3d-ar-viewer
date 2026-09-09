@@ -503,11 +503,23 @@ export async function prepareImmersiveAr(
   let everEntered = false;
   let stopInput: (() => void) | undefined;
   let unmarkOverlay: (() => void) | undefined;
-  const clearPlacement = (): void => {
-    sessionAtMs = performance.now();
-    firstHitAtMs = 0;
-    settle.reset(sessionAtMs);
-    tracking = undefined;
+  /**
+   * `starting` distinguishes a new session from a finished one.
+   *
+   * The tracking state is reset for a session that is beginning and *kept* for
+   * one that has ended. An iPad log came back from inside the App Clip saying
+   * `settling, waitedMs: 41` for a session that had run four and a half
+   * seconds — because the state was cleared on the way out and the report fell
+   * back to the last reported *change*, which was the first frame. The one
+   * question that log was taken to answer went unanswered.
+   */
+  const clearPlacement = (starting: boolean): void => {
+    if (starting) {
+      sessionAtMs = performance.now();
+      firstHitAtMs = 0;
+      settle.reset(sessionAtMs);
+      tracking = undefined;
+    }
     placedAnchorId = undefined;
     lastHit = undefined;
     stopInput?.();
@@ -518,7 +530,7 @@ export async function prepareImmersiveAr(
     hooks.onReticle?.(undefined);
   };
   const sessionObserver = xr.baseExperience.sessionManager.onXRSessionInit.add((session) => {
-    clearPlacement();
+    clearPlacement(true);
     unmarkOverlay = markXrOverlay(overlayRoot);
     stopInput = bindXrPlacement(session, overlayRoot, () => {
       if (xr.baseExperience.state !== WebXRState.IN_XR || !reticle) return;
@@ -546,7 +558,9 @@ export async function prepareImmersiveAr(
       everEntered = true;
       hooks.onStateChange?.(true);
     } else if (state === WebXRState.NOT_IN_XR) {
-      clearPlacement();
+      // Ending, not starting: what the session ended up doing is exactly what
+      // the report written afterwards is for.
+      clearPlacement(false);
       if (!everEntered) return;
       everEntered = false;
       hooks.onStateChange?.(false);
@@ -582,7 +596,7 @@ export async function prepareImmersiveAr(
       // must not cost us one. Anything else did rule this space out.
       if (!activation && spaceIndex < SPACES.length - 1) spaceIndex++;
       await xr.baseExperience.exitXRAsync().catch(() => undefined);
-      clearPlacement();
+      clearPlacement(false);
       return undefined;
     }
     // The promise above resolves before the session is in XR — see
@@ -599,7 +613,7 @@ export async function prepareImmersiveAr(
       // a fault that had nothing to do with either.
       lastXrError = `entering the session (${space}) — no first frame, state ${xr.baseExperience.state}`;
       await xr.baseExperience.exitXRAsync().catch(() => undefined);
-      clearPlacement();
+      clearPlacement(false);
       return undefined;
     }
     clearXrError();
@@ -618,7 +632,7 @@ export async function prepareImmersiveAr(
   return {
     enter,
     dispose: () => {
-      clearPlacement();
+      clearPlacement(false);
       xr.baseExperience.sessionManager.onXRSessionInit.remove(sessionObserver);
       xr.dispose();
     },

@@ -403,6 +403,35 @@ describe('saying why a session found no surface', () => {
   });
 });
 
+describe('what the report can say about a session that has finished', () => {
+  it('keeps the tracking state a session ended on, and clears it for the next', async () => {
+    // An iPad log from inside the App Clip reported `settling, waitedMs: 41`
+    // for a session that had run four and a half seconds: the state was
+    // cleared on the way out, and the report fell back to the last reported
+    // *change* — the first frame. The one question the log was taken to
+    // answer went unanswered.
+    const f = fixture();
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, {});
+    await prepared!.enter();
+    f.settled();
+    const { tracking: during } = await import('./xr');
+    expect(during?.reason).toBe('settled');
+    expect(during?.goodFrames).toBe(SETTLE_FRAMES);
+
+    f.emit(WebXRState.NOT_IN_XR);
+    const { tracking: after } = await import('./xr');
+    expect(after?.reason).toBe('settled');
+    expect(after?.goodFrames).toBe(SETTLE_FRAMES);
+
+    // The next session starts from nothing, so its own wait is its own.
+    f.baseExperience.sessionManager.onXRSessionInit.notifyObservers(f.session);
+    const { tracking: next } = await import('./xr');
+    expect(next).toBeUndefined();
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+});
+
 describe('seeing the camera image from inside a session', () => {
   it('asks for it optionally, and reports the intrinsics the platform gives', async () => {
     const f = fixture();

@@ -137,6 +137,18 @@ check('and no capability field claims a device cannot do what a session granted'
   !('hitTest' in (report.capabilities ?? {})) && 'hitTestGranted' in (report.capabilities ?? {}),
   Object.keys(report.capabilities ?? {}).filter((k) => /hitTest|anchors/i.test(k)).join(', '));
 
+// The measurements that decide a report of "there are no controls". An iPad
+// inside the App Clip returned a 0×0 render canvas in a window of 1180×820,
+// with the model correctly composited over the room and not one control on
+// screen — a collapsed app box explains both, and nothing in the file said
+// which of these four had collapsed.
+check('it measures the app box rather than assuming the CSS worked',
+  report.page?.layout?.app?.[1] > 100 && report.page.layout.window[1] > 100
+    && typeof report.page.layout.appHeightVar === 'string'
+    && report.page.layout.classes.includes('app'),
+  `app ${report.page?.layout?.app?.join('×')} in window ${report.page?.layout?.window?.join('×')}`
+    + `, --app-h ${report.page?.layout?.appHeightVar}, classes "${report.page?.layout?.classes}"`);
+
 check('it says what the device and browser are',
   Boolean(report.device?.userAgent) && typeof report.page?.secureContext === 'boolean',
   `${report.device?.userAgent?.slice(0, 40)}…, secure=${report.page?.secureContext}`);
