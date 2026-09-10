@@ -19,8 +19,7 @@ const pose = (x: number, y: number, z: number): Pose => ({
  *
  * `onPlace` writes the pose back through `setAnchor`, which is what the app
  * does: the store takes the placement and pushes it into the scene on the next
- * update. Half the behaviour under test here is what happens when it does that
- * again, and again, for reasons that have nothing to do with the anchor.
+ * update, and on every update after that.
  */
 async function placed() {
   const hooks: XrHooks[] = [];
@@ -55,209 +54,106 @@ const where = (m: SceneManager): [number, number, number] => {
   return [root.position.x, root.position.y, root.position.z];
 };
 
-/**
- * Let the picture catch up.
- *
- * A correction is followed rather than teleported to, so where the assembly
- * *is* trails where the platform says it should be for a few frames. Twenty
- * closes a metre to well under a millimetre at 15% a frame.
- */
-const settleGlide = (m: SceneManager, frames = 40): void => {
+/** And which way it faces, as a quaternion. */
+const facing = (m: SceneManager): [number, number, number, number] => {
+  const q = m.scene.getTransformNodeByName('assembly')!.rotationQuaternion!;
+  return [q.x, q.y, q.z, q.w];
+};
+
+/** Frames, in case anything were still moving of its own accord. */
+const settle = (m: SceneManager, frames = 40): void => {
   for (let i = 0; i < frames; i++) m.scene.render();
 };
 
-describe('following the platform without shaking on its noise', () => {
-  it('ignores reports that say the anchor is where it already was', async () => {
-    const { manager, hook, store } = await placed();
+describe('placed is placed', () => {
+  it('is not moved by anything the platform says about the spot', async () => {
+    // The rule the operator asked for, after five sessions of logs: once it is
+    // positioned it stays exactly where it was put, unless they press "Move" or
+    // it snaps onto something recognised. The platform re-estimates that spot
+    // after every single touch of the screen — thirteen taps in one recorded
+    // session, thirteen moves, sixty to seventy milliseconds later each time —
+    // and from the operator's side that is "every tap repositions it".
+    const { manager, hook } = await placed();
     try {
       const start = where(manager);
-      // Straight from the Android log: ~30 reports a second, the position
-      // identical to three decimals for seconds at a time. Each one used to be
-      // written through as a fresh placement.
-      hook.onAnchorPose?.(pose(-0.132, -0.781, 1.597));
-      for (let i = 0; i < 60; i++) hook.onAnchorPose?.(pose(-0.132, -0.781, 1.597));
-      settleGlide(manager);
-      expect(where(manager)).toEqual(start);
+      const heading = facing(manager);
 
-      // And the 1.19 m relocalisation at t=34454 goes through at once.
-      hook.onAnchorPose?.(pose(-1.172, -0.185, 1.979));
-      // Not there yet: a metre-and-a-bit arriving in one frame reads as a
-      // fault rather than a correction, so it is followed over a few.
-      expect(where(manager)[0]).not.toBeCloseTo(start[0] - 1.04, 2);
-      settleGlide(manager);
-      expect(where(manager)[0]).toBeCloseTo(start[0] - 1.04, 3);
-      expect(where(manager)[2]).toBeCloseTo(start[2] + 0.382, 3);
-      // The height is not followed — see "the floor an assembly was put down on".
-      expect(where(manager)[1]).toBeCloseTo(start[1], 6);
-      // The store still holds what the operator placed; the correction is the
-      // same placement where it now is, and is not re-announced.
-      expect(store.anchor?.position[2]).toBeCloseTo(start[2], 3);
+      // Every jump three different sessions actually reported.
+      const reported: Pose[] = [
+        pose(0, 0, 2),
+        pose(-1.172, -0.185, 1.979),        // the 1.19 m relocalisation, 9 Sept
+        pose(0.01, -0.056, 0.804),          // 0.409 m, one tap later
+        pose(0.394, -0.044, 0.777),
+        ...[0.087, 0.114, 0.138, 0.156, 0.259, 0.305]   // the 22 cm climb
+          .map((y) => pose(0.061, y, 0.806)),
+      ];
+      for (const report of reported) {
+        for (let i = 0; i < 20; i++) hook.onAnchorPose?.(report);
+        settle(manager);
+      }
+
+      expect(where(manager)).toEqual(start);
+      expect(facing(manager)).toEqual(heading);
     } finally {
       manager.dispose();
     }
   });
 
-  it('starts measuring afresh at each new placement', async () => {
+  it('is not moved by the app pushing the same anchor back in', async () => {
+    // `setAnchor(store.anchor)` runs on every store change — a step, a
+    // selection, a diagnostic recomputed. It must be a no-op when the pose has
+    // not changed, or the assembly twitches on unrelated interactions.
+    const { manager, store } = await placed();
+    try {
+      const start = where(manager);
+      for (let i = 0; i < 10; i++) manager.setAnchor(store.anchor);
+      expect(where(manager)).toEqual(start);
+    } finally {
+      manager.dispose();
+    }
+  });
+});
+
+describe('the two things that may still move it', () => {
+  it('takes a new pose from the app at once, and keeps it', async () => {
+    // "Move", and a snap onto something recognised, both arrive here. They are
+    // the operator's decision, or evidence about a real object — the two cases
+    // the rule names — and neither is eased into or second-guessed.
     const { manager, hook } = await placed();
     try {
-      hook.onAnchorPose?.(pose(0, 0, 2));
-      hook.onAnchorPose?.(pose(0.5, 0, 2));
-      // A second placement: the old anchor's travel must not be replayed onto it.
+      manager.setAnchor(pose(1, 0.5, 1));
+      expect(where(manager)).toEqual([1, 0.5, 1]);
+
+      // And the platform cannot drag it back off the new spot either.
+      for (const p of [pose(0, 0, 2), pose(0.4, 0, 2), pose(-1.1, 0.3, 3)]) {
+        for (let i = 0; i < 20; i++) hook.onAnchorPose?.(p);
+      }
+      settle(manager);
+      expect(where(manager)).toEqual([1, 0.5, 1]);
+    } finally {
+      manager.dispose();
+    }
+  });
+
+  it('takes a second placement from a tap', async () => {
+    const { manager, hook } = await placed();
+    try {
+      const first = where(manager);
       vi.mocked(performance.now).mockReturnValue(9000);
       manager.setPlacementActive(true);
       vi.mocked(performance.now).mockReturnValue(13000);
       hook.onSelectAnchor?.(pose(0, 0, 3));
-      const start = where(manager);
-      hook.onAnchorPose?.(pose(0.5, 0, 2));
-      settleGlide(manager);
-      expect(where(manager)).toEqual(start);
-      hook.onAnchorPose?.(pose(0.5, 0, 2.0005));
-      settleGlide(manager);
-      expect(where(manager)).toEqual(start);
-    } finally {
-      manager.dispose();
-    }
-  });
-});
-
-describe('the app pushing its own idea of the anchor back in', () => {
-  it('does not undo the platform corrections on an unrelated store change', async () => {
-    // The bug a real device log made visible. The store keeps the pose from the
-    // tap; the platform's corrections move the assembly without announcing
-    // themselves. The app calls `setAnchor(store.anchor)` on *every* store
-    // change — so changing step pushed the tap pose back in and yanked the
-    // assembly back by however far the platform had corrected since. In that
-    // log the gap had reached 0.4 m by the time the operator changed step.
-    const { manager, hook, store } = await placed();
-    try {
-      const start = where(manager);
-      hook.onAnchorPose?.(pose(0, 0, 2));
-      hook.onAnchorPose?.(pose(0.4, 0, 2));
-      settleGlide(manager);
-      expect(where(manager)[0]).toBeCloseTo(start[0] + 0.4, 3);
-
-      // Next step, a part selected, a diagnostic recomputed: the same pose,
-      // pushed in again, as it is on every single store change.
-      manager.setAnchor(store.anchor);
-      manager.setAnchor(store.anchor);
-      expect(where(manager)[0]).toBeCloseTo(start[0] + 0.4, 3);
+      expect(where(manager)).not.toEqual(first);
     } finally {
       manager.dispose();
     }
   });
 
-  it('takes a pose the app really did change, and measures from it', async () => {
-    const { manager, hook } = await placed();
+  it('clears back to the origin when the anchor goes', async () => {
+    const { manager } = await placed();
     try {
-      hook.onAnchorPose?.(pose(0, 0, 2));
-      hook.onAnchorPose?.(pose(0.4, 0, 2));
-
-      // "Bring it here": a genuinely new pose from the app. It lands at once —
-      // the operator asked for it — and abandons any correction in flight.
-      manager.setAnchor(pose(1, 0, 1));
-      expect(where(manager)).toEqual([1, 0, 1]);
-      settleGlide(manager);
-      expect(where(manager)).toEqual([1, 0, 1]);
-
-      // The platform's next reports must move *this* pose, not drag the
-      // assembly back to the spot the operator had already abandoned.
-      hook.onAnchorPose?.(pose(0.4, 0, 2));
-      settleGlide(manager);
-      expect(where(manager)).toEqual([1, 0, 1]);
-      hook.onAnchorPose?.(pose(0.4, 0, 2.5));
-      settleGlide(manager);
-      expect(where(manager)[2]).toBeCloseTo(1.5, 3);
-    } finally {
-      manager.dispose();
-    }
-  });
-});
-
-describe('how a correction arrives', () => {
-  it('follows a relocalisation over a few frames instead of teleporting', async () => {
-    // "When tap and swipe the assembly sometimes hops." A relocalisation is
-    // the platform being right where we were wrong, so the assembly does have
-    // to go — but a metre in one frame reads as a fault, not a correction. A
-    // real device reported exactly that jump: 1.19 m.
-    const { manager, hook } = await placed();
-    try {
-      hook.onAnchorPose?.(pose(0, 0, 2));
-      const start = where(manager);
-      hook.onAnchorPose?.(pose(1.19, 0, 2));
-
-      const first = where(manager)[0] - start[0];
-      expect(first).toBeGreaterThan(0);          // it did set off
-      expect(first).toBeLessThan(0.4);           // and it did not arrive
-      let frames = 0;
-      while (Math.abs(where(manager)[0] - (start[0] + 1.19)) > 0.001 && frames < 200) {
-        manager.scene.render();
-        frames++;
-      }
-      // Visually over well inside half a second at 30 fps, and finished: a
-      // glide that stops a centimetre short is just a slower wrong answer.
-      expect(frames).toBeLessThan(15);
-      expect(where(manager)[0]).toBeCloseTo(start[0] + 1.19, 3);
-    } finally {
-      manager.dispose();
-    }
-  });
-
-  it('lands a correction too small to see in the frame it arrives in', async () => {
-    const { manager, hook } = await placed();
-    try {
-      hook.onAnchorPose?.(pose(0, 0, 2));
-      const start = where(manager);
-      // Three millimetres: over the threshold that discards noise, under
-      // anything an operator could watch happen.
-      hook.onAnchorPose?.(pose(0.003, 0, 2));
-      expect(where(manager)[0]).toBeCloseTo(start[0] + 0.003, 6);
-    } finally {
-      manager.dispose();
-    }
-  });
-});
-
-describe('the floor an assembly was put down on', () => {
-  it('stays the floor, however far the platform thinks the spot has risen', async () => {
-    // Replayed from a real session: over twelve seconds the platform's estimate
-    // of the placed spot climbed from 0.087 m to 0.305 m in a space whose y = 0
-    // is the floor. Followed faithfully, that is a gearbox rising twenty
-    // centimetres off the bench — which no floor ever does.
-    const { manager, hook } = await placed();
-    try {
-      const heights = [0.087, 0.114, 0.115, 0.138, 0.113, 0.156, 0.155, 0.259, 0.305];
-      hook.onAnchorPose?.(pose(0.061, heights[0], 0.806));
-      const start = where(manager);
-      for (const y of heights.slice(1)) {
-        hook.onAnchorPose?.(pose(0.061, y, 0.806));
-        settleGlide(manager);
-      }
-      expect(where(manager)[1]).toBeCloseTo(start[1], 6);
-    } finally {
-      manager.dispose();
-    }
-  });
-
-  it('follows the spot across the floor, and which way it faces', async () => {
-    // What the platform is good at is still followed: where the spot has moved
-    // horizontally, and its heading.
-    const { manager, hook } = await placed();
-    try {
-      hook.onAnchorPose?.(pose(0, 0, 2));
-      const start = where(manager);
-      const turn = Math.sin((30 * Math.PI) / 180 / 2);
-      hook.onAnchorPose?.({
-        position: [0.4, 0.9, 2.3],
-        rotation: [0, turn, 0, Math.cos((30 * Math.PI) / 180 / 2)],
-      });
-      settleGlide(manager);
-      expect(where(manager)[0]).toBeCloseTo(start[0] + 0.4, 3);
-      expect(where(manager)[2]).toBeCloseTo(start[2] + 0.3, 3);
-      expect(where(manager)[1]).toBeCloseTo(start[1], 6);
-      // Level: a placement on the floor does not acquire a tilt from a tracker.
-      const q = manager.scene.getTransformNodeByName('assembly')!.rotationQuaternion!;
-      expect(Math.abs(q.x)).toBeLessThan(1e-6);
-      expect(Math.abs(q.z)).toBeLessThan(1e-6);
+      manager.setAnchor(undefined);
+      expect(where(manager)).toEqual([0, 0, 0]);
     } finally {
       manager.dispose();
     }
