@@ -104,6 +104,34 @@ decimated glTF, with per-part metadata carried through — is what makes this
 usable on anything other than the bundled samples. USDZ falls out of the same
 pipeline and switches on AR Quick Look, which is currently dead code.
 
+**Candidate for the conversion half: [fascat](https://github.com/pavelsimo/fascat)**
+(MIT, Python 3.10+, `pip install fascat`). It reads STEP, IGES, OpenCASCADE BREP
+and JT and writes OpenUSD, glTF/GLB, OBJ, STL and FBX, with the knobs this app
+actually needs: tessellation tolerance (`--sag`, `--angle`, `--max-edge-length`),
+mesh repair, material and UV staging, LOD generation and a triangle budget
+(`--target-triangles`), plus `inspect` for a dry run and `validate` and
+`--turntable-dir` renders to check an output before it ships. That is precisely
+the server-side adapter step the README already describes as an export boundary
+— it runs offline in a build job, never in the viewer.
+
+What it does **not** give us, and what would still have to be written:
+
+- **The manifest.** fascat converts geometry; `AssemblyDef` is occurrence ids
+  that never collapse repeated bolts, `targetPose` in the viewer's left-handed
+  Y-up metres, `sku`/`revision`, `source`, `bounds`. That mapping is ours, and
+  it is where the import validation already has teeth.
+- **Work instructions.** `steps`, `connectors` and tolerances are authored, not
+  derived from a mesh — the rule the README states and this would not change.
+- **USDZ.** fascat writes `.usdc`/`.usda`, not `.usdz`; Quick Look needs one
+  more packaging step (`usdzip`) on top. Cheap, but not free, and the sentence
+  above overstates it slightly today.
+- **A budget we have measured.** The tablet log at 108 parts and 46 steps runs
+  at 25 fps; `--target-triangles` and `--lods` are the levers for that, but the
+  number to give them has to come from a device, not from taste.
+
+Not started, and nothing depends on it yet. The bundled samples stay
+hand-written (`src/data/`) until there is a real export to convert.
+
 ### 5. Rotation while placing
 Dragging translates; a part that goes in the wrong way round can only be fixed
 by the snap solver's own orientation correction. A two-finger rotate, and a
