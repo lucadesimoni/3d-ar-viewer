@@ -7,6 +7,7 @@ import type { IWebXRHitResult } from '@babylonjs/core/XR/features/WebXRHitTest';
 import type { Pose } from '../../engine/types';
 import { createSettleTracker, type TrackingState } from '../../engine/tracking/settle';
 import { logEvent } from '../../diagnostics/log';
+import { isTap } from '../../engine/tracking/tap';
 
 /**
  * Babylon-native WebXR for immersive AR on devices that support it (Android
@@ -241,17 +242,6 @@ export function markXrOverlay(root: HTMLElement): () => void {
  */
 const INTERACTIVE = 'button, a[href], input, select, textarea, label, [role="button"], .ar-sheet, .panel';
 
-/**
- * How far a finger may travel and still be a tap, in CSS pixels.
- *
- * A `select` fires when the touch ends, whatever happened in between — so a
- * swipe across the camera view reached the app as "put it here". Placement is
- * the most consequential gesture in the app and it must not happen by accident.
- * Sixteen pixels is roughly the platform's own slop for a tap.
- */
-export const TAP_TRAVEL_PX = 16;
-/** And how long. Past this it is a press, not a tap. */
-export const TAP_HOLD_MS = 700;
 /** How long after the finger lifts a gesture still explains an arriving select. */
 const GESTURE_GRACE_MS = 600;
 
@@ -298,7 +288,7 @@ export function bindXrPlacement(
     const now = performance.now();
     if (gesture.endedAt !== undefined && now - gesture.endedAt > GESTURE_GRACE_MS) return true;
     const heldMs = (gesture.endedAt ?? now) - gesture.startedAt;
-    if (gesture.travel <= TAP_TRAVEL_PX && heldMs <= TAP_HOLD_MS) return true;
+    if (isTap({ travelPx: gesture.travel, heldMs })) return true;
     logEvent('xr', 'select ignored — a swipe, not a tap', {
       travelPx: Math.round(gesture.travel), heldMs: Math.round(heldMs),
     });

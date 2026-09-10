@@ -147,6 +147,25 @@ const context = await browser.newContext({
   check('and the hint switches to the aim-and-tap wording',
     Boolean(hintWithMotion && !/no motion/i.test(hintWithMotion)), hintWithMotion?.trim());
 
+  // A swipe is not a tap — and this is the only placement an iPhone or iPad in
+  // Safari has, since there is no WebXR there. It used to place on
+  // `pointerdown`, so a swipe put the assembly wherever the finger first
+  // touched and a scroll counted as a decision.
+  // Compared against what was there a moment before, not against nothing: by
+  // now the six-second preview has put the assembly in front of the operator
+  // so the screen is not empty, and that is not a placement.
+  const beforeSwipe = await state(page);
+  await page.mouse.move(195, 600);
+  await page.mouse.down();
+  await page.mouse.move(195, 500, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  const afterSwipe = await state(page);
+  check('a swipe across the view places nothing',
+    afterSwipe.placement === 'awaiting'
+      && JSON.stringify(afterSwipe.anchor) === JSON.stringify(beforeSwipe.anchor),
+    `placement=${afterSwipe.placement}, anchor ${JSON.stringify(beforeSwipe.anchor)} → ${JSON.stringify(afterSwipe.anchor)}`);
+
   // Tap below the horizon: the ray must meet the ground plane.
   await page.mouse.click(195, 640);
   await page.waitForTimeout(800);

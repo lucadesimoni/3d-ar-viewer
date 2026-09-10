@@ -42,6 +42,7 @@ import { STATUS_COLORS, type RecognitionStatus } from '../../vision/verdict';
 import { ASSUMED_CAMERA_FOV_DEG } from '../../engine/tracking/markerTracking';
 import { logEvent } from '../../diagnostics/log';
 import { anchorMoved, distanceBetween, samePose } from './anchorMotion';
+import { isTap } from '../../engine/tracking/tap';
 import {
   cameraIntrinsics,
   type CameraIntrinsics,
@@ -1125,13 +1126,43 @@ export class SceneManager {
     const observer = this.scene.onBeforeRenderObservable.add(
       () => this.setReticle(opts.floorIsGuesswork?.() ? undefined : aim()),
     );
+    // A tap, not a touch.
+    //
+    // This placed on `pointerdown` — the instant the finger landed — which on
+    // an iPhone or iPad is the only placement there is, since Safari has no
+    // WebXR. A swipe across the view put the assembly wherever the finger
+    // first touched, and a scroll gesture counted as a decision. The XR path
+    // learned this from a device report; this one never had it. Same rule,
+    // from the same place: `isTap`.
+    let gesture: { x: number; y: number; startedAt: number } | undefined;
+    const pointer = this.scene.onPointerObservable.add((info) => {
+      if (info.type === PointerEventTypes.POINTERDOWN) {
+        gesture = {
+          x: this.scene.pointerX, y: this.scene.pointerY, startedAt: performance.now(),
+        };
+        return;
+      }
+      if (info.type !== PointerEventTypes.POINTERUP || !gesture) return;
+      const travelPx = Math.hypot(
+        this.scene.pointerX - gesture.x, this.scene.pointerY - gesture.y,
+      );
+      const heldMs = performance.now() - gesture.startedAt;
+      gesture = undefined;
+      if (!isTap({ travelPx, heldMs })) {
+        logEvent('place', 'a swipe, not a tap — nothing placed', {
+          travelPx: Math.round(travelPx), heldMs: Math.round(heldMs),
+        });
+        return;
+      }
+      place();
+    });
     const stop = (): void => {
       this.scene.onBeforeRenderObservable.remove(observer);
-      this.scene.onPointerDown = undefined;
+      this.scene.onPointerObservable.remove(pointer);
       this.placementActive = false;
       this.setReticle(undefined);
     };
-    this.scene.onPointerDown = () => {
+    const place = (): void => {
       if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) return;
       // Place where they tapped, falling back to the reticle if the tap missed
       // the floor plane (above the horizon), and to a spot straight ahead when

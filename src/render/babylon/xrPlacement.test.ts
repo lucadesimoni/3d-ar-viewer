@@ -4,13 +4,8 @@ import { Scene } from '@babylonjs/core/scene';
 import { Observable } from '@babylonjs/core/Misc/observable';
 import { Matrix } from '@babylonjs/core/Maths/math.vector';
 import { WebXRState } from '@babylonjs/core/XR/webXRTypes';
-import {
-  PENDING_TAP_MS,
-  TAP_TRAVEL_PX,
-  XR_OVERLAY_CLASS,
-  bindXrPlacement,
-  prepareImmersiveAr,
-} from './xr';
+import { PENDING_TAP_MS, XR_OVERLAY_CLASS, bindXrPlacement, prepareImmersiveAr } from './xr';
+import { TAP_TRAVEL_PX } from '../../engine/tracking/tap';
 import { SETTLE_FRAMES, SETTLE_TIMEOUT_MS } from '../../engine/tracking/settle';
 import { clearLog, logEntries } from '../../diagnostics/log';
 
