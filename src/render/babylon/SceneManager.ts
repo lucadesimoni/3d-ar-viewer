@@ -355,6 +355,8 @@ export class SceneManager {
   private storeAnchor: Pose | undefined;
   /** Where a platform correction is taking the assembly, while it gets there. */
   private anchorTarget: Pose | undefined;
+  /** The height the operator placed it at — the one thing they did decide. */
+  private anchorPlacedY = 0;
   /**
    * The camera calibration the platform handed over, if it ever did.
    *
@@ -1108,6 +1110,23 @@ export class SceneManager {
     const position = new Vector3();
     const rotation = new Quaternion();
     if (!moved.decompose(undefined, rotation, position)) return;
+    // An assembly put down on the floor stays on the floor.
+    //
+    // Over twelve seconds of one recorded session the platform's estimate of
+    // the placed spot climbed from 0.087 m to 0.305 m in a space whose y = 0
+    // *is* the floor — a gearbox slowly rising twenty centimetres off it,
+    // which no floor ever does. The horizontal estimate is worth following;
+    // the vertical one, from a placement made on a surface the operator
+    // pointed at, is the platform being unsure about the one thing it was
+    // told. So the height and the levelness of the placement are kept, and
+    // what is followed is where the spot has moved *across* the floor and
+    // which way it now faces.
+    position.y = this.anchorPlacedY;
+    const yaw = Math.atan2(
+      2 * (rotation.w * rotation.y + rotation.x * rotation.z),
+      1 - 2 * (rotation.y * rotation.y + rotation.z * rotation.z),
+    );
+    Quaternion.RotationAxisToRef(Vector3.Up(), yaw, rotation);
     // `glideAnchor`, not `setAnchor`: this is the same placement where it now
     // is, not a new one, and putting it through the public entry would re-base
     // the very anchor it came from.
@@ -1370,6 +1389,7 @@ export class SceneManager {
           this.anchorOrigin = undefined;
           this.anchorApplied = undefined;
           this.anchorPlaced = poseMatrix(placed);
+          this.anchorPlacedY = placed.position[1];
           callbacks.onPlace(placed);
           this.setPlacementActive(false);
         },
