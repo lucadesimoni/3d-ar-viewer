@@ -86,8 +86,9 @@ describe('following the platform without shaking on its noise', () => {
       expect(where(manager)[0]).not.toBeCloseTo(start[0] - 1.04, 2);
       settleGlide(manager);
       expect(where(manager)[0]).toBeCloseTo(start[0] - 1.04, 3);
-      expect(where(manager)[1]).toBeCloseTo(start[1] + 0.596, 3);
       expect(where(manager)[2]).toBeCloseTo(start[2] + 0.382, 3);
+      // The height is not followed — see "the floor an assembly was put down on".
+      expect(where(manager)[1]).toBeCloseTo(start[1], 6);
       // The store still holds what the operator placed; the correction is the
       // same placement where it now is, and is not re-announced.
       expect(store.anchor?.position[2]).toBeCloseTo(start[2], 3);
@@ -210,6 +211,53 @@ describe('how a correction arrives', () => {
       // anything an operator could watch happen.
       hook.onAnchorPose?.(pose(0.003, 0, 2));
       expect(where(manager)[0]).toBeCloseTo(start[0] + 0.003, 6);
+    } finally {
+      manager.dispose();
+    }
+  });
+});
+
+describe('the floor an assembly was put down on', () => {
+  it('stays the floor, however far the platform thinks the spot has risen', async () => {
+    // Replayed from a real session: over twelve seconds the platform's estimate
+    // of the placed spot climbed from 0.087 m to 0.305 m in a space whose y = 0
+    // is the floor. Followed faithfully, that is a gearbox rising twenty
+    // centimetres off the bench — which no floor ever does.
+    const { manager, hook } = await placed();
+    try {
+      const heights = [0.087, 0.114, 0.115, 0.138, 0.113, 0.156, 0.155, 0.259, 0.305];
+      hook.onAnchorPose?.(pose(0.061, heights[0], 0.806));
+      const start = where(manager);
+      for (const y of heights.slice(1)) {
+        hook.onAnchorPose?.(pose(0.061, y, 0.806));
+        settleGlide(manager);
+      }
+      expect(where(manager)[1]).toBeCloseTo(start[1], 6);
+    } finally {
+      manager.dispose();
+    }
+  });
+
+  it('follows the spot across the floor, and which way it faces', async () => {
+    // What the platform is good at is still followed: where the spot has moved
+    // horizontally, and its heading.
+    const { manager, hook } = await placed();
+    try {
+      hook.onAnchorPose?.(pose(0, 0, 2));
+      const start = where(manager);
+      const turn = Math.sin((30 * Math.PI) / 180 / 2);
+      hook.onAnchorPose?.({
+        position: [0.4, 0.9, 2.3],
+        rotation: [0, turn, 0, Math.cos((30 * Math.PI) / 180 / 2)],
+      });
+      settleGlide(manager);
+      expect(where(manager)[0]).toBeCloseTo(start[0] + 0.4, 3);
+      expect(where(manager)[2]).toBeCloseTo(start[2] + 0.3, 3);
+      expect(where(manager)[1]).toBeCloseTo(start[1], 6);
+      // Level: a placement on the floor does not acquire a tilt from a tracker.
+      const q = manager.scene.getTransformNodeByName('assembly')!.rotationQuaternion!;
+      expect(Math.abs(q.x)).toBeLessThan(1e-6);
+      expect(Math.abs(q.z)).toBeLessThan(1e-6);
     } finally {
       manager.dispose();
     }
