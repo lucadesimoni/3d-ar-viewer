@@ -146,12 +146,30 @@ await page.screenshot({ path: '/tmp/place-check.png' });
   const statusOf = (id) => page.evaluate(
     (partId) => window.spatialStore.getState().placements.get(partId)?.status, id,
   );
+  /** The stored pose — in the assembly's own frame, which is where it lives. */
+  const poseOf = (id) => page.evaluate(
+    (partId) => window.spatialStore.getState().placements.get(partId)?.pose.position, id,
+  );
   const drag = async (from, dx, dy) => {
     await page.mouse.move(from.x, from.y);
     await page.mouse.down();
     await page.mouse.move(from.x + dx, from.y + dy, { steps: 12 });
     await page.mouse.up();
     await page.waitForTimeout(300);
+  };
+  /** The stored pose with the finger still down — before the snap on release. */
+  const poseMidDrag = async (from, dx, dy) => {
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + dx, from.y + dy, { steps: 12 });
+    await page.waitForTimeout(150);
+    const pose = await poseOf(await page.evaluate(() => {
+      const st = window.spatialStore.getState();
+      return st.assembly.steps.find((s) => s.id === st.activeStepId).partIds[0];
+    }));
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+    return pose;
   };
 
   // A part belonging to a step that is not the active one.
@@ -226,6 +244,69 @@ await page.screenshot({ path: '/tmp/place-check.png' });
     (await statusOf(playing)) === beforeAnim,
     `${playing} stayed ${await statusOf(playing)}`);
   await page.evaluate(() => window.spatialStore.getState().setAnimation(undefined, 0));
+
+  // The exploded view is the same trap as a running timeline: what is drawn is
+  // the base pose plus an explosion offset, so a drag that starts from the
+  // drawn position and writes it back as the base one makes the part jump by
+  // exactly that offset — and records a position nobody chose.
+  await page.evaluate(() => window.spatialStore.getState().reset());
+  await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    const st = window.spatialStore.getState();
+    st.setViewMode('explode');
+    st.setExplodeFactor(1.2);
+  });
+  await page.waitForTimeout(600);
+  // A part that is actually reachable with the assembly blown apart. The first
+  // step's plate is buried under the housing even exploded, and a drag that
+  // lands on another part is refused for a reason that has nothing to do with
+  // what this is testing — which is how the first version of this check passed
+  // with its own fix taken out.
+  let explodedPart;
+  let explodedAt;
+  for (const stepId of await page.evaluate(
+    () => window.spatialStore.getState().assembly.steps.map((x) => x.id),
+  )) {
+    await page.evaluate((id) => window.spatialStore.getState().setActiveStep(id), stepId);
+    await page.waitForTimeout(350);
+    const candidate = await page.evaluate((id) => window.spatialStore.getState()
+      .assembly.steps.find((s) => s.id === id).partIds[0], stepId);
+    const at = await canvasPoint(candidate);
+    if (at?.exposed) { explodedPart = candidate; explodedAt = at; break; }
+  }
+  check('a part of the active step is reachable in the exploded view',
+    Boolean(explodedAt?.exposed), explodedPart ?? 'none exposed');
+  const beforeExplode = explodedPart ? await poseOf(explodedPart) : undefined;
+  // Read while the finger is still down. On release the snap solver seats the
+  // part on its joint, which would hide any drag under a correct final pose.
+  const duringExplode = explodedAt ? await poseMidDrag(explodedAt, 60, 40) : beforeExplode;
+  check('nothing is dragged while the view is exploded',
+    JSON.stringify(beforeExplode) === JSON.stringify(duringExplode),
+    `${explodedPart}: ${JSON.stringify(beforeExplode)} → ${JSON.stringify(duringExplode)}, at ${JSON.stringify(explodedAt)}`);
+
+  // And with the assembly anchored and turned — which is every AR session —
+  // a drag has to move the part the way the finger went. A part's pose is
+  // local to the assembly root and the picking ray is in world space, so
+  // subtracting one from the other only ever worked at the origin, unturned.
+  await page.evaluate(() => {
+    const st = window.spatialStore.getState();
+    st.setViewMode('guide');
+    st.setExplodeFactor(0);
+    // Half a turn about the vertical: now local +X points along world −X.
+    st.setAnchor({ position: [0, 0, 0], rotation: [0, 1, 0, 0] }, 0.9, 'floor');
+  });
+  await page.waitForTimeout(500);
+  const turnedPart = await page.evaluate(() => {
+    const st = window.spatialStore.getState();
+    return st.assembly.steps.find((s) => s.id === st.activeStepId).partIds[0];
+  });
+  const turnedAt = await canvasPoint(turnedPart);
+  const beforeTurn = await poseOf(turnedPart);
+  const duringTurn = turnedAt ? await poseMidDrag(turnedAt, 80, 0) : beforeTurn;
+  const movedLocalX = duringTurn && beforeTurn ? duringTurn[0] - beforeTurn[0] : 0;
+  check('a drag on a turned assembly moves the part the way the finger went',
+    turnedAt !== undefined && movedLocalX < -0.005,
+    `local x moved by ${movedLocalX.toFixed(3)} m, from ${JSON.stringify(turnedAt)} (dragging right, assembly turned 180°)`);
   await page.close();
 }
 

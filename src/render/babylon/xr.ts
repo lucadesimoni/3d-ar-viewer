@@ -231,11 +231,69 @@ export function markXrOverlay(root: HTMLElement): () => void {
  */
 const INTERACTIVE = 'button, a[href], input, select, textarea, label, [role="button"], .ar-sheet, .panel';
 
+/**
+ * How far a finger may travel and still be a tap, in CSS pixels.
+ *
+ * A `select` fires when the touch ends, whatever happened in between — so a
+ * swipe across the camera view reached the app as "put it here". Placement is
+ * the most consequential gesture in the app and it must not happen by accident.
+ * Sixteen pixels is roughly the platform's own slop for a tap.
+ */
+export const TAP_TRAVEL_PX = 16;
+/** And how long. Past this it is a press, not a tap. */
+export const TAP_HOLD_MS = 700;
+/** How long after the finger lifts a gesture still explains an arriving select. */
+const GESTURE_GRACE_MS = 600;
+
 export function bindXrPlacement(
   session: Pick<XRSession, 'addEventListener' | 'removeEventListener'>,
   overlayRoot: HTMLElement,
   onSelect: () => void,
 ): () => void {
+  /**
+   * The finger's own account of the gesture the session is about to call a tap.
+   *
+   * `select` says a touch ended; it says nothing about whether it moved. The
+   * DOM pointer events on the overlay do, and the overlay is composited by the
+   * session anyway. Read at `select` time rather than at `pointerup`, because
+   * the order of the two is not guaranteed and a rule that depends on it would
+   * work on one device and not the next.
+   */
+  // `endedAt` is undefined until the finger lifts, never zero: `performance.now()`
+  // is zero at load, and a falsy test here would read a gesture that ended at
+  // the very start of the session as one still in progress. The same slip cost
+  // `settle.ts` its timeout once already.
+  let gesture: { travel: number; startedAt: number; endedAt?: number } | undefined;
+  const from = { x: 0, y: 0 };
+  const down = (event: PointerEvent): void => {
+    from.x = event.clientX;
+    from.y = event.clientY;
+    gesture = { travel: 0, startedAt: performance.now() };
+  };
+  const move = (event: PointerEvent): void => {
+    if (!gesture || gesture.endedAt !== undefined) return;
+    gesture.travel = Math.max(gesture.travel, Math.hypot(event.clientX - from.x, event.clientY - from.y));
+  };
+  const up = (): void => {
+    if (gesture && gesture.endedAt === undefined) gesture.endedAt = performance.now();
+  };
+  overlayRoot.addEventListener('pointerdown', down);
+  overlayRoot.addEventListener('pointermove', move);
+  overlayRoot.addEventListener('pointerup', up);
+  overlayRoot.addEventListener('pointercancel', up);
+
+  /** A tap, as far as the finger is concerned. Nothing known means yes. */
+  const wasTap = (): boolean => {
+    if (!gesture) return true;   // no pointer events in this host: fail open
+    const now = performance.now();
+    if (gesture.endedAt !== undefined && now - gesture.endedAt > GESTURE_GRACE_MS) return true;
+    const heldMs = (gesture.endedAt ?? now) - gesture.startedAt;
+    if (gesture.travel <= TAP_TRAVEL_PX && heldMs <= TAP_HOLD_MS) return true;
+    logEvent('xr', 'select ignored — a swipe, not a tap', {
+      travelPx: Math.round(gesture.travel), heldMs: Math.round(heldMs),
+    });
+    return false;
+  };
   // DOM controls still receive their normal clicks, but must not also place
   // the assembly through the touchscreen's XR input source.
   //
@@ -253,11 +311,16 @@ export function bindXrPlacement(
     const target = event.target;
     if (target instanceof Element && target.closest(INTERACTIVE)) event.preventDefault();
   };
-  session.addEventListener('select', onSelect);
+  const select = (): void => { if (wasTap()) onSelect(); };
+  session.addEventListener('select', select);
   overlayRoot.addEventListener('beforexrselect', beforeSelect);
   return () => {
-    session.removeEventListener('select', onSelect);
+    session.removeEventListener('select', select);
     overlayRoot.removeEventListener('beforexrselect', beforeSelect);
+    overlayRoot.removeEventListener('pointerdown', down);
+    overlayRoot.removeEventListener('pointermove', move);
+    overlayRoot.removeEventListener('pointerup', up);
+    overlayRoot.removeEventListener('pointercancel', up);
   };
 }
 
