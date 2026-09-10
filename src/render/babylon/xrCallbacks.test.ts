@@ -303,3 +303,51 @@ describe('going back into AR after leaving it', () => {
     }
   });
 });
+
+describe('a reticle when the platform has no surface to offer', () => {
+  it('aims at the floor the reference space defines', async () => {
+    // The other half of refusing a hit reported metres underground: without a
+    // fallback the operator gets no ring and nothing to tap in a room the
+    // tracker cannot read. In a `local-floor` session the floor is at y = 0 by
+    // definition, so this is not the camera path's assumed plane — it is the
+    // one number the space guarantees.
+    const hooks: XrHooks[] = [];
+    prepare.mockImplementation(async (_s: Scene, _o: HTMLElement, callbacks: XrHooks) => {
+      hooks.push(callbacks);
+      return { enter: async () => ({ end: vi.fn(async () => {}) }), dispose: vi.fn() };
+    });
+    const m = new SceneManager(document.createElement('canvas'), gearbox, {}, {
+      engine: new NullEngine(), kind: 'webgl',
+      perf: { tier: 'low', antialias: false, adaptive: false, maxPixelRatio: 1, targetFps: 30, recognitionIntervalMs: 1000 },
+    });
+    try {
+      await m.prepareWebXr({ onPlace: vi.fn(), onEnd: vi.fn() });
+      await m.startWebXr(vi.fn(), vi.fn());
+      const hook = hooks[hooks.length - 1];
+      hook.onStateChange?.(true);
+      m.setArMode(true);
+      m.setPlacementActive(true);
+      // The camera a metre up, looking down at the floor ahead.
+      const cam = m.scene.activeCamera!;
+      cam.position.set(0, 1.1, 0);
+      (cam as unknown as { setTarget: (t: unknown) => void }).setTarget(
+        new (cam.position.constructor as new (x: number, y: number, z: number) => unknown)(0, 0, 2),
+      );
+      m.scene.updateTransformMatrix();
+
+      hook.onReticle?.(undefined);
+      const ring = m.scene.getMeshByName('ar-reticle');
+      expect(ring?.isEnabled()).toBe(true);
+      // On the floor the space defines, not at some assumed depth.
+      expect(ring!.position.y).toBeCloseTo(0, 2);
+      expect(ring!.position.z).toBeGreaterThan(0);
+
+      // And gone the moment placement is not armed, whatever arrives.
+      m.setPlacementActive(false);
+      hook.onReticle?.(undefined);
+      expect(m.scene.getMeshByName('ar-reticle')?.isEnabled()).toBe(false);
+    } finally {
+      m.dispose();
+    }
+  });
+});

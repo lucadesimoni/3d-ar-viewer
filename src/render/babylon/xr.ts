@@ -135,6 +135,16 @@ const noteXrError = (stage: string, err: unknown): undefined => {
 const FIRST_FRAME_TIMEOUT_MS = 8000;
 
 /**
+ * How far below the reference floor a hit may still be a floor, metres.
+ *
+ * Generous: a real floor is uneven and the platform's own floor estimate is
+ * worth a few centimetres of doubt. What it excludes is the metres.
+ */
+export const FLOOR_TOLERANCE_M = 0.35;
+/** One line is enough to say the room is producing nonsense, ms. */
+const IMPOSSIBLE_HIT_LOG_MS = 5000;
+
+/**
  * How long a tap taken too early stays worth honouring, ms.
  *
  * Long enough to cover the couple of seconds a platform usually needs once a
@@ -391,6 +401,15 @@ export async function prepareImmersiveAr(
   /** A tap taken while the floor was still being found, waiting to be honoured. */
   let pendingTapAtMs = 0;
   /**
+   * Throttle for the "that is not a floor" line.
+   *
+   * Undefined, not zero: `performance.now()` counts from page load, so a zero
+   * here means "logged at load" and swallows every message in the first five
+   * seconds — which is exactly when a session starts. The same slip has now
+   * cost `settle.ts` its timeout and `bindXrPlacement` its stale-gesture rule.
+   */
+  let impossibleHitLoggedAtMs: number | undefined;
+  /**
    * Put the assembly here, and ask the platform to hold the spot.
    *
    * One path, whether the tap was acted on at once or held for a moment while
@@ -434,7 +453,26 @@ export async function prepareImmersiveAr(
 
     hitTest.onHitTestResultObservable.add((results) => {
       const first = results[0];
-      if (!first) {
+      // A surface below the floor is not a surface.
+      //
+      // In a `local-floor` session y = 0 is the floor, and a device log has
+      // three floor placements at −0.47, −2.92 and +0.05 with the phone held
+      // around a metre up. Two of the three were metres underground, and the
+      // anchors made on them then wandered by as much as 4.2 m, because they
+      // were pinned to nothing. The third, the one at +0.05, was the floor.
+      // The platform is entitled to be unsure; it is not entitled to be
+      // believed about a floor beneath the floor.
+      const below = Boolean(first) && referenceSpace === 'local-floor'
+        && first.position.y < -FLOOR_TOLERANCE_M;
+      if (below && (impossibleHitLoggedAtMs === undefined
+        || performance.now() - impossibleHitLoggedAtMs > IMPOSSIBLE_HIT_LOG_MS)) {
+        impossibleHitLoggedAtMs = performance.now();
+        logEvent('xr', 'hit-test result below the floor, refused', {
+          y: Number(first.position.y.toFixed(3)),
+          toleranceM: FLOOR_TOLERANCE_M,
+        });
+      }
+      if (!first || below) {
         reticle = undefined;
         lastHit = undefined;
         hooks.onReticle?.(undefined);
