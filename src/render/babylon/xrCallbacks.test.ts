@@ -213,18 +213,15 @@ describe('an anchored assembly when the operator walks around it', () => {
       hooks.onAnchorPose!(surface);
       expect(yawOf(m)).toBeCloseTo(placed, 4);
 
-      // A real correction, though, has to be followed: the same spot, found to
-      // be 5 cm further on and turned by ten degrees.
+      // Nor by the platform deciding the spot is five centimetres further on
+      // and turned by ten degrees. It used to follow that; the operator's rule
+      // is that a placement stands until they move it. See `anchorFollow`.
       const turned = Math.sin((10 * Math.PI) / 180 / 2);
       hooks.onAnchorPose!({ position: [0.05, 0, 2], rotation: [0, turned, 0, Math.cos((10 * Math.PI) / 180 / 2)] });
-      // A correction is followed over a few frames rather than teleported to,
-      // so let the picture catch up before reading the heading off it.
       for (let i = 0; i < 40; i++) m.scene.render();
-      // Compared as an angle: 188° and −172° are the same heading.
-      const turnedBy = ((yawOf(m) - placed + 540) % 360) - 180;
-      expect(turnedBy).toBeCloseTo(10, 2);
+      expect(yawOf(m)).toBeCloseTo(placed, 4);
       const root = m.scene.getTransformNodeByName('assembly')!;
-      expect(root.position.x).not.toBeCloseTo(0, 3);
+      expect(root.position.x).toBeCloseTo(0, 6);
     } finally {
       m.dispose();
     }

@@ -57,7 +57,6 @@ import {
   buildMesh,
   makeMaterial,
   makeOverlayMaterial,
-  poseMatrix,
 } from './meshFactory';
 
 /** How often to check that the render loop is still producing frames, ms. */
@@ -97,18 +96,6 @@ const PLACEMENT_ARM_DELAY_MS = 350;
 const XR_PREPARE_WAIT_MS = 2000;
 /** The window the frame rate is averaged over, ms. Long enough to be steady. */
 const FPS_WINDOW_MS = 500;
-/** Share of the remaining gap a glide closes each frame. */
-const ANCHOR_GLIDE_RATE = 0.25;
-/** And at least this far, so the last centimetres do not crawl. */
-const ANCHOR_GLIDE_FLOOR_M = 0.04;
-/**
- * Close enough to be there.
- *
- * Also the line between a correction that is followed and one that simply
- * happens: anything under five millimetres arrives in the frame it is reported
- * in, which is every correction the operator was never going to see anyway.
- */
-const ANCHOR_GLIDE_SNAP_M = 0.005;
 /** An anchor correction this big is something the operator can see happen. */
 const VISIBLE_CORRECTION_M = 0.02;
 /** How often anchor corrections are worth a log line, ms. */
@@ -258,7 +245,6 @@ export class SceneManager {
     // the three possible reasons it is.
     this.startRenderLoop();
     this.watchdog = window.setInterval(this.checkRenderLoop, WATCHDOG_INTERVAL_MS);
-    this.scene.onBeforeRenderObservable.add(() => this.stepAnchorGlide());
     // WebGL contexts are lost on a phone far more readily than on a desktop:
     // memory pressure, the camera claiming GPU resources, the tab going to the
     // background. A lost context renders nothing, silently, for ever.
@@ -342,21 +328,10 @@ export class SceneManager {
   private xrInUse: (import('./xr').XrPrepared & {
     callbacks: { onPlace: (pose: Pose) => void; onEnd?: () => void };
   }) | undefined;
-  /**
-   * Where the platform's anchor was when the operator placed, and what they
-   * placed — so a correction can be applied as a *motion* rather than a fresh
-   * placement. See `followAnchor`.
-   */
-  private anchorOrigin: Matrix | undefined;
-  private anchorPlaced: Matrix | undefined;
   /** The last report we actually moved to — what a new one is measured against. */
   private anchorApplied: Pose | undefined;
   /** The last pose the *app* asked for, so a repeat of it changes nothing. */
   private storeAnchor: Pose | undefined;
-  /** Where a platform correction is taking the assembly, while it gets there. */
-  private anchorTarget: Pose | undefined;
-  /** The height the operator placed it at — the one thing they did decide. */
-  private anchorPlacedY = 0;
   /**
    * The camera calibration the platform handed over, if it ever did.
    *
@@ -1044,96 +1019,61 @@ export class SceneManager {
   }
 
   /**
-   * Follow the platform's correction to the placed spot.
+   * Watch what the platform says about the placed spot, and do nothing about it.
    *
-   * The anchor tells us where that spot really is now, and the assembly has to
-   * make the same move — not be placed again. My first version ran each update
-   * back through `placementPose`, which turns the assembly to face wherever the
-   * operator is standing: correct once, at the tap, and wrong every time after.
-   * Walking around a placed gearbox made it rotate to keep facing you, which is
-   * the one thing an anchored object must never do.
+   * The assembly used to move with it. That is what an anchor is for — the
+   * platform holds a real spot in the room and carries it along as it learns
+   * the room better — and it is why this was built. Five sessions of device
+   * logs say the trade is bad. The platform re-estimates that spot after every
+   * single touch of the screen, sixty to seventy milliseconds later, by two
+   * to forty centimetres: thirteen taps in one session, thirteen moves. From
+   * the operator's side that is indistinguishable from "every tap repositions
+   * it", because it is exactly that.
    *
-   * So: take the rigid motion that carried the anchor from where it was to
-   * where it is, and apply that same motion to what was placed. The first
-   * report establishes "where it was" — Babylon's anchor frame need not agree
-   * with the hit-test result it was made from, and a difference there would be
-   * indistinguishable from a correction.
+   * So the rule is theirs, and it is the simple one: placed is placed. Only
+   * "Move" and a snap onto something recognised may move an assembly, and both
+   * go through `setAnchor`, not through here.
+   *
+   * What is still reported stays reported. The size of every declined
+   * correction goes in the log, so the case this defended against — the whole
+   * reference space being re-based, where standing still means drifting off
+   * the bench — would show up as a large sustained move that the assembly did
+   * not take, and following can come back on that evidence.
    */
   private followAnchor(pose: Pose): void {
-    const now = poseMatrix(pose);
-    if (!this.anchorOrigin) { this.anchorOrigin = now; this.anchorApplied = pose; return; }
-    if (!this.anchorPlaced) return;
+    if (!this.anchorApplied) { this.anchorApplied = pose; return; }
     this.anchorCorrections++;
-    // Most reports say the anchor is exactly where it already was. Acting on
-    // those costs a full placement write thirty times a second and gives the
-    // display a tremble it has no reason to have.
-    if (this.anchorApplied && !anchorMoved(this.anchorApplied, pose)) return;
-    // A correction big enough for the operator to see gets its own line, with
-    // how far it moved. "It hops when I tap and swipe" has two candidate
-    // causes — an accidental placement and the platform relocalising — and a
-    // count every five seconds tells them apart in neither direction.
-    const correctedBy = this.anchorApplied
-      ? distanceBetween(this.anchorApplied.position, pose.position)
-      : 0;
+    if (!anchorMoved(this.anchorApplied, pose)) return;
+    const correctedBy = distanceBetween(this.anchorApplied.position, pose.position);
     if (correctedBy >= VISIBLE_CORRECTION_M) {
-      // The range from the camera to the anchor, before and after. It settled
-      // what these corrections are: a pure re-base of the room would move the
-      // camera by the same rigid motion and leave the range untouched, and on
-      // a real device it changes by a third to three quarters of the whole
-      // correction. So the platform is re-estimating *this spot* relative to
-      // the operator, and what they see is the assembly genuinely moving.
+      // What was declined, and how big it was. The platform goes on reporting;
+      // the file goes on saying so. If a session ever shows a large, sustained
+      // move that the assembly should have taken — the room being recognised
+      // and the whole space re-based — it will be in here, and following can
+      // come back on that evidence rather than on my reasoning about it.
       const eye = (this.scene.activeCamera ?? this.camera).position;
       const range = (p: Pose): number => Vector3.Distance(
         eye, new Vector3(p.position[0], p.position[1], p.position[2]),
       );
       logEvent('place', 'the platform moved the anchor', {
         byM: Number(correctedBy.toFixed(3)),
-        rangeBeforeM: this.anchorApplied ? Number(range(this.anchorApplied).toFixed(3)) : -1,
+        rangeBeforeM: Number(range(this.anchorApplied).toFixed(3)),
         rangeAfterM: Number(range(pose).toFixed(3)),
         at: pose.position.map((v) => Number(v.toFixed(3))),
+        followed: false,
       });
     }
     this.anchorApplied = pose;
     this.anchorApplications++;
-    // Throttled: a correction a frame would drown the log it is meant to explain,
-    // and what matters is that they happen and roughly how far they move things.
+    // Throttled: a report a frame would drown the log it is meant to explain.
     if (performance.now() - this.anchorLoggedAtMs > ANCHOR_LOG_INTERVAL_MS) {
       this.anchorLoggedAtMs = performance.now();
-      logEvent('place', 'anchor corrected by the platform', {
+      logEvent('place', 'anchor corrections declined', {
         corrections: this.anchorCorrections,
-        applied: this.anchorApplications,
+        overThreshold: this.anchorApplications,
         at: pose.position.map((v) => Number(v.toFixed(3))),
       });
     }
-    const motion = Matrix.Invert(this.anchorOrigin).multiply(now);
-    const moved = this.anchorPlaced.multiply(motion);
-    const position = new Vector3();
-    const rotation = new Quaternion();
-    if (!moved.decompose(undefined, rotation, position)) return;
-    // An assembly put down on the floor stays on the floor.
-    //
-    // Over twelve seconds of one recorded session the platform's estimate of
-    // the placed spot climbed from 0.087 m to 0.305 m in a space whose y = 0
-    // *is* the floor — a gearbox slowly rising twenty centimetres off it,
-    // which no floor ever does. The horizontal estimate is worth following;
-    // the vertical one, from a placement made on a surface the operator
-    // pointed at, is the platform being unsure about the one thing it was
-    // told. So the height and the levelness of the placement are kept, and
-    // what is followed is where the spot has moved *across* the floor and
-    // which way it now faces.
-    position.y = this.anchorPlacedY;
-    const yaw = Math.atan2(
-      2 * (rotation.w * rotation.y + rotation.x * rotation.z),
-      1 - 2 * (rotation.y * rotation.y + rotation.z * rotation.z),
-    );
-    Quaternion.RotationAxisToRef(Vector3.Up(), yaw, rotation);
-    // `glideAnchor`, not `setAnchor`: this is the same placement where it now
-    // is, not a new one, and putting it through the public entry would re-base
-    // the very anchor it came from.
-    this.glideAnchor({
-      position: [position.x, position.y, position.z],
-      rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
-    });
   }
 
   /**
@@ -1382,14 +1322,9 @@ export class SceneManager {
             cameraY: Number((this.scene.activeCamera ?? this.camera).position.y.toFixed(3)),
           });
           const placed = this.placementPose(pose);
-          // Remember what was placed, so later anchor corrections move it
-          // instead of re-deciding it. `placementPose` turns the assembly to
-          // face wherever the operator is standing, which is exactly right
-          // once and exactly wrong every time after.
-          this.anchorOrigin = undefined;
+          // A fresh placement: the platform's reports are measured from here
+          // again, so the log says how far it has moved *since this tap*.
           this.anchorApplied = undefined;
-          this.anchorPlaced = poseMatrix(placed);
-          this.anchorPlacedY = placed.position[1];
           callbacks.onPlace(placed);
           this.setPlacementActive(false);
         },
@@ -1627,70 +1562,10 @@ export class SceneManager {
       return;
     }
     this.storeAnchor = pose ? clonePose(pose) : undefined;
-    // The app has moved it, so the platform's anchor no longer describes where
-    // it is. Re-base: the next report establishes a fresh origin and corrections
-    // move *this* pose from here on, and any correction still on its way is
-    // abandoned rather than allowed to drag the new placement back.
-    this.anchorTarget = undefined;
-    this.anchorOrigin = undefined;
+    // The app has moved it — "Move", or a snap onto something recognised —
+    // so the platform's reports are measured from here again.
     this.anchorApplied = undefined;
-    this.anchorPlaced = pose ? poseMatrix(pose) : undefined;
     this.applyAnchor(pose);
-  }
-
-  /**
-   * Follow a correction to it, rather than teleporting to it.
-   *
-   * I took this out once, reasoning that an anchor report is mostly the
-   * platform re-basing the whole room and the assembly must move with it in
-   * the same frame to stay still on the bench. The device disagreed twice
-   * over: the operator said it got much worse without it, and the range from
-   * the camera to the anchor — logged for exactly this question — changes by
-   * a third to three quarters of each correction. A rigid re-base would leave
-   * it untouched. So these are re-estimates of one spot relative to the
-   * operator, the assembly really does move, and easing that is damping a
-   * jittering estimate rather than delaying a compensation.
-   *
-   * A small correction still lands in the first step, because the first step
-   * is longer than the correction.
-   */
-  private glideAnchor(pose: Pose): void {
-    this.anchorTarget = pose;
-    this.stepAnchorGlide();
-  }
-
-  /**
-   * One step of the glide, driven by the scene's own frame.
-   *
-   * On `onBeforeRenderObservable` rather than inside this manager's own render
-   * call, so it advances with whatever is actually drawing — including the XR
-   * loop, which Babylon drives, and a scene rendered directly, as a test does.
-   */
-  private stepAnchorGlide(): void {
-    const target = this.anchorTarget;
-    if (!target) return;
-    const here = this.assemblyRoot.position;
-    const to = new Vector3(target.position[0], target.position[1], target.position[2]);
-    const gap = Vector3.Distance(here, to);
-    if (gap <= ANCHOR_GLIDE_SNAP_M) {
-      this.anchorTarget = undefined;
-      this.applyAnchor(target);
-      return;
-    }
-    // Proportional, with a floor. Proportional alone has a tail that goes on
-    // for a second after the move is visually over; the floor closes the last
-    // few centimetres at a steady pace instead of asymptotically.
-    const step = Math.min(1, Math.max(ANCHOR_GLIDE_RATE, ANCHOR_GLIDE_FLOOR_M / gap));
-    const eased = Vector3.Lerp(here, to, step);
-    const turned = Quaternion.Slerp(
-      this.assemblyRoot.rotationQuaternion ?? Quaternion.Identity(),
-      new Quaternion(...target.rotation),
-      step,
-    );
-    this.applyAnchor({
-      position: [eased.x, eased.y, eased.z],
-      rotation: [turned.x, turned.y, turned.z, turned.w],
-    });
   }
 
   /** Move the assembly, without treating the move as a new placement. */
