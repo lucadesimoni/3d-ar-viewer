@@ -29,6 +29,8 @@ interface Tag {
 /** Minimum gap between two tags, as a fraction of the viewport's smaller side. */
 const MIN_SEPARATION = 0.11;
 const MAX_TAGS = 6;
+/** Right of this fraction of the view, a label reads leftward from its dot. */
+const FLIP_AT = 0.7;
 /**
  * How far a tag must move before the DOM is told about it.
  *
@@ -120,7 +122,13 @@ export function StepAnnotations(): JSX.Element | null {
   return (
     <div className="step-annotations" aria-hidden="true">
       {tags.map((t) => (
-        <div key={t.partId} className="step-tag" style={{ left: `${t.x * 100}%`, top: `${t.y * 100}%` }}>
+        <div
+          key={t.partId}
+          // Near the right edge the label would run off the screen, so the row
+          // turns round and reads leftward from the same dot.
+          className={`step-tag ${t.x > FLIP_AT ? 'flip' : ''}`}
+          style={{ left: `${t.x * 100}%`, top: `${t.y * 100}%` }}
+        >
           <span className="step-tag-dot" />
           <span className="step-tag-label">{t.name}</span>
         </div>

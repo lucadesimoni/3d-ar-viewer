@@ -4,7 +4,7 @@ import { Scene } from '@babylonjs/core/scene';
 import { Observable } from '@babylonjs/core/Misc/observable';
 import { Matrix } from '@babylonjs/core/Maths/math.vector';
 import { WebXRState } from '@babylonjs/core/XR/webXRTypes';
-import { XR_OVERLAY_CLASS, bindXrPlacement, prepareImmersiveAr } from './xr';
+import { PENDING_TAP_MS, XR_OVERLAY_CLASS, bindXrPlacement, prepareImmersiveAr } from './xr';
 import { SETTLE_FRAMES, SETTLE_TIMEOUT_MS } from '../../engine/tracking/settle';
 import { clearLog, logEntries } from '../../diagnostics/log';
 
@@ -298,7 +298,7 @@ describe('holding the spot while the device learns the room', () => {
 });
 
 describe('waiting for the platform before taking a placement', () => {
-  it('ignores a tap while the device is still guessing where it is', async () => {
+  it('holds a tap taken while the device is still guessing, and honours it', async () => {
     const f = fixture();
     const onSelectAnchor = vi.fn();
     const onTracking = vi.fn();
@@ -311,13 +311,51 @@ describe('waiting for the platform before taking a placement', () => {
     f.session.dispatchEvent(new Event('select'));
     expect(onSelectAnchor).not.toHaveBeenCalled();
 
-    // Once it is tracking, the same tap places.
+    // Not discarded, though. A device log has a tap refused at 22 of the 30
+    // frames it takes to settle — two tenths of a second early, from an
+    // operator aiming at exactly the right spot. It lands the moment it can.
     f.frames(SETTLE_FRAMES);
-    f.session.dispatchEvent(new Event('select'));
     expect(onSelectAnchor).toHaveBeenCalledTimes(1);
     // And the app was told — from the first frame, so the HUD says what it is
     // waiting for instead of inviting a tap that will be swallowed.
     expect(onTracking.mock.calls.map(([s]) => s.reason)).toEqual(['settling', 'settled']);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+
+  it('places a held tap only once, and anchors it like any other', async () => {
+    const f = fixture();
+    const onSelectAnchor = vi.fn();
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, { onSelectAnchor });
+    await prepared!.enter();
+    f.hit();
+    f.frames(1, true);
+    f.session.dispatchEvent(new Event('select'));
+    f.frames(SETTLE_FRAMES * 3);
+    expect(onSelectAnchor).toHaveBeenCalledTimes(1);
+    // A held tap that placed without an anchor would drift away from a spot
+    // an ordinary tap keeps hold of — one path, or two different placements.
+    await vi.waitFor(() =>
+      expect(f.anchors.addAnchorPointUsingHitTestResultAsync).toHaveBeenCalledTimes(1));
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+
+  it('forgets a tap the operator has plainly given up on', async () => {
+    const f = fixture();
+    const onSelectAnchor = vi.fn();
+    const now = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, { onSelectAnchor });
+    await prepared!.enter();
+    f.hit();
+    f.frames(1, true);
+    f.session.dispatchEvent(new Event('select'));
+
+    // Four seconds later they are aiming somewhere else entirely, and a
+    // placement now would be the app acting on its own.
+    now.mockReturnValue(PENDING_TAP_MS + 1);
+    f.frames(SETTLE_FRAMES * 3);
+    expect(onSelectAnchor).not.toHaveBeenCalled();
     prepared!.dispose();
     f.engine.dispose();
   });
