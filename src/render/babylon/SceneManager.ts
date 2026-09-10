@@ -41,7 +41,7 @@ import { createBestEngine, type RenderBackendKind } from './engineFactory';
 import { STATUS_COLORS, type RecognitionStatus } from '../../vision/verdict';
 import { ASSUMED_CAMERA_FOV_DEG } from '../../engine/tracking/markerTracking';
 import { logEvent } from '../../diagnostics/log';
-import { anchorMoved, samePose } from './anchorMotion';
+import { anchorMoved, distanceBetween, samePose } from './anchorMotion';
 import {
   cameraIntrinsics,
   type CameraIntrinsics,
@@ -97,6 +97,20 @@ const PLACEMENT_ARM_DELAY_MS = 350;
 const XR_PREPARE_WAIT_MS = 2000;
 /** The window the frame rate is averaged over, ms. Long enough to be steady. */
 const FPS_WINDOW_MS = 500;
+/** Share of the remaining gap a glide closes each frame. */
+const ANCHOR_GLIDE_RATE = 0.25;
+/** And at least this far, so the last centimetres do not crawl. */
+const ANCHOR_GLIDE_FLOOR_M = 0.04;
+/**
+ * Close enough to be there.
+ *
+ * Also the line between a correction that is followed and one that simply
+ * happens: anything under five millimetres arrives in the frame it is reported
+ * in, which is every correction the operator was never going to see anyway.
+ */
+const ANCHOR_GLIDE_SNAP_M = 0.005;
+/** An anchor correction this big is something the operator can see happen. */
+const VISIBLE_CORRECTION_M = 0.02;
 /** How often anchor corrections are worth a log line, ms. */
 const ANCHOR_LOG_INTERVAL_MS = 5000;
 
@@ -244,6 +258,7 @@ export class SceneManager {
     // the three possible reasons it is.
     this.startRenderLoop();
     this.watchdog = window.setInterval(this.checkRenderLoop, WATCHDOG_INTERVAL_MS);
+    this.scene.onBeforeRenderObservable.add(() => this.stepAnchorGlide());
     // WebGL contexts are lost on a phone far more readily than on a desktop:
     // memory pressure, the camera claiming GPU resources, the tab going to the
     // background. A lost context renders nothing, silently, for ever.
@@ -338,6 +353,8 @@ export class SceneManager {
   private anchorApplied: Pose | undefined;
   /** The last pose the *app* asked for, so a repeat of it changes nothing. */
   private storeAnchor: Pose | undefined;
+  /** Where a platform correction is taking the assembly, while it gets there. */
+  private anchorTarget: Pose | undefined;
   /**
    * The camera calibration the platform handed over, if it ever did.
    *
@@ -1049,6 +1066,19 @@ export class SceneManager {
     // those costs a full placement write thirty times a second and gives the
     // display a tremble it has no reason to have.
     if (this.anchorApplied && !anchorMoved(this.anchorApplied, pose)) return;
+    // A correction big enough for the operator to see gets its own line, with
+    // how far it moved. "It hops when I tap and swipe" has two candidate
+    // causes — an accidental placement and the platform relocalising — and a
+    // count every five seconds tells them apart in neither direction.
+    const correctedBy = this.anchorApplied
+      ? distanceBetween(this.anchorApplied.position, pose.position)
+      : 0;
+    if (correctedBy >= VISIBLE_CORRECTION_M) {
+      logEvent('place', 'the platform moved the anchor', {
+        byM: Number(correctedBy.toFixed(3)),
+        at: pose.position.map((v) => Number(v.toFixed(3))),
+      });
+    }
     this.anchorApplied = pose;
     this.anchorApplications++;
     // Throttled: a correction a frame would drown the log it is meant to explain,
@@ -1066,10 +1096,10 @@ export class SceneManager {
     const position = new Vector3();
     const rotation = new Quaternion();
     if (!moved.decompose(undefined, rotation, position)) return;
-    // `applyAnchor`, not `setAnchor`: this is the same placement where it now
+    // `glideAnchor`, not `setAnchor`: this is the same placement where it now
     // is, not a new one, and putting it through the public entry would re-base
     // the very anchor it came from.
-    this.applyAnchor({
+    this.glideAnchor({
       position: [position.x, position.y, position.z],
       rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
     });
@@ -1301,8 +1331,19 @@ export class SceneManager {
         // passthrough path has nothing better.
         onCameraIntrinsics: (intrinsics) => { this.xrRawIntrinsics = intrinsics; },
         onSelectAnchor: (pose) => {
-          if (!this.placementActive) return;
-          if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) return;
+          // Logged, not silent: a tap that moves the whole assembly and a tap
+          // that does nothing are the two halves of the same bug report.
+          if (!this.placementActive) {
+            logEvent('xr', 'tap ignored — placement is not armed');
+            return;
+          }
+          if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) {
+            logEvent('xr', 'tap ignored — arriving with the arming tap');
+            return;
+          }
+          logEvent('place', 'placing on a tap', {
+            at: pose.position.map((v) => Number(v.toFixed(3))),
+          });
           const placed = this.placementPose(pose);
           // Remember what was placed, so later anchor corrections move it
           // instead of re-deciding it. `placementPose` turns the assembly to
@@ -1550,11 +1591,62 @@ export class SceneManager {
     this.storeAnchor = pose ? clonePose(pose) : undefined;
     // The app has moved it, so the platform's anchor no longer describes where
     // it is. Re-base: the next report establishes a fresh origin and corrections
-    // move *this* pose from here on.
+    // move *this* pose from here on, and any correction still on its way is
+    // abandoned rather than allowed to drag the new placement back.
+    this.anchorTarget = undefined;
     this.anchorOrigin = undefined;
     this.anchorApplied = undefined;
     this.anchorPlaced = pose ? poseMatrix(pose) : undefined;
     this.applyAnchor(pose);
+  }
+
+  /**
+   * Follow a correction to it, rather than teleporting to it.
+   *
+   * A relocalisation is the platform being right where we were wrong, so the
+   * assembly does have to go — but arriving in one frame reads as a fault, and
+   * a real one was a metre and a nineteen. Nothing about what the platform says
+   * is smoothed here; only how quickly the picture catches up with it. A small
+   * correction still lands in the first step, because the first step is longer
+   * than the correction.
+   */
+  private glideAnchor(pose: Pose): void {
+    this.anchorTarget = pose;
+    this.stepAnchorGlide();
+  }
+
+  /**
+   * One step of the glide, driven by the scene's own frame.
+   *
+   * On `onBeforeRenderObservable` rather than inside this manager's own render
+   * call, so it advances with whatever is actually drawing — including the XR
+   * loop, which Babylon drives, and a scene rendered directly, as a test does.
+   */
+  private stepAnchorGlide(): void {
+    const target = this.anchorTarget;
+    if (!target) return;
+    const here = this.assemblyRoot.position;
+    const to = new Vector3(target.position[0], target.position[1], target.position[2]);
+    const gap = Vector3.Distance(here, to);
+    if (gap <= ANCHOR_GLIDE_SNAP_M) {
+      this.anchorTarget = undefined;
+      this.applyAnchor(target);
+      return;
+    }
+    // Proportional, with a floor. Proportional alone has a tail that goes on
+    // for a second after the move is visually over; the floor closes the last
+    // few centimetres at a steady pace instead of asymptotically.
+    const step = Math.min(1, Math.max(ANCHOR_GLIDE_RATE, ANCHOR_GLIDE_FLOOR_M / gap));
+    const eased = Vector3.Lerp(here, to, step);
+    const turned = Quaternion.Slerp(
+      this.assemblyRoot.rotationQuaternion ?? Quaternion.Identity(),
+      new Quaternion(...target.rotation),
+      step,
+    );
+    this.applyAnchor({
+      position: [eased.x, eased.y, eased.z],
+      rotation: [turned.x, turned.y, turned.z, turned.w],
+    });
   }
 
   /** Move the assembly, without treating the move as a new placement. */
@@ -2144,6 +2236,13 @@ export class SceneManager {
   }
 
   /** World-space centre of a part's visible geometry. */
+  /** A world point in the assembly's own frame — where part poses live. */
+  private toAssemblyFrame(world: Vector3): Vector3 {
+    return Vector3.TransformCoordinates(
+      world, Matrix.Invert(this.assemblyRoot.getWorldMatrix()),
+    );
+  }
+
   private visualCentre(visual: PartVisual): Vector3 {
     const meshes = visual.loadedMeshes ?? [visual.mesh];
     let min: Vector3 | undefined;
@@ -2195,6 +2294,12 @@ export class SceneManager {
 
     const observer = this.scene.onPointerObservable.add((info) => {
       if (this.placementActive) return;
+      // Not while the view is exploded, for the same reason as during an
+      // animation: the pose being drawn is not the pose being written. The
+      // drag would start from the exploded position and store it as the base
+      // one, so the part jumps by the explosion offset on the first movement
+      // and the build quietly records a position nobody chose.
+      if (this.state?.explodeFactor) return;
 
       if (info.type === PointerEventTypes.POINTERDOWN) {
         const partId = this.pickPartAt(this.scene.pointerX, this.scene.pointerY);
@@ -2214,7 +2319,13 @@ export class SceneManager {
         dragging = {
           partId,
           plane,
-          grabOffset: root.position.subtract(grabbed),
+          // In the assembly's frame, not the world's. A part's position is
+          // local to `assemblyRoot`, and the picking ray is in world space:
+          // subtracting one from the other only worked while the assembly sat
+          // at the origin unturned, which is every view except the one that
+          // matters. Anchored and yawed to face the operator, a drag to the
+          // right moved the part in some other direction entirely.
+          grabOffset: root.position.subtract(this.toAssemblyFrame(grabbed)),
           startPose: { position: [root.position.x, root.position.y, root.position.z], rotation: [q.x, q.y, q.z, q.w] },
         };
         // The camera must not orbit while a part is being moved.
@@ -2222,7 +2333,7 @@ export class SceneManager {
       } else if (info.type === PointerEventTypes.POINTERMOVE && dragging) {
         const here = pointOnPlane(dragging.plane);
         if (!here) return;
-        const next = here.add(dragging.grabOffset);
+        const next = this.toAssemblyFrame(here).add(dragging.grabOffset);
         handlers.onMove(dragging.partId, {
           position: [next.x, next.y, next.z],
           rotation: dragging.startPose.rotation,

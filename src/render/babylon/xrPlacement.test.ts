@@ -4,7 +4,13 @@ import { Scene } from '@babylonjs/core/scene';
 import { Observable } from '@babylonjs/core/Misc/observable';
 import { Matrix } from '@babylonjs/core/Maths/math.vector';
 import { WebXRState } from '@babylonjs/core/XR/webXRTypes';
-import { PENDING_TAP_MS, XR_OVERLAY_CLASS, bindXrPlacement, prepareImmersiveAr } from './xr';
+import {
+  PENDING_TAP_MS,
+  TAP_TRAVEL_PX,
+  XR_OVERLAY_CLASS,
+  bindXrPlacement,
+  prepareImmersiveAr,
+} from './xr';
 import { SETTLE_FRAMES, SETTLE_TIMEOUT_MS } from '../../engine/tracking/settle';
 import { clearLog, logEntries } from '../../diagnostics/log';
 
@@ -213,6 +219,68 @@ describe('XR DOM overlay input', () => {
     unbind();
     expect(selectFrom(label)).toBe(false);
     expect(onSelect).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not place because a finger crossed the screen', async () => {
+    // "When tap and swipe the assembly sometimes hops." `select` fires when a
+    // touch ends and says nothing about whether it moved, so a swipe across
+    // the camera view arrived as "put it here" — the most consequential
+    // gesture in the app, by accident.
+    const root = document.createElement('div');
+    const session = new EventTarget();
+    const onSelect = vi.fn();
+    const unbind = bindXrPlacement(session, root, onSelect);
+    const gesture = (dx: number, dy = 0, holdMs = 0) => {
+      const at = (x: number, y: number, type: string) =>
+        root.dispatchEvent(Object.assign(new Event(type, { bubbles: true }), { clientX: x, clientY: y }));
+      at(100, 100, 'pointerdown');
+      at(100 + dx / 2, 100 + dy / 2, 'pointermove');
+      at(100 + dx, 100 + dy, 'pointermove');
+      if (holdMs) vi.setSystemTime(Date.now() + holdMs);
+      at(100 + dx, 100 + dy, 'pointerup');
+      session.dispatchEvent(new Event('select'));
+    };
+
+    gesture(3, 2);                                   // a tap, with a human hand
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    gesture(TAP_TRAVEL_PX + 1, 0);                   // a swipe
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    gesture(0, 40);                                  // and in the other axis
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    gesture(TAP_TRAVEL_PX - 1, 0);                   // just inside the slop
+    expect(onSelect).toHaveBeenCalledTimes(2);
+    unbind();
+  });
+
+  it('still places on a host that reports no pointer events at all', () => {
+    // The guard is only as good as the events behind it, and a gate with no
+    // signal must open rather than refuse every tap for ever.
+    const root = document.createElement('div');
+    const session = new EventTarget();
+    const onSelect = vi.fn();
+    const unbind = bindXrPlacement(session, root, onSelect);
+    session.dispatchEvent(new Event('select'));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    unbind();
+  });
+
+  it('forgets a gesture that is too old to explain the select', () => {
+    const root = document.createElement('div');
+    const session = new EventTarget();
+    const onSelect = vi.fn();
+    const now = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const unbind = bindXrPlacement(session, root, onSelect);
+    const at = (x: number, type: string) =>
+      root.dispatchEvent(Object.assign(new Event(type, { bubbles: true }), { clientX: x, clientY: 100 }));
+    at(100, 'pointerdown');
+    at(300, 'pointermove');
+    at(300, 'pointerup');
+    // A swipe a minute ago says nothing about a tap arriving now — a stale
+    // gesture must not lock placement out of the rest of the session.
+    now.mockReturnValue(60_000);
+    session.dispatchEvent(new Event('select'));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    unbind();
   });
 });
 
