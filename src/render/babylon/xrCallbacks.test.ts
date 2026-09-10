@@ -217,6 +217,9 @@ describe('an anchored assembly when the operator walks around it', () => {
       // be 5 cm further on and turned by ten degrees.
       const turned = Math.sin((10 * Math.PI) / 180 / 2);
       hooks.onAnchorPose!({ position: [0.05, 0, 2], rotation: [0, turned, 0, Math.cos((10 * Math.PI) / 180 / 2)] });
+      // A correction is followed over a few frames rather than teleported to,
+      // so let the picture catch up before reading the heading off it.
+      for (let i = 0; i < 40; i++) m.scene.render();
       // Compared as an angle: 188° and −172° are the same heading.
       const turnedBy = ((yawOf(m) - placed + 540) % 360) - 180;
       expect(turnedBy).toBeCloseTo(10, 2);
