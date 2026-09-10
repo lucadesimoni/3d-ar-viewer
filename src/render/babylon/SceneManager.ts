@@ -355,7 +355,9 @@ export class SceneManager {
   private anchorCorrections = 0;
   /** Of those, the ones that moved anything. See `anchorMoved`. */
   private anchorApplications = 0;
-  private anchorLoggedAtMs = 0;
+  /** Undefined, not zero: see the same note in `xr.ts`. A zero swallows the
+   * first five seconds of a page, which is when a session starts. */
+  private anchorLoggedAtMs: number | undefined;
   private xrPrepared: (import('./xr').XrPrepared & {
     callbacks: { onPlace: (pose: Pose) => void; onEnd?: () => void };
   }) | undefined;
@@ -1066,7 +1068,8 @@ export class SceneManager {
     this.anchorApplied = pose;
     this.anchorApplications++;
     // Throttled: a report a frame would drown the log it is meant to explain.
-    if (performance.now() - this.anchorLoggedAtMs > ANCHOR_LOG_INTERVAL_MS) {
+    if (this.anchorLoggedAtMs === undefined
+      || performance.now() - this.anchorLoggedAtMs > ANCHOR_LOG_INTERVAL_MS) {
       this.anchorLoggedAtMs = performance.now();
       logEvent('place', 'anchor corrections declined', {
         corrections: this.anchorCorrections,
@@ -1286,7 +1289,14 @@ export class SceneManager {
       const overlayRoot = this.canvas.closest('.app') as HTMLElement | null;
       const callbacks = { ...hooks };
       const prepared = await prepareImmersiveAr(this.scene, overlayRoot ?? document.body, {
-        onReticle: (pose) => this.setReticle(this.placementActive ? pose : undefined),
+        // The platform's surface where it has one, and the floor we already
+        // know where it does not. In a `local-floor` session the floor is at
+        // y = 0 by definition, so this is not the camera path's assumed plane
+        // — it is the one number the space guarantees.
+        onReticle: (pose) => {
+          if (!this.placementActive) { this.setReticle(undefined); return; }
+          this.setReticle(pose ?? this.knownFloorAim());
+        },
         // The platform moved the spot it is holding: follow it, quietly. The
         // store keeps the placement the operator made — this is the same
         // placement, where it now is, and re-announcing it would re-arm
@@ -2155,6 +2165,25 @@ export class SceneManager {
   }
 
   /** World-space centre of a part's visible geometry. */
+  /**
+   * Where the aim crosses the floor the reference space defines.
+   *
+   * Used when the platform offers no usable surface — including when it offers
+   * one metres underground and is refused. Without it, a room the tracker
+   * cannot read leaves the operator with no reticle and nothing to tap; with
+   * it they can still put the assembly on the floor, which is where it goes.
+   */
+  private knownFloorAim(): Pose | undefined {
+    const { x, y } = this.screenCentre();
+    // Down the lower half of the screen, as the camera path does: held level,
+    // the centre of the view is the horizon and meets no floor at all.
+    for (const f of [1, 1.3, 1.6, 1.8]) {
+      const hit = this.pickGround(x, y * f, 0, this.placementRange());
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+
   /** A world point in the assembly's own frame — where part poses live. */
   private toAssemblyFrame(world: Vector3): Vector3 {
     return Vector3.TransformCoordinates(
