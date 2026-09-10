@@ -84,7 +84,17 @@ export interface Capture {
   /** Where the camera was, so the frame can be compared with the geometry. */
   camera: { position: number[]; rotation: number[]; fovDeg: number };
   /** Where each part was expected on screen, 0..1 of the view. */
-  parts: { id: string; name: string; x: number; y: number; onScreen: boolean }[];
+  parts: {
+    id: string;
+    name: string;
+    x: number;
+    y: number;
+    onScreen: boolean;
+    /** Where the geometry says the part is, as `[x, y, w, h]` in image pixels. */
+    roi?: [number, number, number, number];
+    /** The region runs off the frame, so absence there proves nothing. */
+    roiClipped?: boolean;
+  }[];
   note?: string;
 }
 

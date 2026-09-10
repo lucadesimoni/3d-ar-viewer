@@ -48,6 +48,8 @@ import {
   type IntrinsicsSource,
   type RawIntrinsics,
 } from '../../perception/intrinsics';
+import { roiForBox, type PartRoi } from '../../perception/roi';
+import { meshHalfExtents } from '../../engine/collision';
 import type { TrackingState } from '../../engine/tracking/settle';
 import {
   DIAGNOSTIC_COLORS,
@@ -859,6 +861,36 @@ export class SceneManager {
    */
   effectiveFovDeg(): number {
     return this.fieldOfView().deg;
+  }
+
+  /**
+   * Where in a camera frame of this size a part should appear.
+   *
+   * Measured off what is actually drawn — the visual's own world matrix — so
+   * the anchor, the explode offset and any running animation are all already
+   * in it. The alternative, recomputing the pose from the store, is a second
+   * opinion that can disagree with the picture.
+   *
+   * Returns `undefined` when the part is not in front of the camera at all,
+   * which is an answer and not a failure.
+   */
+  roiForPart(
+    partId: string,
+    frame: { width: number; height: number },
+    opts: { padding?: number } = {},
+  ): PartRoi | undefined {
+    const part = this.assembly.parts.find((p) => p.id === partId);
+    const visual = this.parts.get(partId);
+    if (!part || !visual) return undefined;
+    const position = new Vector3();
+    const rotation = new Quaternion();
+    if (!visual.root.getWorldMatrix().decompose(undefined, rotation, position)) return undefined;
+    const he = meshHalfExtents(part.mesh);
+    return roiForBox({
+      center: [position.x, position.y, position.z],
+      halfExtents: [he.x, he.y, he.z],
+      rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
+    }, this.scene.getViewMatrix().asArray(), this.frameIntrinsics(frame), opts);
   }
 
   /**
