@@ -145,6 +145,54 @@ for (const assemblyId of ['kallax-4x4', 'bench-gearbox', 'equipment-rack']) {
   await page.close();
 }
 
+// --- The tag has to point at the part, not sit beside it. -----------------
+// "Info of e.g. bolts is left of part." It was: the row is [dot][label] and the
+// whole row was centred on the projected point, so the dot — the only part of
+// it that means anything — sat half a row-width to the left, and the wider the
+// label the further off it sat. Measured against the projection itself.
+const measureTags = () => page.evaluate(() => {
+  const m = window.spatialScene();
+  const canvas = document.querySelector('canvas.viewer-canvas').getBoundingClientRect();
+  return [...document.querySelectorAll('.step-tag')].map((row) => {
+    const dot = row.querySelector('.step-tag-dot').getBoundingClientRect();
+    const label = row.querySelector('.step-tag-label');
+    const name = label.textContent;
+    const part = window.spatialStore.getState().assembly.parts.find((p) => p.name === name);
+    const at = part ? m.projectPart(part.id) : undefined;
+    return {
+      name,
+      dx: at ? (dot.left + dot.width / 2) - (canvas.left + at.x * canvas.width) : NaN,
+      dy: at ? (dot.top + dot.height / 2) - (canvas.top + at.y * canvas.height) : NaN,
+      labelRight: label.getBoundingClientRect().right,
+      viewportWidth: window.innerWidth,
+    };
+  });
+});
+
+await page.goto(`${URL_BASE}?assembly=bench-gearbox`, { waitUntil: 'networkidle' });
+await page.waitForSelector('canvas.viewer-canvas');
+await page.waitForTimeout(1500);
+// Every step, because the one that reported this was the bolts, and a check
+// that only ever looks at the first step never sees a wide label.
+const tags = [];
+for (const stepId of await page.evaluate(
+  () => window.spatialStore.getState().assembly.steps.map((x) => x.id),
+)) {
+  await page.evaluate((id) => window.spatialStore.getState().setActiveStep(id), stepId);
+  await page.waitForTimeout(400);
+  tags.push(...await measureTags());
+}
+const placed = tags.filter((t) => Number.isFinite(t.dx));
+check('there are tags to measure', placed.length >= 3, `${placed.length} of ${tags.length} tags`);
+let worst = placed[0];
+for (const t of placed) if (Math.abs(t.dx) > Math.abs(worst.dx)) worst = t;
+check('the tag dot sits on the part it names, not beside it',
+  placed.length > 0 && placed.every((t) => Math.abs(t.dx) <= 2 && Math.abs(t.dy) <= 2),
+  worst ? `worst "${worst.name}" off by ${worst.dx.toFixed(1)}, ${worst.dy.toFixed(1)} px` : 'none');
+check('and no label runs off the right edge',
+  tags.every((t) => t.labelRight <= t.viewportWidth + 1),
+  `widest right edge ${Math.round(Math.max(...tags.map((t) => t.labelRight)))} of ${tags[0]?.viewportWidth}`);
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall step checks passed');
 process.exit(failures.length ? 1 : 0);

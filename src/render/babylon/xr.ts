@@ -134,6 +134,15 @@ const noteXrError = (stage: string, err: unknown): undefined => {
 /** How long to wait for the session's first frame before giving up. */
 const FIRST_FRAME_TIMEOUT_MS = 8000;
 
+/**
+ * How long a tap taken too early stays worth honouring, ms.
+ *
+ * Long enough to cover the couple of seconds a platform usually needs once a
+ * surface is in view, short enough that it is still the same aim. Past it, the
+ * operator has moved on, and placing would be the app acting on its own.
+ */
+export const PENDING_TAP_MS = 4000;
+
 /** The parts of Babylon's experience this needs, so a fake can stand in. */
 export interface StateSource {
   state: number;
@@ -316,6 +325,23 @@ export async function prepareImmersiveAr(
   /** When the running session began, and when it first saw a surface. */
   let sessionAtMs = 0;
   let firstHitAtMs = 0;
+  /** A tap taken while the floor was still being found, waiting to be honoured. */
+  let pendingTapAtMs = 0;
+  /**
+   * Put the assembly here, and ask the platform to hold the spot.
+   *
+   * One path, whether the tap was acted on at once or held for a moment while
+   * the floor was still being found — otherwise the held one would place
+   * without an anchor and drift away from a spot the other keeps.
+   */
+  const place = (at: Pose): void => {
+    hooks.onSelectAnchor?.(at);
+    const hit = lastHit;
+    if (!anchors || !hit) return;
+    void anchors.addAnchorPointUsingHitTestResultAsync(hit)
+      .then((anchor) => { placedAnchorId = anchor.id; })
+      .catch(() => { placedAnchorId = undefined; });
+  };
   /**
    * Whether frames are being sampled at all.
    *
@@ -390,6 +416,18 @@ export async function prepareImmersiveAr(
       const before = tracking;
       const now = settle.sample({ emulated, hasHit: Boolean(reticle) }, performance.now());
       tracking = now;
+      // A tap that arrived a moment too early, honoured as soon as it can be.
+      // Only for as long as the operator is plausibly still aiming at the same
+      // place: after that it is a tap they have given up on, and placing then
+      // would be the app acting on its own.
+      if (pendingTapAtMs && now.ready && reticle) {
+        const held = performance.now() - pendingTapAtMs;
+        pendingTapAtMs = 0;
+        if (held <= PENDING_TAP_MS) {
+          logEvent('place', 'held tap placed once the floor was found', { heldMs: Math.round(held) });
+          place(reticle);
+        }
+      }
       // The first sample counts as a change. Without it the HUD would sit on
       // "tap to place" through the whole settling period, inviting exactly the
       // tap the gate is about to swallow, and say nothing about why.
@@ -514,6 +552,7 @@ export async function prepareImmersiveAr(
    * question that log was taken to answer went unanswered.
    */
   const clearPlacement = (starting: boolean): void => {
+    pendingTapAtMs = 0;
     if (starting) {
       sessionAtMs = performance.now();
       firstHitAtMs = 0;
@@ -534,23 +573,22 @@ export async function prepareImmersiveAr(
     unmarkOverlay = markXrOverlay(overlayRoot);
     stopInput = bindXrPlacement(session, overlayRoot, () => {
       if (xr.baseExperience.state !== WebXRState.IN_XR || !reticle) return;
-      // Not before the platform knows where the floor is. The HUD says what is
-      // being waited for, and `SETTLE_TIMEOUT_MS` makes sure the wait ends.
+      // Not before the platform knows where the floor is — but not thrown away
+      // either. A device log has a tap refused at 22 of the 30 frames it takes
+      // to settle, two tenths of a second before it would have been taken: the
+      // operator was aiming at the right spot and got nothing, and had to
+      // notice that and do it again. The tap is remembered instead, and the
+      // placement happens the moment the floor is there.
       if (watchingFrames && !settle.state().ready) {
-        logEvent('xr', 'tap ignored — still finding the floor', {
+        pendingTapAtMs = performance.now();
+        logEvent('xr', 'tap held — still finding the floor', {
           goodFrames: settle.state().goodFrames,
           waitedMs: Math.round(settle.state().waitedMs),
         });
         return;
       }
-      hooks.onSelectAnchor?.(reticle);
-      // And ask the platform to hold the spot, so later corrections move the
-      // assembly with the room rather than the room out from under it.
-      const hit = lastHit;
-      if (!anchors || !hit) return;
-      void anchors.addAnchorPointUsingHitTestResultAsync(hit)
-        .then((anchor) => { placedAnchorId = anchor.id; })
-        .catch(() => { placedAnchorId = undefined; });
+      pendingTapAtMs = 0;
+      place(reticle);
     });
   });
   xr.baseExperience.onStateChangedObservable.add((state) => {

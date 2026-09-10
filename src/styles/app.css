@@ -777,13 +777,24 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 
 /* ---------- Step annotations, pinned to the parts they name ---------- */
 .step-annotations { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+/* The dot marks the part; the label reads outward from it.
+   Centring the whole row on the projected point — which is what this did —
+   puts the dot half a row-width to the left of the thing it names, and the
+   wider the label the further off it sits. "Housing bolts" is wide. So the
+   row is offset by half a dot instead, which lands the dot on the point,
+   and near the right edge it turns round so the label stays on screen. */
 .step-tag {
-  position: absolute; transform: translate(-50%, -50%);
+  --dot: 9px;
+  position: absolute; transform: translate(calc(var(--dot) / -2), -50%);
   display: flex; align-items: center; gap: 6px;
   white-space: nowrap;
 }
+.step-tag.flip {
+  flex-direction: row-reverse;
+  transform: translate(calc(var(--dot) / 2 - 100%), -50%);
+}
 .step-tag-dot {
-  width: 9px; height: 9px; border-radius: 50%;
+  width: var(--dot); height: var(--dot); border-radius: 50%;
   background: var(--accent); box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.22);
   flex: 0 0 auto;
 }
@@ -823,8 +834,10 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
    an explode or the build animation. Same projection and the same
    publish-only-when-it-moves rule as the step labels. */
 .annotations { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+/* Same again: the dot is the anchor, not the middle of the pill. Its centre
+   sits 6px of padding plus half of an 18px dot from the pill's left edge. */
 .note-pin {
-  position: absolute; transform: translate(-50%, -50%);
+  position: absolute; transform: translate(-15px, -50%);
   pointer-events: auto;
   display: flex; align-items: center; gap: 6px;
   max-width: min(62vw, 320px);

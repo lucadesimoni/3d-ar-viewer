@@ -29,6 +29,14 @@ await page.waitForSelector('canvas.viewer-canvas');
 await page.waitForTimeout(2500);
 
 const notes = () => page.evaluate(() => window.spatialStore.getState().annotations);
+/** The dot's centre — the only part of the pill that points at anything. */
+const pinDot = () => page.evaluate(() => {
+  const el = document.querySelector('.note-pin .note-dot');
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+});
+
 const pin = () => page.evaluate(() => {
   const el = document.querySelector('.note-pin');
   if (!el) return null;
@@ -80,9 +88,17 @@ const placed = await pin();
 // in the part's own frame; storing the world point instead would put the pin
 // somewhere else entirely and still appear to "follow the part", so this is
 // the assertion that tells those two apart.
-const offBy = placed ? Math.hypot(placed.x - target.x, placed.y - target.y) : Infinity;
-check('and shown where the operator touched', offBy < 40,
-  placed ? `${Math.round(offBy)} px from the tap` : 'no pin');
+//
+// Measured at the *dot*, which took a bug report to get right. The pill is a
+// row of [dot][text][×], and it used to be centred as a whole on the point —
+// so the dot, the only part of it that points at anything, sat half a pill to
+// the left of the spot the note was about, further the longer the note. This
+// check could not see it while it measured the pill's centre: the centre is
+// exactly what the old rule put in the right place.
+const dot = await pinDot();
+const offBy = dot ? Math.hypot(dot.x - target.x, dot.y - target.y) : Infinity;
+check('and shown where the operator touched', offBy < 12,
+  dot ? `${offBy.toFixed(1)} px from the tap` : 'no pin');
 
 // The property that makes a note useful: it rides the part.
 await page.evaluate(() => {
