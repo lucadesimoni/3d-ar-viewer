@@ -191,6 +191,13 @@ check('and it carries the pose it was taken from',
 // Numbers, always — an unplaced assembly projects to NaN, which JSON writes
 // as `null`, and a file that promises numbers and delivers nulls wastes the
 // time of whoever reads it, which is the only reason this file exists.
+// A frame that carries its own expectation is a frame someone can check later,
+// or train against — which is the whole reason the physical KALLAX test is
+// worth doing at all.
+const withRoi = capture?.parts?.filter((p) => Array.isArray(p.roi)) ?? [];
+check('and the region the geometry says each part occupies',
+  withRoi.length > 0 && withRoi.every((p) => p.roi.length === 4 && p.roi[2] > 0 && p.roi[3] > 0),
+  withRoi.length ? `${withRoi.length}/${capture.parts.length} parts, first ${JSON.stringify(withRoi[0].roi)}` : 'none');
 check('and where the app expected every part to be, as numbers',
   Array.isArray(capture?.parts) && capture.parts.length > 0
     && capture.parts.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y)

@@ -69,12 +69,23 @@ export function captureFrame(
       const at = (v: number | undefined): number => (
         typeof v === 'number' && Number.isFinite(v) ? Number(v.toFixed(4)) : -1
       );
+      // And the region the geometry says this part occupies, in the pixels of
+      // the image actually attached. A frame that carries its own expectation
+      // is a frame someone can check later — or train against.
+      const roi = manager.roiForPart(part.id, { width: canvas.width, height: canvas.height });
       return {
         id: part.id,
         name: part.name,
         x: at(p?.x),
         y: at(p?.y),
         onScreen: Boolean(p?.onScreen) && Number.isFinite(p?.x) && Number.isFinite(p?.y),
+        ...(roi ? {
+          roi: [
+            Math.round(roi.rect.x), Math.round(roi.rect.y),
+            Math.round(roi.rect.w), Math.round(roi.rect.h),
+          ] as [number, number, number, number],
+          roiClipped: roi.clipped,
+        } : {}),
       };
     }),
     ...(note ? { note } : {}),

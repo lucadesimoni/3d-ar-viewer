@@ -1184,6 +1184,38 @@ const context = await browser.newContext({
   // world-axis-aligned diamond a world-space box produces.
   check('and it turns with the assembly instead of lying across it', placed.parented);
 
+  // The region the geometry says a part occupies — what narrows inference from
+  // the whole bench to the part being fitted. Measured against the projection
+  // of the same part: the rectangle has to contain it, or it is pointing the
+  // detector somewhere the part is not.
+  const roi = await page.evaluate(() => {
+    const m = window.spatialScene();
+    const frame = { width: 480, height: 640 };
+    const state = window.spatialStore.getState();
+    const step = state.assembly.steps.find((s) => s.id === state.activeStepId);
+    const id = step.partIds[0];
+    const region = m.roiForPart(id, frame);
+    const at = m.projectPart(id);
+    const k = m.frameIntrinsics(frame);
+    return { id, region, at, source: k.source, fovDeg: k.fovDeg, frame };
+  });
+  check('the geometry can say where in the frame a part should be',
+    Boolean(roi.region) && roi.region.rect.w > 0 && roi.region.rect.h > 0,
+    roi.region ? `${roi.id}: ${JSON.stringify(roi.region.rect)} (${roi.source})` : 'no region');
+  if (roi.region) {
+    // `projectPart` returns fractions of the view; the region is in image
+    // pixels. Two different paths to the same place, which is the point.
+    const cx = roi.at.x * roi.frame.width;
+    const cy = roi.at.y * roi.frame.height;
+    const r = roi.region.rect;
+    check('and the region contains the part it is for',
+      cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h,
+      `part at ${cx.toFixed(0)},${cy.toFixed(0)} in ${r.x.toFixed(0)},${r.y.toFixed(0)} ${r.w.toFixed(0)}x${r.h.toFixed(0)}`);
+    check('and it is a region, not the whole picture',
+      roi.region.areaFraction < 0.9 && roi.region.areaFraction > 0,
+      `${(roi.region.areaFraction * 100).toFixed(1)}% of the frame`);
+  }
+
   await page.locator('.ar-btn', { hasText: 'Exit' }).click();
   await page.waitForTimeout(1200);
   check('and it goes when AR does', !(await marks()).shadowOn);

@@ -66,8 +66,59 @@ export interface FrameResult {
   /** Majority-voted class over a rolling window, when temporal is on. */
   votedClass?: { classId: number; label: string; confidence: number; partIds?: readonly string[] };
   segmentation?: Segmentation;
+  /**
+   * The region inference was narrowed to, in pixels of the frame handed in.
+   *
+   * Detections are always reported against the *whole* frame, whether or not
+   * one was used; this says what was actually looked at, so a caller can tell
+   * "nothing there" from "nowhere was looked".
+   */
+  roi?: { x: number; y: number; w: number; h: number };
   /** Whole-frame inference wall time, ms. */
   latencyMs: number;
+}
+
+/**
+ * The rectangle `crop` will actually take.
+ *
+ * `crop` clamps to the image and floors to whole pixels, so the region the
+ * model sees is not necessarily the region it was asked for. Mapping a
+ * detection back through the *asked* rectangle instead of the *taken* one puts
+ * it a few pixels out at every edge of the frame, which is exactly where a part
+ * being half out of view already makes the answer hardest.
+ */
+export function clampRoi(
+  image: { width: number; height: number },
+  roi: { x: number; y: number; w: number; h: number },
+): { x: number; y: number; w: number; h: number } {
+  const x = Math.max(0, Math.floor(roi.x));
+  const y = Math.max(0, Math.floor(roi.y));
+  return {
+    x,
+    y,
+    w: Math.max(1, Math.min(image.width, Math.floor(roi.x + roi.w)) - x),
+    h: Math.max(1, Math.min(image.height, Math.floor(roi.y + roi.h)) - y),
+  };
+}
+
+/**
+ * A box the model reported inside a cutout, in the whole frame's terms.
+ *
+ * Both are normalised 0..1 — the model's against the cutout, the result against
+ * the frame — which is precisely why the mistake was invisible: the numbers
+ * stay in range and simply mean somewhere else.
+ */
+export function toFullFrame(
+  box: { x: number; y: number; w: number; h: number },
+  region: { x: number; y: number; w: number; h: number },
+  image: { width: number; height: number },
+): { x: number; y: number; w: number; h: number } {
+  return {
+    x: (region.x + box.x * region.w) / image.width,
+    y: (region.y + box.y * region.h) / image.height,
+    w: (box.w * region.w) / image.width,
+    h: (box.h * region.h) / image.height,
+  };
 }
 
 export interface PipelineStatus {
@@ -164,6 +215,11 @@ export class RecognitionPipeline {
    * `roi` narrows attention to a region (e.g. the box the geometry says the
    * active part should occupy), which both speeds up inference and cuts false
    * detections from the cluttered rest of the bench.
+   *
+   * Detections come back against the whole frame either way — see `toFullFrame`.
+   * A segmentation mask does not: it is the model's own raster, and nothing
+   * calls for one today (`runSegmentation` has no caller), so it is left in the
+   * frame it was produced in rather than silently half-corrected.
    */
   async process(
     image: ImageData,
@@ -183,7 +239,15 @@ export class RecognitionPipeline {
         return { ts, accepted: false, sharpness: sharp.variance, detections: [], tracks: [], latencyMs: performance.now() - start };
       }
 
-      let frame = opts.roi ? crop(image, opts.roi.x, opts.roi.y, opts.roi.w, opts.roi.h) : image;
+      // The rectangle `crop` will actually take, computed here so the boxes
+      // that come back can be put where they belong. Anything that narrows the
+      // frame narrows what the model's coordinates mean, and nothing used to
+      // widen them again: every detection would have been reported against the
+      // cutout, at the wrong place in the picture, and the tracker — which
+      // matches boxes between frames — would have been comparing them across a
+      // rectangle that moves with the operator's hand.
+      const region = opts.roi ? clampRoi(image, opts.roi) : undefined;
+      let frame = region ? crop(image, region.x, region.y, region.w, region.h) : image;
       if ((this.config.normalizeLighting ?? true) && this.openCvReady) {
         frame = normalizeIllumination(frame);
       }
@@ -205,7 +269,9 @@ export class RecognitionPipeline {
           : Promise.resolve<Segmentation | undefined>(undefined),
       ]);
       if (this.disposed || generation !== this.generation) return undefined;
-      const detections = rawDetections.map((d) => this.resolveIdentity(d, this.config.detector));
+      const detections = rawDetections
+        .map((d) => (region ? { ...d, box: toFullFrame(d.box, region, image) } : d))
+        .map((d) => this.resolveIdentity(d, this.config.detector));
       const classification = rawClassification?.map((c) => this.resolveIdentity(c, this.config.classifier));
 
       const temporal = this.config.temporal ?? true;
@@ -225,6 +291,7 @@ export class RecognitionPipeline {
         ts,
         accepted: true,
         sharpness: sharp.variance,
+        ...(region ? { roi: region } : {}),
         detections,
         tracks,
         classification: classification ?? undefined,

@@ -11,7 +11,7 @@ import { getActiveManager } from '../render/babylon/managerRegistry';
 import { toImageData } from '../vision/opencv';
 import { alignToMarker } from '../engine/alignment';
 import { useStore, surfaceDrop } from '../state/store';
-import type { GridTargetDef } from '../engine/types';
+import type { AssemblyDef, GridTargetDef } from '../engine/types';
 import type { SceneManager } from '../render/babylon/SceneManager';
 import { logEvent } from '../diagnostics/log';
 
@@ -44,6 +44,10 @@ import { logEvent } from '../diagnostics/log';
 const PREVIEW_FALLBACK_MS = 6000;
 /** Width the camera frame is sampled at for recognition and tracking. */
 const FRAME_WIDTH = 480;
+/** Margin around a projected region, as a share of its own size. */
+const ROI_PADDING = 0.35;
+/** Below this share of the frame there is not enough in the region to read. */
+const ROI_MIN_AREA = 0.01;
 
 /** The slice of the Screen Wake Lock API used here; not in every lib.dom yet. */
 interface WakeLock { released: boolean; release(): Promise<void> }
@@ -563,7 +567,7 @@ export function useArController(
         busyPipeline = pipeline;
         const generation = recognitionGeneration.current;
         const cameraTracker = trackerRef.current;
-        void pipeline!.process(image)
+        void pipeline!.process(image, inspectionRoi(manager, image, frameState))
           .then((result) => {
             if (generation !== recognitionGeneration.current || pipelineRef.current !== pipeline
               || trackerRef.current !== cameraTracker || cameraSuspended.current || xrSession.current) return;
@@ -775,6 +779,33 @@ function armPlacement(manager: SceneManager, source: 'webxr' | 'camera'): boolea
  * A printed marker is the more precise reference, so a good marker lock is
  * never overruled by a recognition.
  */
+/**
+ * The region of the frame worth looking at, when the geometry knows one.
+ *
+ * Self-gating, and deliberately so: there is no setting for this because there
+ * is no choice to make. Without a placement there is no region — the geometry
+ * has no opinion about where anything is — and with a good one the whole frame
+ * offers nothing but the rest of the bench to be wrong about. A region that
+ * runs off the edge of the picture, or that is too small to hold anything, is
+ * no region either: narrowing to it would turn "I cannot see it" into "it is
+ * not there", which is the one mistake this must never make.
+ */
+function inspectionRoi(
+  manager: SceneManager | undefined,
+  image: ImageData,
+  frameState: { assembly: AssemblyDef; activeStepId?: string },
+): { roi?: { x: number; y: number; w: number; h: number } } {
+  if (!manager || !useStore.getState().anchor) return {};
+  const step = frameState.assembly.steps.find((s) => s.id === frameState.activeStepId);
+  const partId = step?.partIds[0];
+  if (!partId) return {};
+  // Padded, because the region is only as good as the anchor it is projected
+  // through, and an anchor the platform is still correcting is worth a margin.
+  const roi = manager.roiForPart(partId, image, { padding: ROI_PADDING });
+  if (!roi || roi.clipped || roi.areaFraction < ROI_MIN_AREA) return {};
+  return { roi: roi.rect };
+}
+
 function applyObjectAnchor(
   tracker: ObjectAnchorTracker,
   image: ImageData,
