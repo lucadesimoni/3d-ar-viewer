@@ -193,6 +193,12 @@ check('and it holds no images unless one was attached',
 // The frame: a picture of the real thing, with what the app expected in it.
 await page.locator('.ar-log-row button', { hasText: 'Attach a camera frame' }).click();
 await page.waitForTimeout(600);
+// And how much of the assembly was in it, on screen, while the phone is still
+// in the operator's hand. Two captures arrived from a device with nothing in
+// either — walked past the assembly — and the app said only "Frame attached".
+check('the app says how much of the assembly the frame caught',
+  /\d+ of \d+ parts in view/.test(await page.locator('.ar-log-row ~ .ar-set-help, .ar-set-help[role="status"]').first().innerText().catch(() => '')),
+  (await page.locator('.ar-set-help[role="status"]').first().innerText().catch(() => 'no status')).slice(0, 80));
 const withFrame = await save();
 const capture = withFrame.captures?.[0];
 check('a camera frame can be attached', Boolean(capture?.image?.startsWith('data:image/jpeg')),

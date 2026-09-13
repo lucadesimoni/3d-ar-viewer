@@ -22,7 +22,7 @@ const CAPTURE_WIDTH = 960;
 const JPEG_QUALITY = 0.72;
 
 export type CaptureResult =
-  | { ok: true; capture: Capture }
+  | { ok: true; capture: Capture; onScreen: number; parts: number }
   | { ok: false; reason: string };
 
 /**
@@ -122,11 +122,12 @@ export async function captureFrame(
     ...(note ? { note } : {}),
   };
   addCapture(capture);
+  const onScreen = capture.parts.filter((p) => p.onScreen).length;
   const cost = manager.cameraFrameCost();
   logEvent('capture', 'frame captured', {
     size: [canvas.width, canvas.height],
     source,
-    partsOnScreen: capture.parts.filter((p) => p.onScreen).length,
+    partsOnScreen: onScreen,
     // What it cost to get the picture out of the session, which is the open
     // question about reading the camera in one at all.
     ...(source === 'xr-raw' && cost ? {
@@ -134,5 +135,5 @@ export async function captureFrame(
       scaleMs: Number(cost.scaleMs.toFixed(1)),
     } : {}),
   });
-  return { ok: true, capture };
+  return { ok: true, capture, onScreen, parts: capture.parts.length };
 }

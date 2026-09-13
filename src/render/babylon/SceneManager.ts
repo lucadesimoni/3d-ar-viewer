@@ -2477,7 +2477,13 @@ export class SceneManager {
     return {
       position: [cam.position.x, cam.position.y, cam.position.z].map((v) => Number(v.toFixed(4))),
       rotation: [q.x, q.y, q.z, q.w].map((v) => Number(v.toFixed(5))),
-      fovDeg: Number(this.visibleFovDeg.toFixed(2)),
+      // The session's own angle where there is one, not the passthrough crop.
+      // `visibleFovDeg` is the assumed 60 degrees narrowed by however much
+      // `object-fit: cover` hides — a number about a video element that does
+      // not exist in a session. A capture recorded 49° on a device whose
+      // session was measuring 72.18, which makes that capture unusable as
+      // evidence: nobody can re-project a frame through the wrong lens.
+      fovDeg: Number(this.fieldOfView().deg.toFixed(2)),
     };
   }
 
