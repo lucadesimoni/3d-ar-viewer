@@ -59,12 +59,15 @@ export function DiagnosticsExport({ capabilities, inAr }: {
           <button
             className="secondary"
             onClick={() => {
-              const result = captureFrame(
+              // Awaited now: in a session the picture has to come back off the
+              // GPU first, which is the one place it is worth capturing from.
+              void captureFrame(
                 document.querySelector('video.passthrough'), getActiveManager(),
-              );
-              setSaved(result.ok
-                ? `Frame attached (${capturedFrames().length} in the log)`
-                : result.reason);
+              )
+                .then((result) => setSaved(result.ok
+                  ? `Frame attached (${capturedFrames().length} in the log)`
+                  : result.reason))
+                .catch((err) => setSaved(`Could not read the camera: ${String(err)}`));
             }}
           >Attach a camera frame</button>
         )}

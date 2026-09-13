@@ -26,33 +26,64 @@ export type CaptureResult =
   | { ok: false; reason: string };
 
 /**
- * In a WebXR session there is no camera image to read.
+ * The picture, from whichever mode is running.
  *
- * The compositor owns the picture and the page never sees it, unless the
- * session was granted the raw camera-access feature — which this app does not
- * ask for yet. So a capture there would be geometry with a black rectangle
- * attached, and saying so beats saving that.
+ * This used to refuse inside a WebXR session, and said why: the compositor
+ * owns the picture, "unless the session was granted the raw camera-access
+ * feature — which this app does not ask for yet". It does ask now, Android
+ * grants it, and a device log shows `frameSource: xr-raw` with the real
+ * intrinsics behind it. The refusal had outlived its reason.
+ *
+ * Which matters more than it sounds, because of what a capture is *for*: the
+ * picture together with where the app believed every part was. That second
+ * half is only as good as the anchor it was projected through — and the anchor
+ * is at its best in a session and at its weakest in camera passthrough. The
+ * one mode worth capturing from was the one mode that refused.
+ *
+ * One approximation comes with it, and is stated rather than hidden: the ROIs
+ * are projected through the *renderer's* view, while the image comes from the
+ * physical camera, which sits a little to one side of it. On a phone with a
+ * single rear lens the two are close. How close is a question these captures
+ * are exactly the data to answer.
  */
-export function captureFrame(
+export async function captureFrame(
   video: HTMLVideoElement | null,
   manager: SceneManager | undefined,
   note?: string,
-): CaptureResult {
+): Promise<CaptureResult> {
   if (!manager) return { ok: false, reason: 'The 3D view is not running.' };
-  if (!video || video.readyState < 2 || !video.videoWidth) {
+  // Which mode is running decides where the picture comes from, and a mode
+  // that has none is refused before anything is allocated for it.
+  const source = manager.renderStats().frameSource;
+  if (source === 'xr-blind') {
     return {
       ok: false,
-      reason: 'No camera image to capture. In a WebXR session the picture belongs to the'
-        + ' compositor and the page cannot read it; capture from camera passthrough instead.',
+      reason: 'This session did not grant camera access, so the picture belongs to the'
+        + ' compositor and the page cannot read it. Capture from camera passthrough instead.',
     };
   }
-  const scale = Math.min(1, CAPTURE_WIDTH / video.videoWidth);
+  if (source === 'video' && (!video || video.readyState < 2 || !video.videoWidth)) {
+    return { ok: false, reason: 'No camera image to capture — the camera is not running.' };
+  }
+
   const canvas = document.createElement('canvas');
-  canvas.width = Math.round(video.videoWidth * scale);
-  canvas.height = Math.round(video.videoHeight * scale);
   const ctx = canvas.getContext('2d');
   if (!ctx) return { ok: false, reason: 'This browser refused a 2D canvas.' };
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  if (source === 'xr-raw') {
+    const image = await manager.xrCameraFrame(CAPTURE_WIDTH);
+    if (!image) {
+      return { ok: false, reason: 'The session held a camera a moment ago and would not hand over a frame.' };
+    }
+    canvas.width = image.width;
+    canvas.height = image.height;
+    ctx.putImageData(image, 0, 0);
+  } else {
+    const scale = Math.min(1, CAPTURE_WIDTH / video!.videoWidth);
+    canvas.width = Math.round(video!.videoWidth * scale);
+    canvas.height = Math.round(video!.videoHeight * scale);
+    ctx.drawImage(video!, 0, 0, canvas.width, canvas.height);
+  }
 
   const state = useStore.getState();
   const view = manager.cameraPose();
@@ -91,9 +122,17 @@ export function captureFrame(
     ...(note ? { note } : {}),
   };
   addCapture(capture);
+  const cost = manager.cameraFrameCost();
   logEvent('capture', 'frame captured', {
     size: [canvas.width, canvas.height],
+    source,
     partsOnScreen: capture.parts.filter((p) => p.onScreen).length,
+    // What it cost to get the picture out of the session, which is the open
+    // question about reading the camera in one at all.
+    ...(source === 'xr-raw' && cost ? {
+      readbackMs: Number(cost.readbackMs.toFixed(1)),
+      scaleMs: Number(cost.scaleMs.toFixed(1)),
+    } : {}),
   });
   return { ok: true, capture };
 }

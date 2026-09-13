@@ -197,6 +197,14 @@ const withFrame = await save();
 const capture = withFrame.captures?.[0];
 check('a camera frame can be attached', Boolean(capture?.image?.startsWith('data:image/jpeg')),
   capture ? `${Math.round(capture.image.length / 1024)} kB` : 'none attached');
+// Which mode the picture came from, in the file itself. A capture used to be
+// refused inside a session outright — on a comment saying the app "does not ask
+// for" raw camera access, which it has done since. The mode worth capturing
+// from was the one mode that refused.
+check('and the frame says which mode it came from',
+  withFrame.log?.some((e) => e.message === 'frame captured' && typeof e.data?.source === 'string'),
+  withFrame.log?.filter((e) => e.message === 'frame captured')
+    .map((e) => `${e.data?.source}`).join(', ') || 'no capture entry');
 check('and it carries the pose it was taken from',
   Array.isArray(capture?.camera?.position) && typeof capture?.camera?.fovDeg === 'number',
   capture ? `fov ${capture.camera.fovDeg}°` : 'no pose');
