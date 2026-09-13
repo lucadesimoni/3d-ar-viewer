@@ -65,7 +65,8 @@ export function DiagnosticsExport({ capabilities, inAr }: {
                 document.querySelector('video.passthrough'), getActiveManager(),
               )
                 .then((result) => setSaved(result.ok
-                  ? `Frame attached (${capturedFrames().length} in the log)`
+                  ? `Frame attached — ${result.onScreen} of ${result.parts} parts in view`
+                    + ` (${capturedFrames().length} in the log)`
                   : result.reason))
                 .catch((err) => setSaved(`Could not read the camera: ${String(err)}`));
             }}

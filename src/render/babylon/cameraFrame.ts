@@ -52,9 +52,26 @@ export interface CameraFrame {
  * Alpha is forced opaque. The camera image has no transparency, and a texture
  * that reports some — an unwritten alpha channel reading zero — would otherwise
  * make every later `putImageData` invisible.
+ *
+ * The shape of this loop is the answer to a measurement, not to taste. A device
+ * log reported `readbackMs 15.9, scaleMs 30.1` — the scaling costing twice what
+ * pulling the pixels off the GPU did, which is the opposite of what I expected
+ * when I wrote it. Two things came out of chasing that, on a 886x1920 frame:
+ *
+ * - **Nothing to average is not a special case, it is the common one.** A
+ *   capture asks for 960 from an 886-wide frame, so every "box" was one pixel
+ *   and the filter did 1.7 million single-element averages for no effect:
+ *   122 ms, against 8 ms for the row copy it should have been.
+ * - **The column bounds are the same on every row.** Computing them per pixel
+ *   spent two divisions and two floors half a million times: 30.7 ms to 26.8.
+ *
+ * A separable two-pass version — narrow each source row, then average the
+ * bands — was also tried, and was *worse*: 52 ms, because the intermediate is
+ * 2.8 million floats and paying for that memory costs more than the arithmetic
+ * it saves. Measured, discarded, and written down so it is not tried twice.
  */
 export function toFrameImage(
-  pixels: ArrayLike<number>,
+  pixels: Uint8Array | Uint8ClampedArray,
   source: { width: number; height: number },
   maxWidth: number,
   invertY: boolean,
@@ -67,25 +84,44 @@ export function toFrameImage(
   const w = Math.max(1, Math.round(sw * scale));
   const h = Math.max(1, Math.round(sh * scale));
   const out = new Uint8ClampedArray(w * h * 4);
+  const rowBytes = w * 4;
+
+  // Full size: there is nothing to average, only rows to put the right way up.
+  if (w === sw && h === sh) {
+    for (let y = 0; y < h; y++) {
+      const src = y * rowBytes;
+      out.set(pixels.subarray(src, src + rowBytes), (invertY ? h - 1 - y : y) * rowBytes);
+    }
+    for (let i = 3; i < out.length; i += 4) out[i] = 255;
+    return new ImageData(out, w, h);
+  }
+
+  // Hoisted out of the pixel loop: every row's columns fall the same way.
+  const x0s = new Int32Array(w);
+  const x1s = new Int32Array(w);
+  for (let x = 0; x < w; x++) {
+    const a = Math.floor((x * sw) / w);
+    x0s[x] = a;
+    x1s[x] = Math.max(a + 1, Math.floor(((x + 1) * sw) / w));
+  }
 
   for (let y = 0; y < h; y++) {
     const y0 = Math.floor((y * sh) / h);
     const y1 = Math.max(y0 + 1, Math.floor(((y + 1) * sh) / h));
     // Flipping the destination row is the same as mirroring the source box,
     // and it keeps the averaging window contiguous in the source.
-    const dstRow = invertY ? h - 1 - y : y;
-    for (let x = 0; x < w; x++) {
-      const x0 = Math.floor((x * sw) / w);
-      const x1 = Math.max(x0 + 1, Math.floor(((x + 1) * sw) / w));
-      let r = 0; let g = 0; let b = 0; let n = 0;
+    let d = (invertY ? h - 1 - y : y) * rowBytes;
+    for (let x = 0; x < w; x++, d += 4) {
+      const x0 = x0s[x];
+      const x1 = x1s[x];
+      const n = (x1 - x0) * (y1 - y0);
+      let r = 0; let g = 0; let b = 0;
       for (let sy = y0; sy < y1; sy++) {
         let i = (sy * sw + x0) * 4;
         for (let sx = x0; sx < x1; sx++, i += 4) {
           r += pixels[i]; g += pixels[i + 1]; b += pixels[i + 2];
-          n++;
         }
       }
-      const d = (dstRow * w + x) * 4;
       out[d] = r / n; out[d + 1] = g / n; out[d + 2] = b / n; out[d + 3] = 255;
     }
   }

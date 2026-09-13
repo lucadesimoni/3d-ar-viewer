@@ -58,6 +58,27 @@ describe('where the picture comes from, said out loud', () => {
     }
   });
 
+  it('records the session\u2019s own field of view, not the passthrough crop', async () => {
+    // A capture is evidence only if it can be re-projected later, and that
+    // needs the lens it was taken through. A device log carried `fovDeg: 49`
+    // in its captures while the same report said the session measured 72.18:
+    // `visibleFovDeg` is the assumed 60 degrees narrowed by the `object-fit:
+    // cover` crop of a video element that does not exist in a session.
+    const { manager, hook } = await inSession();
+    try {
+      const passthrough = manager.cameraPose().fovDeg;
+      hook.onStateChange?.(true);
+      // In a session Babylon's XR camera carries the platform's own angle.
+      manager.scene.activeCamera!.fov = (72.18 * Math.PI) / 180;
+      expect(manager.cameraPose().fovDeg).toBeCloseTo(72.18, 1);
+      expect(manager.cameraPose().fovDeg).not.toBeCloseTo(passthrough, 1);
+      // And it agrees with what the rest of the report says about the session.
+      expect(manager.renderStats().fovDeg).toBeCloseTo(manager.cameraPose().fovDeg, 1);
+    } finally {
+      manager.dispose();
+    }
+  });
+
   it('reports no readback cost until there has been a readback', async () => {
     const { manager, hook } = await inSession();
     try {

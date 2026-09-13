@@ -97,6 +97,19 @@ describe('the camera image, the right way up', () => {
     expect(rowMean(image, 2)).toBe(255);
     expect(rowMean(image, H - 3)).toBe(0);
   });
+
+  it('rights the rows on the scaled path too, not just the full-size one', () => {
+    // Two paths now: a full-size frame is a row copy, a reduced one goes
+    // through the box filter. Each has its own flip, so each needs its own
+    // check — a test that only ever exercises one of them would let the other
+    // ship upside down.
+    const src = frame(W, H);
+    src.blockBottomUp(0, 0, W, 40);     // stored at the bottom, belongs on top
+    const scaled = toFrameImage(src.px, { width: W, height: H }, W / 4, true)!;
+    expect(scaled.width).toBe(W / 4);
+    expect(rowMean(scaled, 2)).toBe(255);
+    expect(rowMean(scaled, scaled.height - 3)).toBe(0);
+  });
 });
 
 describe('scaling down to the working size', () => {
@@ -143,8 +156,12 @@ describe('scaling down to the working size', () => {
     const px = new Uint8Array(4 * 4 * 4);
     px.fill(120);
     for (let i = 3; i < px.length; i += 4) px[i] = 0;
-    const image = toFrameImage(px, { width: 4, height: 4 }, 4, false)!;
-    for (let i = 3; i < image.data.length; i += 4) expect(image.data[i]).toBe(255);
+    // Both paths: the row copy carries the source alpha across, the box filter
+    // never reads it at all.
+    for (const maxWidth of [4, 2]) {
+      const image = toFrameImage(px, { width: 4, height: 4 }, maxWidth, false)!;
+      for (let i = 3; i < image.data.length; i += 4) expect(image.data[i]).toBe(255);
+    }
   });
 
   it('answers nothing rather than guessing, when there is nothing to answer with', () => {

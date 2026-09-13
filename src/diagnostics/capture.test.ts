@@ -52,6 +52,15 @@ describe('capturing the frame that matters', () => {
     expect(capture.parts[0]).toMatchObject({ onScreen: true, roi: [1, 2, 3, 4] });
   });
 
+  it('says how much of the assembly was actually in the picture', async () => {
+    // Two captures came back from a device with nothing in either — the
+    // operator had walked two metres past the assembly — and nothing on
+    // screen said so. A frame with no parts in it is not evidence of
+    // anything, and that is worth knowing while the phone is still in hand.
+    const result = await captureFrame(null, fakeManager('xr-raw'));
+    expect(result).toMatchObject({ ok: true, onScreen: 10, parts: 10 });
+  });
+
   it('carries what the readback cost, which is the open question about it', async () => {
     await captureFrame(null, fakeManager('xr-raw'));
     const entry = logEntries().find((e) => e.message === 'frame captured');
