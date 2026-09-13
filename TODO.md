@@ -80,6 +80,18 @@ error · **unverified** = correct as far as it can be tested here · **chore**.
 - **unverified — WebXR session entry on a headset.** Entering, the DOM overlay
   and the hit-test reticle are asserted only through the refusal path in CI
   (which must fall back to the camera). Android phones have been tested by hand.
+- **unverified — what reading the camera out of a WebXR session costs.** Until
+  now the vision path did not run inside a session *at all*: the frame loop was
+  built on the camera-passthrough path, and `startXr` returns before ever
+  reaching it. So on Android — the mode with the good pose — the app never
+  looked at its own camera, while `camera-access` sat granted and `xr.ts` held
+  the texture. It runs there now, on the recognition interval, reading the
+  session's camera texture (`src/render/babylon/cameraFrame.ts`). What one
+  readback costs on a real device is measured but not yet known:
+  `render.frameReadbackMs` and `frameScaleMs` in a diagnostics file carry it,
+  alongside `render.frameSource` (`video` / `xr-raw` / `xr-blind`). If the
+  readback dominates, the next step is a GPU-side resize rather than reading the
+  full 886x1920 frame back and scaling it in JavaScript.
 - **unverified — performance tiering on a real iPad.** The device tier decides
   pixel ratio, target frame rate and recognition interval; a software renderer
   reports `low` here, so the `high` path is untested in anger. `src/render/perf.ts`

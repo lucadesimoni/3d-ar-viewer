@@ -339,6 +339,181 @@ export function useArController(
    * debug from one report. This is the only one, and the camera teardown in it
    * is a no-op when the camera path never ran.
    */
+  /**
+   * Start the frame loop that looks at the camera.
+   *
+   * One loop, two sources. It used to exist only on the camera-passthrough
+   * path — built inside `enterAr` after `startCamera`, which `startXr` returns
+   * before ever reaching. So in an immersive session there was no vision loop
+   * at all: not the grid recognition, not the object anchor, nothing. On
+   * Android, the mode with the good pose, the app never looked at its own
+   * camera. `camera-access` had been granted the whole time and `xr.ts` was
+   * already holding the texture.
+   *
+   * `source` says where a frame comes from, and that is the only difference:
+   * the `<video>` element, read synchronously, or the session's own camera
+   * texture, which has to come back off the GPU first.
+   */
+  const startVisionLoop = useCallback((
+    manager: SceneManager | undefined,
+    video: HTMLVideoElement | undefined,
+    assembly: AssemblyDef,
+    source: 'video' | 'xr',
+  ): void => {
+    // Frame loop. Two jobs at two very different rates, driven off one capture:
+    // the object anchor runs as fast as the device can take it, because that is
+    // what makes the overlay follow the operator, while the CV/ML pipeline stays
+    // on its slow interval because it is comparatively enormous.
+    const perf = detectPerfProfile();
+    const trackIntervalMs = Math.max(30, Math.round(2000 / perf.targetFps));
+    objectAnchor.current = assembly.recognition
+      ? new ObjectAnchorTracker(assembly.recognition, { detectIntervalMs: perf.recognitionIntervalMs })
+      : undefined;
+
+    let lastTrack = 0;
+    let lastPipeline = 0;
+    let busyPipeline: RecognitionPipeline | undefined;
+    /** A camera readback in flight — never ask for a second one behind it. */
+    let busyFrame = false;
+    /**
+     * Start the interval again from when the last capture *finished*.
+     *
+     * The due-time is otherwise measured from when the frame was asked for,
+     * so a readback that takes longer than the interval comes back already
+     * overdue and the next one starts immediately — a slow device would
+     * spend every millisecond it has pulling pixels off the GPU. Handled on
+     * the loop's own clock rather than by reading a second one.
+     */
+    let restartInterval = false;
+
+    /**
+     * Everything that happens once a frame has been captured.
+     *
+     * Split out from the loop because the two sources answer at different
+     * times: the passthrough `<video>` is there to be read synchronously, and
+     * the session's camera texture has to come back off the GPU first.
+     */
+    const useFrame = (
+      image: ImageData,
+      now: number,
+      frameState: ReturnType<typeof useStore.getState>,
+      anchorDue: boolean,
+      pipeline: RecognitionPipeline | undefined,
+      pipelineDue: boolean,
+    ): void => {
+      if (anchorDue) {
+        lastTrack = now;
+        if (useStore.getState().arSettings.autoRecognize) {
+          const target = frameState.assembly.recognition;
+          const anchored = target && applyObjectAnchor(objectAnchor.current!, image, now, manager, target);
+          if (anchored) {
+            stopPlacement.current?.();
+            stopPlacement.current = undefined;
+            if (previewTimer.current) window.clearTimeout(previewTimer.current);
+          }
+        } else {
+          objectAnchor.current!.reset();
+        }
+      }
+
+      if (pipelineDue) {
+        lastPipeline = now;
+        busyPipeline = pipeline;
+        const generation = recognitionGeneration.current;
+        const cameraTracker = trackerRef.current;
+        void pipeline!.process(image, inspectionRoi(manager, image, frameState))
+          .then((result) => {
+            // Not "are we in XR" but "are we still where this frame came
+            // from": a result captured inside a session is exactly the result
+            // a session wants, and only a change of mode makes it stale.
+            if (generation !== recognitionGeneration.current || pipelineRef.current !== pipeline
+              || trackerRef.current !== cameraTracker || cameraSuspended.current
+              || (xrSession.current !== undefined) !== inXr) return;
+            // Colour-coded discrepancy: compare confirmed tracks against the
+            // parts the active step expects, and publish it for the overlay.
+            const st = useStore.getState();
+            if (st.assembly !== frameState.assembly || st.activeStepId !== frameState.activeStepId) return;
+            setPipelineStatus(pipeline!.status());
+            if (!result) { st.setRecognition(undefined); return; }
+            st.setRecognition(classifyRecognition(result.tracks, labelInfoFor(st), result.ts));
+          })
+          .catch((error) => {
+            if (generation === recognitionGeneration.current && pipelineRef.current === pipeline) {
+              const status = pipeline!.status();
+              setPipelineStatus({
+                ...status, errors: { ...status.errors, detector: `Inference failed: ${String(error)}` },
+              });
+              useStore.getState().setRecognition(undefined);
+            }
+          })
+          .finally(() => { if (busyPipeline === pipeline) busyPipeline = undefined; });
+      }
+    };
+
+    const inXr = source === 'xr';
+
+    const loop = (now: number): void => {
+      rafRef.current = requestAnimationFrame(loop);
+      if (cameraSuspended.current) return;
+      // Each source has its own precondition. The passthrough path needs the
+      // device tracker that drives its camera and a video element with a
+      // frame in it; a session needs neither — it has the platform's pose and
+      // its own camera texture. Requiring the tracker in both is what a
+      // single shared guard would do, and in a session it is never there.
+      if (inXr ? xrSession.current === undefined
+        : (!trackerRef.current || !video || video.readyState < 2)) return;
+      if (restartInterval) {
+        restartInterval = false;
+        lastTrack = now;
+        lastPipeline = now;
+        return;
+      }
+      const frameState = useStore.getState();
+      // The tracker wants frames as fast as it can get them on the passthrough
+      // path, because there it *is* what holds the overlay still between
+      // detections. In a session it is not: the XR anchor holds the overlay,
+      // and recognition only has to re-register when the object comes into
+      // view. That is a once-a-second job, and every frame in a session costs
+      // a multi-megabyte readback — so it runs on the slow interval there.
+      const frameIntervalMs = inXr ? perf.recognitionIntervalMs : trackIntervalMs;
+      const anchorDue = objectAnchor.current !== undefined && now - lastTrack >= frameIntervalMs;
+      // No part-recognition model, no part recognition. Nothing is bundled and
+      // nothing is fine-tuned on these parts, so unless a deployment supplies
+      // VITE_DETECTOR_MODEL_URL there is no detector — and running the frame
+      // through an empty pipeline only produced an empty result, which the
+      // banner then reported as "Looking for Base plate…" forever. Claiming to
+      // search for something that can never be found is worse than silence.
+      const pipeline = pipelineRef.current;
+      const canRecognize = pipeline !== undefined && pipeline.status().detector;
+      // A replaced pipeline must not wait for inference on the disposed model.
+      const pipelineDue = canRecognize && busyPipeline !== pipeline
+        && now - lastPipeline >= perf.recognitionIntervalMs;
+      if (!anchorDue && !pipelineDue) return;
+
+      if (inXr) {
+        // A readback is several megabytes off the GPU; queueing a second one
+        // behind the first turns a slow frame into a growing backlog.
+        if (busyFrame || !manager?.hasXrCameraFrame) return;
+        const session = xrSession.current;
+        busyFrame = true;
+        void manager.xrCameraFrame(FRAME_WIDTH)
+          .then((image) => {
+            if (!image || xrSession.current !== session || cameraSuspended.current) return;
+            useFrame(image, now, frameState, anchorDue, pipeline, pipelineDue);
+          })
+          .catch(() => {})
+          .finally(() => { busyFrame = false; restartInterval = true; });
+        return;
+      }
+
+      const height = Math.round((FRAME_WIDTH * video!.videoHeight) / (video!.videoWidth || 640));
+      const image = toImageData(video!, FRAME_WIDTH, height);
+      if (!image) return;
+      useFrame(image, now, frameState, anchorDue, pipeline, pipelineDue);
+    };
+    rafRef.current = requestAnimationFrame(loop);
+  }, []);
+
   const startXr = useCallback(async (
     manager: SceneManager, current: () => boolean,
   ): Promise<boolean> => {
@@ -405,12 +580,17 @@ export function useArController(
     store.setAnchor(undefined, 0, 'awaiting');
     armPlacement(manager, 'webxr');
     setArActive(true);
+    // And the thing that was never here: a session that looks at its own
+    // camera. Started after the camera path's loop has been torn down above,
+    // so there is exactly one loop on `rafRef` at a time, and `stop()` cancels
+    // whichever it is.
+    startVisionLoop(manager, undefined, useStore.getState().assembly, 'xr');
 
     const lock = await takeWakeLock();
     if (current()) wakeLock.current = lock;
     else void lock?.release().catch(() => undefined);
     return true;
-  }, [stop, videoRef]);
+  }, [startVisionLoop, stop, videoRef]);
 
   const enterAr = useCallback(async () => {
     if (arActive || entryPending.current) { stop(); return; }
@@ -511,87 +691,7 @@ export function useArController(
 
     }
 
-    // Frame loop. Two jobs at two very different rates, driven off one capture:
-    // the object anchor runs as fast as the device can take it, because that is
-    // what makes the overlay follow the operator, while the CV/ML pipeline stays
-    // on its slow interval because it is comparatively enormous.
-    const perf = detectPerfProfile();
-    const trackIntervalMs = Math.max(30, Math.round(2000 / perf.targetFps));
-    objectAnchor.current = assembly.recognition
-      ? new ObjectAnchorTracker(assembly.recognition, { detectIntervalMs: perf.recognitionIntervalMs })
-      : undefined;
-
-    let lastTrack = 0;
-    let lastPipeline = 0;
-    let busyPipeline: RecognitionPipeline | undefined;
-
-    const loop = (now: number): void => {
-      rafRef.current = requestAnimationFrame(loop);
-      if (video.readyState < 2 || !trackerRef.current || cameraSuspended.current || xrSession.current) return;
-      const frameState = useStore.getState();
-      const anchorDue = objectAnchor.current !== undefined && now - lastTrack >= trackIntervalMs;
-      // No part-recognition model, no part recognition. Nothing is bundled and
-      // nothing is fine-tuned on these parts, so unless a deployment supplies
-      // VITE_DETECTOR_MODEL_URL there is no detector — and running the frame
-      // through an empty pipeline only produced an empty result, which the
-      // banner then reported as "Looking for Base plate…" forever. Claiming to
-      // search for something that can never be found is worse than silence.
-      const pipeline = pipelineRef.current;
-      const canRecognize = pipeline !== undefined && pipeline.status().detector;
-      // A replaced pipeline must not wait for inference on the disposed model.
-      const pipelineDue = canRecognize && busyPipeline !== pipeline
-        && now - lastPipeline >= perf.recognitionIntervalMs;
-      if (!anchorDue && !pipelineDue) return;
-
-      const height = Math.round((FRAME_WIDTH * video.videoHeight) / (video.videoWidth || 640));
-      const image = toImageData(video, FRAME_WIDTH, height);
-      if (!image) return;
-
-      if (anchorDue) {
-        lastTrack = now;
-        if (useStore.getState().arSettings.autoRecognize) {
-          const target = frameState.assembly.recognition;
-          const anchored = target && applyObjectAnchor(objectAnchor.current!, image, now, manager, target);
-          if (anchored) {
-            stopPlacement.current?.();
-            stopPlacement.current = undefined;
-            if (previewTimer.current) window.clearTimeout(previewTimer.current);
-          }
-        } else {
-          objectAnchor.current!.reset();
-        }
-      }
-
-      if (pipelineDue) {
-        lastPipeline = now;
-        busyPipeline = pipeline;
-        const generation = recognitionGeneration.current;
-        const cameraTracker = trackerRef.current;
-        void pipeline!.process(image, inspectionRoi(manager, image, frameState))
-          .then((result) => {
-            if (generation !== recognitionGeneration.current || pipelineRef.current !== pipeline
-              || trackerRef.current !== cameraTracker || cameraSuspended.current || xrSession.current) return;
-            // Colour-coded discrepancy: compare confirmed tracks against the
-            // parts the active step expects, and publish it for the overlay.
-            const st = useStore.getState();
-            if (st.assembly !== frameState.assembly || st.activeStepId !== frameState.activeStepId) return;
-            setPipelineStatus(pipeline!.status());
-            if (!result) { st.setRecognition(undefined); return; }
-            st.setRecognition(classifyRecognition(result.tracks, labelInfoFor(st), result.ts));
-          })
-          .catch((error) => {
-            if (generation === recognitionGeneration.current && pipelineRef.current === pipeline) {
-              const status = pipeline!.status();
-              setPipelineStatus({
-                ...status, errors: { ...status.errors, detector: `Inference failed: ${String(error)}` },
-              });
-              useStore.getState().setRecognition(undefined);
-            }
-          })
-          .finally(() => { if (busyPipeline === pipeline) busyPipeline = undefined; });
-      }
-    };
-    rafRef.current = requestAnimationFrame(loop);
+    startVisionLoop(manager, video, assembly, 'video');
     } catch (error) {
       if (current()) {
         stop();
@@ -600,7 +700,7 @@ export function useArController(
     } finally {
       if (generation === sessionGeneration.current) entryPending.current = false;
     }
-  }, [arActive, capabilities, assembly, stop, startCamera, videoRef]);
+  }, [arActive, capabilities, assembly, startVisionLoop, stop, startCamera, videoRef]);
 
   /**
    * Ask for a real AR session again, from this tap.

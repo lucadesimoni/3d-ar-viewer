@@ -4,6 +4,7 @@ import { WebXRState } from '@babylonjs/core/XR/webXRTypes';
 import { Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import type { Scene } from '@babylonjs/core/scene';
 import type { IWebXRHitResult } from '@babylonjs/core/XR/features/WebXRHitTest';
+import type { BaseTexture } from '@babylonjs/core/Materials/Textures/baseTexture';
 import type { Pose } from '../../engine/types';
 import { createSettleTracker, type TrackingState } from '../../engine/tracking/settle';
 import { logEvent } from '../../diagnostics/log';
@@ -50,6 +51,16 @@ export interface XrHooks {
    * the numbers change.
    */
   onCameraIntrinsics?: (intrinsics: XrCameraIntrinsics) => void;
+  /**
+   * The camera image itself, as the texture the platform is filling.
+   *
+   * Reported when the texture the session hands over changes — which is once
+   * at the start, not thirty times a second — and again as `undefined` when
+   * the session ends and the feature disposes it. Whoever holds it reads
+   * pixels off it at their own rate; see `cameraFrame.ts` for what that costs
+   * and which way up the rows arrive.
+   */
+  onCameraTexture?: (texture: BaseTexture | undefined) => void;
 }
 
 export interface XrController {
@@ -382,6 +393,8 @@ export async function prepareImmersiveAr(
   /** The hit-test result behind the reticle, which an anchor is created from. */
   let lastHit: IWebXRHitResult | undefined;
   let anchors: InstanceType<typeof WebXRAnchorSystem> | undefined;
+  /** The camera image the session is filling, while it holds one. */
+  let cameraTexture: BaseTexture | undefined;
   /** The anchor the assembly is currently riding, if the device grants them. */
   let placedAnchorId: number | undefined;
   const settle = createSettleTracker();
@@ -567,6 +580,14 @@ export async function prepareImmersiveAr(
           granted: true,
           ...(measured ? { intrinsics: measured } : {}),
         };
+        // The image, once, rather than a notification per frame: the texture
+        // object is stable for the session, and it is the reader that decides
+        // how often to pull pixels out of it.
+        const texture = raw.texturesData?.[0];
+        if (texture !== cameraTexture) {
+          cameraTexture = texture;
+          hooks.onCameraTexture?.(texture);
+        }
         // Every frame carries these; only a change is worth telling anyone.
         if (measured && changed) {
           logEvent('xr', 'camera intrinsics granted', {
@@ -692,6 +713,13 @@ export async function prepareImmersiveAr(
       clearPlacement(false);
       if (!everEntered) return;
       everEntered = false;
+      // The feature disposes its textures on detach, so anything still
+      // holding this one is holding a disposed texture. Say so before the
+      // state change, while it is still obvious why.
+      if (cameraTexture) {
+        cameraTexture = undefined;
+        hooks.onCameraTexture?.(undefined);
+      }
       hooks.onStateChange?.(false);
     }
   });
