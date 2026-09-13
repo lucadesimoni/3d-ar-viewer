@@ -73,7 +73,18 @@ export async function captureFrame(
   if (source === 'xr-raw') {
     const image = await manager.xrCameraFrame(CAPTURE_WIDTH);
     if (!image) {
-      return { ok: false, reason: 'The session held a camera a moment ago and would not hand over a frame.' };
+      // Two different failures, and the difference is the whole story: no
+      // frame came back at all, or one came back with nothing in it. A blank
+      // frame was attached to a diagnostics file once and reported as a
+      // success — 886x1920 pixels of zero — so it is named now rather than
+      // saved.
+      const blank = manager.cameraFrameCost()?.uniform === true;
+      return {
+        ok: false,
+        reason: blank
+          ? 'The camera handed back a blank frame — nothing was attached.'
+          : 'The session would not hand over a camera frame.',
+      };
     }
     canvas.width = image.width;
     canvas.height = image.height;

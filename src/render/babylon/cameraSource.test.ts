@@ -44,13 +44,13 @@ describe('where the picture comes from, said out loud', () => {
       hook.onStateChange?.(true);
       expect(manager.renderStats().frameSource).toBe('xr-blind');
 
-      hook.onCameraTexture?.(fakeTexture());
+      hook.onCameraFrame?.(fakeTexture());
       expect(manager.renderStats().frameSource).toBe('xr-raw');
       expect(manager.hasXrCameraFrame).toBe(true);
 
       // The feature disposes its textures on detach; holding one past that is
       // holding a handle that throws.
-      hook.onCameraTexture?.(undefined);
+      hook.onCameraFrame?.(undefined);
       expect(manager.renderStats().frameSource).toBe('xr-blind');
       expect(manager.hasXrCameraFrame).toBe(false);
     } finally {
@@ -83,7 +83,7 @@ describe('where the picture comes from, said out loud', () => {
     const { manager, hook } = await inSession();
     try {
       hook.onStateChange?.(true);
-      hook.onCameraTexture?.(fakeTexture());
+      hook.onCameraFrame?.(fakeTexture());
       expect(manager.cameraFrameCost()).toBeUndefined();
       expect(manager.renderStats().frameReadbackMs).toBeUndefined();
     } finally {

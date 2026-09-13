@@ -50,6 +50,8 @@ import {
   type RawIntrinsics,
 } from '../../perception/intrinsics';
 import { roiForBox, type PartRoi } from '../../perception/roi';
+import { readCameraFrame } from './cameraFrame';
+import type { BaseTexture as XrCameraTexture } from '@babylonjs/core/Materials/Textures/baseTexture';
 import { meshHalfExtents } from '../../engine/collision';
 import type { TrackingState } from '../../engine/tracking/settle';
 import {
@@ -135,6 +137,15 @@ interface PartVisual {
  * minimal mesh mutation to get there. That separation keeps React out of the
  * per-frame hot path — the 60 fps render loop never triggers a reconcile.
  */
+/**
+ * How long a camera-frame request waits for an XR frame to serve it, ms.
+ *
+ * Generous against a slow frame, short against a session that has stopped
+ * producing them: nobody should be left holding a promise that a dead session
+ * was going to resolve.
+ */
+const CAMERA_FRAME_TIMEOUT_MS = 1500;
+
 export class SceneManager {
   readonly engine: AbstractEngine;
   readonly renderBackend: RenderBackendKind;
@@ -348,9 +359,21 @@ export class SceneManager {
    * disposes its textures on detach, and a disposed texture is not a fact
    * about the device — it is a handle that will throw.
    */
-  private xrCameraTexture: import('@babylonjs/core/Materials/Textures/baseTexture').BaseTexture | undefined;
+  private xrCameraTexture: XrCameraTexture | undefined;
   /** What the last readback cost, for the report to carry off the device. */
-  private lastCameraFrame: { readbackMs: number; scaleMs: number; sourceSize: [number, number] } | undefined;
+  private lastCameraFrame: { readbackMs: number; scaleMs: number; sourceSize: [number, number]; uniform: boolean } | undefined;
+  /**
+   * Somebody is waiting for a camera frame, and the next XR frame will serve it.
+   *
+   * A request rather than a pull, because the pixels can only be taken from
+   * inside the session's own frame callback — see `onCameraFrame` in `xr.ts`
+   * for the device log that established that the hard way.
+   */
+  private cameraFrameWanted: {
+    maxWidth: number;
+    resolve: (image: ImageData | undefined) => void;
+    timer: number;
+  } | undefined;
   /** The last vertical FOV measured from an XR view, degrees. Same reasoning. */
   private measuredFovDeg = 0;
   /**
@@ -926,14 +949,37 @@ export class SceneManager {
    * report, and they are what decides whether this can run more often than
    * once a second.
    */
-  async xrCameraFrame(maxWidth: number): Promise<ImageData | undefined> {
-    const texture = this.xrCameraTexture;
-    if (!texture) return undefined;
-    const { readCameraFrame } = await import('./cameraFrame');
-    const frame = await readCameraFrame(texture, maxWidth);
-    // The session may have ended while the readback was in flight, in which
-    // case this frame describes a camera that is no longer attached.
-    if (!frame || this.xrCameraTexture !== texture) return undefined;
+  xrCameraFrame(maxWidth: number): Promise<ImageData | undefined> {
+    if (!this.xrCameraTexture) return Promise.resolve(undefined);
+    // One waiter. A second asker joins the first rather than queueing behind
+    // it — they both want "the current picture", and that is one readback.
+    const existing = this.cameraFrameWanted;
+    if (existing) return new Promise((resolve) => {
+      const earlier = existing.resolve;
+      existing.resolve = (image) => { earlier(image); resolve(image); };
+    });
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(() => {
+        // No XR frame came. The session ended, or its textures stopped
+        // updating; either way nobody should be left holding this promise.
+        this.serveCameraFrame(undefined);
+      }, CAMERA_FRAME_TIMEOUT_MS);
+      this.cameraFrameWanted = { maxWidth, resolve, timer };
+    });
+  }
+
+  /**
+   * Take the pixels, here, inside the frame that owns them.
+   *
+   * `readCameraFrame` is imported statically for this reason and no other: a
+   * dynamic import resolves on a later task, and by then the XR frame — and
+   * the only moment its camera texture holds anything — is over.
+   */
+  private takeCameraFrame(texture: XrCameraTexture): void {
+    const wanted = this.cameraFrameWanted;
+    if (!wanted) return;
+    const frame = readCameraFrame(texture, wanted.maxWidth);
+    if (!frame) { this.serveCameraFrame(undefined); return; }
     // Once per session, when the first frame actually arrives: the cost is the
     // open question this whole step exists to answer, and a log line carries it
     // off the device even when nobody exports the render block.
@@ -943,16 +989,30 @@ export class SceneManager {
         scaleMs: Number(frame.scaleMs.toFixed(1)),
         from: frame.sourceSize,
         to: [frame.image.width, frame.image.height],
+        // Whether there was anything in it. A uniform frame is not a picture,
+        // and one shipped as a successful capture once already.
+        uniform: frame.uniform,
       });
     }
     this.lastCameraFrame = {
       readbackMs: frame.readbackMs, scaleMs: frame.scaleMs, sourceSize: frame.sourceSize,
+      uniform: frame.uniform,
     };
-    return frame.image;
+    this.serveCameraFrame(frame.uniform ? undefined : frame.image);
+  }
+
+  private serveCameraFrame(image: ImageData | undefined): void {
+    const wanted = this.cameraFrameWanted;
+    if (!wanted) return;
+    this.cameraFrameWanted = undefined;
+    window.clearTimeout(wanted.timer);
+    wanted.resolve(image);
   }
 
   /** What the last camera readback cost, or nothing if there has been none. */
-  cameraFrameCost(): { readbackMs: number; scaleMs: number; sourceSize: [number, number] } | undefined {
+  cameraFrameCost(): {
+    readbackMs: number; scaleMs: number; sourceSize: [number, number]; uniform: boolean;
+  } | undefined {
     return this.lastCameraFrame;
   }
 
@@ -1408,11 +1468,17 @@ export class SceneManager {
         // the session too: it is a fact about the device's camera, and the
         // passthrough path has nothing better.
         onCameraIntrinsics: (intrinsics) => { this.xrRawIntrinsics = intrinsics; },
-        // The picture, not just the lens. Held while the session holds it and
-        // dropped the moment it does not — see the field for why.
-        onCameraTexture: (texture) => {
+        // The picture, not just the lens — taken here or not at all. This runs
+        // inside the XR frame, the only place the camera texture holds pixels,
+        // so a pending request is served synchronously from right here.
+        onCameraFrame: (texture) => {
           this.xrCameraTexture = texture;
-          if (!texture) this.lastCameraFrame = undefined;
+          if (!texture) {
+            this.lastCameraFrame = undefined;
+            this.serveCameraFrame(undefined);
+            return;
+          }
+          if (this.cameraFrameWanted) this.takeCameraFrame(texture);
         },
         onSelectAnchor: (pose) => {
           // Logged, not silent: a tap that moves the whole assembly and a tap
@@ -2224,6 +2290,8 @@ export class SceneManager {
     frameScaleMs?: number;
     /** Full size of the camera image before it was scaled down. */
     frameSourceSize?: [number, number];
+    /** The last frame read was all one colour — a read that found no picture. */
+    frameUniform?: boolean;
     cssSize: [number, number];
     bufferSize: [number, number];
     scaling: number;
@@ -2276,6 +2344,7 @@ export class SceneManager {
         frameReadbackMs: Number(this.lastCameraFrame.readbackMs.toFixed(1)),
         frameScaleMs: Number(this.lastCameraFrame.scaleMs.toFixed(1)),
         frameSourceSize: this.lastCameraFrame.sourceSize,
+        frameUniform: this.lastCameraFrame.uniform,
       } : {}),
       cssSize: [Math.round(rect.width), Math.round(rect.height)],
       // Measured *inside* a frame. Outside one, Babylon's framebuffer object is
