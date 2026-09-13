@@ -31,6 +31,8 @@ const f = vi.hoisted(() => {
       })),
       setArMode: vi.fn(),
       setPlacementActive: vi.fn(),
+      hasXrCameraFrame: true,
+      xrCameraFrame: vi.fn(async () => ({ width: 480, height: 640, data: new Uint8ClampedArray(4) })),
       cameraToWorld: vi.fn((pose) => pose),
       startGroundPlacement: vi.fn(() => stopPlacement),
       computeAnchorInFront: vi.fn(() => ({ position: [0, 0, 1], rotation: [0, 0, 0, 1] })),
@@ -373,6 +375,61 @@ describe('camera to WebXR handoff', () => {
     await act(async () => { await controller.retryWebXr(); });
     expect(useStore.getState().anchor).toBeUndefined();
     expect(f.manager.setPlacementActive).toHaveBeenLastCalledWith(true);
+  });
+
+  it('looks at the session\u2019s own camera, which it never used to do at all', async () => {
+    // The whole of Stage 0. The vision loop was built inside `enterAr` after
+    // the camera started, and `startXr` returns before ever reaching it \u2014 so
+    // in a session there was no loop: no grid recognition, no object anchor,
+    // nothing. On Android, the mode with the good pose, the app never looked
+    // at its own camera, while `camera-access` sat granted the whole time.
+    f.manager.startWebXr.mockResolvedValue(f.session);
+    await act(async () => { expect(await controller.retryWebXr()).toBe(true); });
+    f.manager.xrCameraFrame.mockClear();
+    f.pipeline.process.mockClear();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1100); });
+
+    expect(f.manager.xrCameraFrame).toHaveBeenCalledWith(480);
+    expect(f.pipeline.process).toHaveBeenCalled();
+    // The image inspected is the one the session handed over, not a frame
+    // scraped off a video element that does not exist in a session.
+    expect(f.pipeline.process.mock.calls[0][0]).toMatchObject({ width: 480, height: 640 });
+  });
+
+  it('asks for one frame at a time, however long the readback takes', async () => {
+    // A readback is megabytes off the GPU. Queueing a second behind the first
+    // turns a slow frame into a growing backlog, and the frames in that
+    // backlog describe where the camera *was*.
+    let finish!: (image: ImageData) => void;
+    f.manager.startWebXr.mockResolvedValue(f.session);
+    await act(async () => { expect(await controller.retryWebXr()).toBe(true); });
+    f.manager.xrCameraFrame.mockClear();
+    f.manager.xrCameraFrame.mockImplementationOnce(
+      () => new Promise((resolve) => { finish = resolve as (image: ImageData) => void; }),
+    );
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(f.manager.xrCameraFrame).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finish({ width: 480, height: 640, data: new Uint8ClampedArray(4) } as ImageData);
+      await vi.advanceTimersByTimeAsync(1100);
+    });
+    expect(f.manager.xrCameraFrame).toHaveBeenCalledTimes(2);
+  });
+
+  it('stays quiet in a session that will not hand its camera over', async () => {
+    // The iPad clip refuses `camera-access`. A session with no image must ask
+    // for nothing and claim nothing \u2014 not run the pipeline on a blank frame.
+    f.manager.hasXrCameraFrame = false;
+    f.manager.startWebXr.mockResolvedValue(f.session);
+    await act(async () => { expect(await controller.retryWebXr()).toBe(true); });
+    f.manager.xrCameraFrame.mockClear();
+    f.pipeline.process.mockClear();
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(f.manager.xrCameraFrame).not.toHaveBeenCalled();
+    expect(f.pipeline.process).not.toHaveBeenCalled();
+    f.manager.hasXrCameraFrame = true;
   });
 
   it('leaves the working camera placement intact when XR entry is refused', async () => {

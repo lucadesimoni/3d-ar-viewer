@@ -341,6 +341,16 @@ export class SceneManager {
    * same lens with nothing better than a 60-degree assumption.
    */
   private xrRawIntrinsics: RawIntrinsics | undefined;
+  /**
+   * The camera image the running session is filling, while it holds one.
+   *
+   * Not kept past the session, unlike the intrinsics above: the feature
+   * disposes its textures on detach, and a disposed texture is not a fact
+   * about the device — it is a handle that will throw.
+   */
+  private xrCameraTexture: import('@babylonjs/core/Materials/Textures/baseTexture').BaseTexture | undefined;
+  /** What the last readback cost, for the report to carry off the device. */
+  private lastCameraFrame: { readbackMs: number; scaleMs: number; sourceSize: [number, number] } | undefined;
   /** The last vertical FOV measured from an XR view, degrees. Same reasoning. */
   private measuredFovDeg = 0;
   /**
@@ -891,6 +901,62 @@ export class SceneManager {
   }
 
   /**
+   * Whether the running session can hand over its camera image.
+   *
+   * The answer is not "does the device support `camera-access`" but "is there
+   * a texture in hand right now" — a session can grant the feature and still
+   * be a frame or two away from filling it.
+   */
+  get hasXrCameraFrame(): boolean {
+    return this.xrCameraTexture !== undefined;
+  }
+
+  /**
+   * One frame of the session's own camera, scaled to the working width.
+   *
+   * This is the piece that was missing: inside an immersive session the whole
+   * vision path used to be switched off, because the only image the app knew
+   * how to get was the `<video>` element of the passthrough path — which does
+   * not exist in a session. So on Android, in the mode with the good pose, the
+   * app never looked at its camera at all. `camera-access` was granted the
+   * entire time.
+   *
+   * Costs are measured rather than assumed, and both halves are kept: pulling
+   * pixels off the GPU, and scaling them down. They go into the diagnostics
+   * report, and they are what decides whether this can run more often than
+   * once a second.
+   */
+  async xrCameraFrame(maxWidth: number): Promise<ImageData | undefined> {
+    const texture = this.xrCameraTexture;
+    if (!texture) return undefined;
+    const { readCameraFrame } = await import('./cameraFrame');
+    const frame = await readCameraFrame(texture, maxWidth);
+    // The session may have ended while the readback was in flight, in which
+    // case this frame describes a camera that is no longer attached.
+    if (!frame || this.xrCameraTexture !== texture) return undefined;
+    // Once per session, when the first frame actually arrives: the cost is the
+    // open question this whole step exists to answer, and a log line carries it
+    // off the device even when nobody exports the render block.
+    if (!this.lastCameraFrame) {
+      logEvent('xr', 'reading the session camera', {
+        readbackMs: Number(frame.readbackMs.toFixed(1)),
+        scaleMs: Number(frame.scaleMs.toFixed(1)),
+        from: frame.sourceSize,
+        to: [frame.image.width, frame.image.height],
+      });
+    }
+    this.lastCameraFrame = {
+      readbackMs: frame.readbackMs, scaleMs: frame.scaleMs, sourceSize: frame.sourceSize,
+    };
+    return frame.image;
+  }
+
+  /** What the last camera readback cost, or nothing if there has been none. */
+  cameraFrameCost(): { readbackMs: number; scaleMs: number; sourceSize: [number, number] } | undefined {
+    return this.lastCameraFrame;
+  }
+
+  /**
    * The best pinhole model available for a frame of this size.
    *
    * Everything that turns pixels into rays comes through here, so that one
@@ -1342,6 +1408,12 @@ export class SceneManager {
         // the session too: it is a fact about the device's camera, and the
         // passthrough path has nothing better.
         onCameraIntrinsics: (intrinsics) => { this.xrRawIntrinsics = intrinsics; },
+        // The picture, not just the lens. Held while the session holds it and
+        // dropped the moment it does not — see the field for why.
+        onCameraTexture: (texture) => {
+          this.xrCameraTexture = texture;
+          if (!texture) this.lastCameraFrame = undefined;
+        },
         onSelectAnchor: (pose) => {
           // Logged, not silent: a tap that moves the whole assembly and a tap
           // that does nothing are the two halves of the same bug report.
@@ -2137,6 +2209,21 @@ export class SceneManager {
     /** The camera model pixels are turned into rays with, and where it came from. */
     frameFovDeg: number;
     frameFovSource: IntrinsicsSource;
+    /**
+     * Where the picture the vision path looks at comes from.
+     *
+     * Three answers, because they need three different fixes. `video` is the
+     * passthrough path. `xr-raw` is a session handing over its own camera —
+     * what Android grants. `xr-blind` is a session that will not: the vision
+     * path has no image at all there, which is exactly the iPad clip's case
+     * and was, until now, silently every session's case.
+     */
+    frameSource: 'video' | 'xr-raw' | 'xr-blind';
+    /** What the last camera readback cost, ms — off the GPU, and scaling. */
+    frameReadbackMs?: number;
+    frameScaleMs?: number;
+    /** Full size of the camera image before it was scaled down. */
+    frameSourceSize?: [number, number];
     cssSize: [number, number];
     bufferSize: [number, number];
     scaling: number;
@@ -2184,6 +2271,12 @@ export class SceneManager {
       // and it can be a measurement where the screen figure is a guess.
       frameFovDeg: Number(this.frameIntrinsics({ width: 1000, height: 1000 }).fovDeg.toFixed(2)),
       frameFovSource: this.frameIntrinsics({ width: 1000, height: 1000 }).source,
+      frameSource: this.xrCameraTexture ? 'xr-raw' : (this.inXrSession ? 'xr-blind' : 'video'),
+      ...(this.lastCameraFrame ? {
+        frameReadbackMs: Number(this.lastCameraFrame.readbackMs.toFixed(1)),
+        frameScaleMs: Number(this.lastCameraFrame.scaleMs.toFixed(1)),
+        frameSourceSize: this.lastCameraFrame.sourceSize,
+      } : {}),
       cssSize: [Math.round(rect.width), Math.round(rect.height)],
       // Measured *inside* a frame. Outside one, Babylon's framebuffer object is
       // null and these report the canvas instead — so a session used to report

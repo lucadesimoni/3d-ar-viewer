@@ -130,6 +130,18 @@ check('and reports the camera model, with its own provenance',
 check('and the camera model follows the operator, which nothing used to',
   report.render?.frameFovSource === 'operator' && Math.abs(report.render.frameFovDeg - 80) < 0.01,
   `${report.render?.frameFovDeg}° from the slider at 80°`);
+// Where the vision path's picture comes from, which the report never said —
+// and the answer, in a session, used to be "nowhere": the frame loop was built
+// on the camera path and an XR session returns before ever reaching it. A
+// session that hands its camera over and one that refuses look identical in
+// every other field, so they are named apart here: `xr-raw` against
+// `xr-blind`, the iPad clip's case.
+check('it says where the picture the vision path looks at comes from',
+  ['video', 'xr-raw', 'xr-blind'].includes(report.render?.frameSource),
+  `${report.render?.frameSource}`);
+check('and on the camera path that is the video, not a session it is not in',
+  report.render?.frameSource === 'video',
+  `${report.render?.frameSource}, xr=${report.render?.xr}`);
 check('it reports what was rendered into, measured inside a frame',
   Array.isArray(report.render?.bufferSize) && report.render.bufferSize[0] > 0,
   `${report.render?.bufferSize?.join('x')}`);
