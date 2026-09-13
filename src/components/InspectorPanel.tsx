@@ -21,7 +21,7 @@ export function InspectorPanel(): JSX.Element | null {
     <div className="inspector">
       <header>
         <h3>{part.name}</h3>
-        <button className="close" onClick={() => selectPart(undefined)}>✕</button>
+        <button className="close" aria-label="Close part details" onClick={() => selectPart(undefined)}>✕</button>
       </header>
       <dl className="spec">
         {part.sku && (<><dt>Part no.</dt><dd>{part.sku}</dd></>)}
