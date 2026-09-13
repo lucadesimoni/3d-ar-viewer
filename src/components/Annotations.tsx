@@ -113,26 +113,36 @@ export function Annotations(): JSX.Element | null {
   return (
     <>
       <div className="annotations">
-        {pins.map((pin) => (
-          <button
-            key={pin.id}
-            className={`note-pin ${openId === pin.id ? 'open' : ''}`}
-            style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
-            onClick={() => setOpenId(openId === pin.id ? undefined : pin.id)}
-          >
-            <span className="note-dot" aria-hidden>✎</span>
-            <span className="note-text">{pin.text}</span>
-            {openId === pin.id && (
-              <span
-                className="note-delete"
-                role="button"
-                tabIndex={0}
-                aria-label="Delete note"
-                onClick={(e) => { e.stopPropagation(); removeAnnotation(pin.id); setOpenId(undefined); }}
-              >✕</span>
-            )}
-          </button>
-        ))}
+        {pins.map((pin) => {
+          const open = openId === pin.id;
+          return (
+            <div
+              key={pin.id}
+              className={`note-pin ${open ? 'open' : ''}`}
+              style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
+            >
+              {/* Two separate buttons, not one button holding a second
+                  focusable inside it — that shape let a mouse delete a note
+                  and left a keyboard user unable to reach the control at all. */}
+              <button
+                className="note-toggle"
+                aria-expanded={open}
+                aria-label={open ? `${pin.text} — collapse` : pin.text}
+                onClick={() => setOpenId(open ? undefined : pin.id)}
+              >
+                <span className="note-dot" aria-hidden="true">✎</span>
+                <span className="note-text">{pin.text}</span>
+              </button>
+              {open && (
+                <button
+                  className="note-delete"
+                  aria-label="Delete note"
+                  onClick={() => { removeAnnotation(pin.id); setOpenId(undefined); }}
+                >✕</button>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {annotating && !draft && (

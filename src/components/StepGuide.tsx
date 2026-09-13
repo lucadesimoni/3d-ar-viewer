@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../state/store';
 import { ASSEMBLIES } from '../data';
 import { useUiConfig } from '../ui/UiConfigContext';
@@ -18,6 +19,32 @@ export function StepGuide(): JSX.Element {
   const active = sequence.steps.find((s) => s.step.id === activeStepId);
   const remaining = Math.round(sequence.remainingS / 60);
 
+  // The card that most needs to fit is the one a short phone's 38dvh panel
+  // cannot always hold — a caution line, tools, and three buttons can run
+  // past it, and the card scrolls internally rather than losing the "Sign
+  // off" button under the tab bar (see the mobile rule for `.active-card`).
+  // A box that clips and just stops looks identical to one that is broken;
+  // this says, measured rather than guessed, whether there is more to see.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [hasMore, setHasMore] = useState(false);
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) { setHasMore(false); return; }
+    const update = (): void => {
+      setHasMore(el.scrollHeight - el.clientHeight - el.scrollTop > 4);
+    };
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener('resize', update);
+    return () => {
+      el.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+      ro.disconnect();
+    };
+  }, [active?.step.id]);
+
   return (
     <aside className="panel step-guide">
       <header className="panel-head">
@@ -26,6 +53,11 @@ export function StepGuide(): JSX.Element {
             <select
               className="assembly-picker"
               value={assembly.id}
+              // The closed control clips a long name with no ellipsis and no
+              // other way to read the rest of it — `title` is the cheap,
+              // native way to still get it, on any device that hovers or
+              // long-presses.
+              title={assembly.name}
               onChange={(e) => {
                 const next = ASSEMBLIES.find((a) => a.id === e.target.value);
                 if (next) useStore.getState().loadAssembly(next);
@@ -60,42 +92,48 @@ export function StepGuide(): JSX.Element {
       </ol>
 
       {active && (
-        <div className="active-card">
-          {active.step.caution && <p className="caution">⚠ {active.step.caution}</p>}
-          {/* Where you are in the job. On a phone the step list is a strip of
-              numbers, so the card has to say this itself — "Mount base plate"
-              alone does not tell you whether five minutes or an hour is left. */}
-          <span className="active-count">
-            Step {sequence.steps.findIndex((s) => s.step.id === active.step.id) + 1} of {sequence.steps.length}
-          </span>
-          <h3>{active.step.title}</h3>
-          <p className="instruction">{active.step.instruction}</p>
-          {active.step.toolIds && active.step.toolIds.length > 0 && (
-            <p className="tools">
-              Tools:{' '}
-              {active.step.toolIds
-                .map((id) => assembly.tools?.find((t) => t.id === id)?.name ?? id)
-                .join(', ')}
-            </p>
-          )}
-          {active.blockedBy.length > 0 && (
-            <p className="blocked">Blocked until earlier steps are complete.</p>
-          )}
-          <div className="active-actions">
-            <button className="ghost" onClick={preview.play}>▶ Show me</button>
-            <button className="secondary" onClick={placeStep}>⤓ Place</button>
-            {active.status === 'complete' ? (
-              <button className="secondary" onClick={() => reopenStep(active.step.id)}>Re-open</button>
-            ) : (
-              <button
-                className="primary"
-                disabled={active.status === 'error' || active.blockedBy.length > 0}
-                onClick={() => completeStep(active.step.id)}
-              >
-                Sign off
-              </button>
+        <div className={`active-card-wrap ${hasMore ? 'has-more' : ''}`}>
+          <div className="active-card" ref={cardRef}>
+            {active.step.caution && <p className="caution">⚠ {active.step.caution}</p>}
+            {/* Where you are in the job. On a phone the step list is a strip
+                of numbers, so the card has to say this itself — "Mount base
+                plate" alone does not tell you whether five minutes or an hour
+                is left. */}
+            <span className="active-count">
+              Step {sequence.steps.findIndex((s) => s.step.id === active.step.id) + 1} of {sequence.steps.length}
+            </span>
+            <h3>{active.step.title}</h3>
+            <p className="instruction">{active.step.instruction}</p>
+            {active.step.toolIds && active.step.toolIds.length > 0 && (
+              <p className="tools">
+                Tools:{' '}
+                {active.step.toolIds
+                  .map((id) => assembly.tools?.find((t) => t.id === id)?.name ?? id)
+                  .join(', ')}
+              </p>
             )}
+            {active.blockedBy.length > 0 && (
+              <p className="blocked">Blocked until earlier steps are complete.</p>
+            )}
+            <div className="active-actions">
+              <button className="ghost" onClick={preview.play}>▶ Show me</button>
+              <button className="secondary" onClick={placeStep}>⤓ Place</button>
+              {active.status === 'complete' ? (
+                <button className="secondary" onClick={() => reopenStep(active.step.id)}>Re-open</button>
+              ) : (
+                <button
+                  className="primary"
+                  disabled={active.status === 'error' || active.blockedBy.length > 0}
+                  onClick={() => completeStep(active.step.id)}
+                >
+                  Sign off
+                </button>
+              )}
+            </div>
           </div>
+          {/* Only rendered when the card is actually short of room — a
+              permanent hint on a card that always fits would be noise. */}
+          {hasMore && <span className="active-card-more" aria-hidden="true">More ↓</span>}
         </div>
       )}
 

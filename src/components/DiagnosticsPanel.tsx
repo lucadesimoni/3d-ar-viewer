@@ -20,9 +20,18 @@ export function DiagnosticsPanel(): JSX.Element {
     <aside className="panel diagnostics">
       <header className="panel-head">
         <h2>Fit &amp; error check</h2>
+        {/* Colour alone told two adjacent numbers apart — "0" red next to "0"
+            orange, nothing else distinguishing them, silent to a screen reader
+            and to anyone who cannot rely on that red/orange contrast. The row's
+            own icons (below, per diagnostic) now sit here too, and each count
+            carries its own name. */}
         <div className="counts">
-          <span className="count error">{errors}</span>
-          <span className="count warning">{warnings}</span>
+          <span className="count error" aria-label={`${errors} error${errors === 1 ? '' : 's'}`}>
+            <span aria-hidden="true">{ICON.error}</span> {errors}
+          </span>
+          <span className="count warning" aria-label={`${warnings} warning${warnings === 1 ? '' : 's'}`}>
+            <span aria-hidden="true">{ICON.warning}</span> {warnings}
+          </span>
         </div>
       </header>
 

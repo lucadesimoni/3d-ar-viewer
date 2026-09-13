@@ -265,6 +265,135 @@ for (const vp of VIEWPORTS) {
   await context.close();
 }
 
+// --- The mode bar, where a phone actually gives it room. --------------------
+// A landscape phone puts the panel in a side column as narrow as 240px (see
+// the landscape grid above), and four labelled view-mode buttons plus a reset
+// button do not fit on one row there. `.mode-switch` did not wrap, so the
+// overflow spilled past `.mode-bar`'s own box and past the page's right edge
+// — past `.app`'s own `overflow: hidden`, which swallowed it with no
+// scrollbar and no error. "Animate" was there in the DOM and nowhere a finger
+// could reach it.
+{
+  const context = await browser.newContext({
+    viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true,
+  });
+  const page = await context.newPage();
+  await page.goto(URL, { waitUntil: 'networkidle' });
+  await page.waitForSelector('canvas.viewer-canvas');
+  await page.waitForTimeout(1500);
+  await page.locator('.sheet-tabs button', { hasText: 'View' }).click();
+  await page.waitForTimeout(400);
+
+  const offscreen = await page.evaluate(() => {
+    const out = [];
+    for (const b of document.querySelectorAll('.mode-bar button')) {
+      const r = b.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      if (r.right > innerWidth + 1 || r.left < -1) {
+        out.push(`${(b.textContent || b.getAttribute('aria-label') || '').trim().slice(0, 20)} right=${Math.round(r.right)} of ${innerWidth}`);
+      }
+    }
+    return out;
+  });
+  check('phone landscape, View open: every mode button is actually on the page',
+    offscreen.length === 0, offscreen.join(', ') || 'all on screen');
+
+  // The same narrow column, but the control this used to lose outright: a
+  // build could not be reset on any phone under 640px at all (`display:
+  // none`, nothing standing in for it). It is a `.mode` button now, so it
+  // shrinks like its neighbours instead of disappearing — check that it is
+  // still there and still has a name, icon-only or not.
+  const reset = page.locator('.mode.reset');
+  check('and Reset build is still one of them',
+    await reset.count() === 1, `${await reset.count()} found`);
+  if (await reset.count() === 1) {
+    const box = await reset.boundingBox();
+    const label = await reset.getAttribute('aria-label');
+    check('reachable on screen and named for assistive tech even with its text hidden',
+      Boolean(box) && box.width > 0 && box.height > 0 && label === 'Reset build',
+      `box=${box ? `${Math.round(box.width)}x${Math.round(box.height)}` : 'none'}, aria-label=${label}`);
+  }
+  await context.close();
+}
+
+// --- The card a short phone's own panel height could not fit. --------------
+// An iPhone SE-class screen (667px, a real and still-common height) gives the
+// step panel 38% of that — and a caution line, tools, and three action
+// buttons together ran past it. `.step-guide` clips rather than scrolls, so
+// "Sign off" was there in the DOM and nowhere on screen, with no way to
+// scroll to it either — the panel itself does not scroll, only its own
+// children may.
+{
+  const context = await browser.newContext({
+    viewport: { width: 375, height: 667 }, isMobile: true, hasTouch: true,
+  });
+  const page = await context.newPage();
+  await page.goto(URL, { waitUntil: 'networkidle' });
+  await page.waitForSelector('canvas.viewer-canvas');
+  await page.waitForTimeout(1500);
+  // The 46-step equipment rack is the deep case: long instructions, a caution
+  // on some steps, tools on others — the one of the three samples most likely
+  // to overflow a short panel.
+  await page.selectOption('select.assembly-picker', { label: 'Modular Equipment Rack (14-bay)' }).catch(() => {});
+  await page.waitForTimeout(1000);
+
+  const reach = await page.evaluate(() => {
+    const card = document.querySelector('.active-card');
+    const btn = document.querySelector('.active-actions button.primary, .active-actions button:last-child');
+    if (!card || !btn) return { missing: true };
+    // Whether the *whole* button paints where it claims to be, not whether its
+    // own (possibly clipped-by-an-ancestor) box says it should, and not just
+    // its centre — a button clipped just below its centre point still passes
+    // a centre-only hit test while its lower half, and the finger that lands
+    // there, hits nothing. `getBoundingClientRect` reports the button's true,
+    // unclipped position regardless of an ancestor's `overflow: hidden`, so
+    // every corner (inset a little, off the rounded edge) is checked instead.
+    // Scrolling the card to its end is harmless when nothing needs scrolling,
+    // so this runs unconditionally.
+    card.scrollTop = card.scrollHeight;
+    const r = btn.getBoundingClientRect();
+    // Edge midpoints, not corners: a rounded button's actual hit shape follows
+    // its border-radius, so a point a few pixels in from the geometric corner
+    // of its bounding box can legitimately land on the card behind it even on
+    // a fully visible button. The midpoint of each edge has no such curve to
+    // dodge and still proves all four sides are painted where claimed.
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const edge = 2;
+    const points = [
+      [cx, r.top + edge], [cx, r.bottom - edge],
+      [r.left + edge, cy], [r.right - edge, cy],
+    ];
+    const results = points.map(([x, y]) => {
+      if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return false;
+      const hit = document.elementFromPoint(x, y);
+      return hit === btn || btn.contains(hit);
+    });
+    return { allEdgesReachable: results.every(Boolean), edges: results };
+  });
+  check('phone portrait, short viewport: the step\'s primary action is reachable, edge to edge',
+    Boolean(reach.allEdgesReachable), JSON.stringify(reach));
+  await context.close();
+}
+
+// --- Telling two adjacent counts apart by something other than colour. -----
+// "0" red beside "0" orange, and nothing else distinguishing them — silent to
+// a screen reader, and to anyone who cannot rely on that particular red and
+// that particular orange reading as different colours.
+{
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  await page.goto(URL, { waitUntil: 'networkidle' });
+  await page.waitForSelector('canvas.viewer-canvas');
+  await page.waitForTimeout(1500);
+  const labels = await page.evaluate(() => [...document.querySelectorAll('.counts .count')]
+    .map((el) => el.getAttribute('aria-label')));
+  check('the error and warning counts each carry their own name',
+    labels.length === 2 && labels.every((l) => l && /error|warning/.test(l)),
+    labels.join(' | ') || 'none found');
+  await context.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall layout checks passed');
 process.exit(failures.length ? 1 : 0);

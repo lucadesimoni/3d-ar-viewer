@@ -27,9 +27,18 @@ export function ModeBar(): JSX.Element {
           <button
             key={m.id}
             className={`mode ${viewMode === m.id ? 'active' : ''}`}
+            // The visible label disappears below 640px (`.mode-label` goes
+            // `display: none` to leave room for four buttons in one row) —
+            // which used to take the accessible name with it, since a name
+            // that only exists as hidden text is not read by anything. This
+            // one does not depend on that rule, and `title` covers a mouse
+            // hovering the bare icon on a desktop this narrow.
+            aria-label={m.label}
+            aria-pressed={viewMode === m.id}
+            title={m.label}
             onClick={() => setViewMode(m.id)}
           >
-            <span className="mode-icon">{m.icon}</span>
+            <span className="mode-icon" aria-hidden="true">{m.icon}</span>
             <span className="mode-label">{m.label}</span>
           </button>
         ))}
@@ -57,6 +66,8 @@ export function ModeBar(): JSX.Element {
       <button
         className={`mode note-mode ${annotating ? 'active' : ''}`}
         aria-pressed={annotating}
+        aria-label={annotating ? 'Done noting' : 'Add notes'}
+        title={annotating ? 'Done noting' : 'Add notes'}
         onClick={() => {
           const on = !annotating;
           setAnnotating(on);
@@ -64,11 +75,19 @@ export function ModeBar(): JSX.Element {
           if (on) getActiveManager()?.setPlacementActive(false);
         }}
       >
-        <span className="mode-icon">✎</span>
+        <span className="mode-icon" aria-hidden="true">✎</span>
         <span className="mode-label">{annotating ? 'Done noting' : 'Add notes'}</span>
       </button>
 
-      <button className="ghost reset" onClick={reset}>Reset build</button>
+      {/* Same shape as the mode buttons on purpose: it used to be plain text
+          that vanished outright below 640px (`display: none`, no substitute),
+          which left a phone with no way to reset a build at all. As a `.mode`
+          button it shrinks to its icon like its neighbours instead of
+          disappearing, and keeps a name for assistive tech either way. */}
+      <button className="mode ghost reset" aria-label="Reset build" title="Reset build" onClick={reset}>
+        <span className="mode-icon" aria-hidden="true">↺</span>
+        <span className="mode-label">Reset build</span>
+      </button>
     </div>
   );
 }
