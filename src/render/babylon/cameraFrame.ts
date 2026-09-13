@@ -39,6 +39,13 @@ export interface CameraFrame {
   scaleMs: number;
   /** Full size of the camera texture, before scaling. */
   sourceSize: [number, number];
+  /**
+   * Every pixel the same — which no real camera frame is.
+   *
+   * A read that lands outside the XR frame comes back all zeroes and raises
+   * nothing, so a frame that looks like this is reported rather than used.
+   */
+  uniform: boolean;
 }
 
 /**
@@ -143,29 +150,64 @@ function buffer(bytes: number): Uint8Array {
   return scratch.length === bytes ? scratch : scratch.subarray(0, bytes);
 }
 
-/** The camera texture as an image the vision path can read, or nothing. */
-export async function readCameraFrame(
+/**
+ * Is every pixel in this image the same?
+ *
+ * Never true of a real camera frame, and exactly true of the one a device sent
+ * back: 886x1920 pixels of zero, attached to a diagnostics file and reported as
+ * a successful capture.
+ *
+ * Every pixel, not a sample of them. A sparse scan is cheaper on the blank
+ * frame and wrong on the picture — it can miss the one corner of a dark room
+ * that has anything in it, and throwing away a real frame is the worse of the
+ * two mistakes. This exits on the first pixel that differs, so a picture costs
+ * a handful of reads and only a genuinely blank frame is scanned to the end,
+ * which is precisely the case where the time is worth spending.
+ */
+export function isUniform(image: ImageData): boolean {
+  const d = image.data;
+  const first = d[0];
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i] !== first || d[i + 1] !== first || d[i + 2] !== first) return false;
+  }
+  return true;
+}
+
+/**
+ * The camera texture as an image the vision path can read, or nothing.
+ *
+ * **Synchronous, and it has to be.** The `WebGLTexture` behind an XR camera
+ * image is only valid inside the XR animation frame it came from, so this must
+ * be called from within that frame and must finish inside it. `readPixels`
+ * hands back a promise, but the `gl.readPixels` behind it has already run and
+ * already written into the buffer we passed by the time it returns — so the
+ * pixels are taken from our own buffer, and the promise is not awaited. It was
+ * awaited once, and the extra task was enough: the read landed after the frame
+ * had ended and returned two million zeroes, at a cost of a real 10.6 ms, with
+ * no error raised anywhere.
+ */
+export function readCameraFrame(
   texture: BaseTexture | undefined,
   maxWidth: number,
-): Promise<CameraFrame | undefined> {
+): CameraFrame | undefined {
   if (!texture) return undefined;
   const { width, height } = texture.getSize();
   if (width < 1 || height < 1) return undefined;
 
   const startedAt = performance.now();
-  let pixels: ArrayBufferView | null;
+  const bytes = buffer(width * height * 4);
   try {
-    pixels = await texture.readPixels(0, 0, buffer(width * height * 4), true, false);
+    const pending = texture.readPixels(0, 0, bytes, true, false);
+    if (!pending) return undefined;
+    // Nothing is waiting on it; a rejection must still not go unhandled.
+    void pending.catch(() => undefined);
   } catch {
-    // A texture disposed mid-read — the session ended while this was in
-    // flight. Not an error worth a log line every second.
+    // A texture disposed mid-read — the session ended underneath us.
     return undefined;
   }
-  if (!pixels) return undefined;
   const readbackMs = performance.now() - startedAt;
 
   const scaledAt = performance.now();
-  const bytes = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
   // The renderer's own record of which way it stored the rows, not a guess.
   const invertY = texture.getInternalTexture()?.invertY ?? false;
   const image = toFrameImage(bytes, { width, height }, maxWidth, invertY);
@@ -176,5 +218,6 @@ export async function readCameraFrame(
     readbackMs,
     scaleMs: performance.now() - scaledAt,
     sourceSize: [width, height],
+    uniform: isUniform(image),
   };
 }
