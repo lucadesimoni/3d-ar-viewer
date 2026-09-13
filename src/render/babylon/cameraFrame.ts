@@ -49,8 +49,8 @@ export interface CameraFrame {
 }
 
 /**
- * Scale an RGBA buffer down to `maxWidth`, righting it if it arrived upside
- * down.
+ * Scale an RGBA buffer down to `maxWidth`, turning it over if `flip` says the
+ * rows arrived bottom-first. See `needsFlip` for who decides that and why.
  *
  * A box average rather than nearest-neighbour: 886 to 480 is a factor of 1.85,
  * and dropping every other row of a shelf full of straight edges is how a
@@ -81,7 +81,7 @@ export function toFrameImage(
   pixels: Uint8Array | Uint8ClampedArray,
   source: { width: number; height: number },
   maxWidth: number,
-  invertY: boolean,
+  flip: boolean,
 ): ImageData | undefined {
   const { width: sw, height: sh } = source;
   if (sw < 1 || sh < 1 || maxWidth < 1) return undefined;
@@ -97,7 +97,7 @@ export function toFrameImage(
   if (w === sw && h === sh) {
     for (let y = 0; y < h; y++) {
       const src = y * rowBytes;
-      out.set(pixels.subarray(src, src + rowBytes), (invertY ? h - 1 - y : y) * rowBytes);
+      out.set(pixels.subarray(src, src + rowBytes), (flip ? h - 1 - y : y) * rowBytes);
     }
     for (let i = 3; i < out.length; i += 4) out[i] = 255;
     return new ImageData(out, w, h);
@@ -117,7 +117,7 @@ export function toFrameImage(
     const y1 = Math.max(y0 + 1, Math.floor(((y + 1) * sh) / h));
     // Flipping the destination row is the same as mirroring the source box,
     // and it keeps the averaging window contiguous in the source.
-    let d = (invertY ? h - 1 - y : y) * rowBytes;
+    let d = (flip ? h - 1 - y : y) * rowBytes;
     for (let x = 0; x < w; x++, d += 4) {
       const x0 = x0s[x];
       const x1 = x1s[x];
@@ -148,6 +148,28 @@ let scratch: Uint8Array | undefined;
 function buffer(bytes: number): Uint8Array {
   if (!scratch || scratch.length < bytes) scratch = new Uint8Array(bytes);
   return scratch.length === bytes ? scratch : scratch.subarray(0, bytes);
+}
+
+/**
+ * Does a readback of this texture come out upside down?
+ *
+ * `gl.readPixels` always hands back framebuffer rows from the bottom. Whether
+ * that matches the order an image counts them in depends on how the texture was
+ * stored: Babylon's own uploads set `invertY = true` and are already flipped, so
+ * they read back in image order. A texture handed over raw by the platform —
+ * which is exactly what an XR camera image is, `invertY = false` — reads back
+ * upside down.
+ *
+ * This was the other way round for three commits, and nothing could catch it,
+ * because there were no real pixels to look at: reading outside the XR frame
+ * returned a black rectangle, and a black rectangle is the same either way up.
+ * The first real capture settled it, and not by eye — the pose recorded with it
+ * says the phone was pitched **26.7 degrees below horizontal** at 1.34 m, and
+ * the picture that arrived had a wooden ceiling across its top half. Flipped, it
+ * is a floor, a wall, and the operator's own legs at the bottom of the frame.
+ */
+function needsFlip(texture: BaseTexture): boolean {
+  return texture.getInternalTexture()?.invertY === false;
 }
 
 /**
@@ -208,9 +230,7 @@ export function readCameraFrame(
   const readbackMs = performance.now() - startedAt;
 
   const scaledAt = performance.now();
-  // The renderer's own record of which way it stored the rows, not a guess.
-  const invertY = texture.getInternalTexture()?.invertY ?? false;
-  const image = toFrameImage(bytes, { width, height }, maxWidth, invertY);
+  const image = toFrameImage(bytes, { width, height }, maxWidth, needsFlip(texture));
   if (!image) return undefined;
 
   return {

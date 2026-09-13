@@ -123,6 +123,38 @@ describe('the camera frame is taken inside the frame that owns it', () => {
     }
   });
 
+  it('turns a raw platform texture the right way up', async () => {
+    // The rule, pinned: `gl.readPixels` hands back framebuffer rows from the
+    // bottom, and an XR camera image is stored raw (`invertY = false`), so the
+    // first row of the buffer is the *bottom* of the picture. A device settled
+    // this — a capture whose recorded pose had the phone pitched 26.7 degrees
+    // below horizontal arrived with a wooden ceiling across its top half; the
+    // same frame flipped is a floor, a wall, and the operator's own legs.
+    const { manager, hook } = await inSession();
+    const marked = {
+      getSize: () => ({ width: W, height: H }),
+      getInternalTexture: () => ({ invertY: false }),
+      readPixels: (_f: number, _l: number, buffer: Uint8Array) => {
+        // Row 0 of the buffer is the bottom of the picture. Mark it, and give
+        // the rest enough variation not to read as a blank frame.
+        for (let i = 0; i < W * H * 4; i++) buffer[i] = (i * 13) % 60;
+        for (let i = 0; i < W * 4; i++) buffer[i] = 255;
+        return Promise.resolve(buffer);
+      },
+    } as unknown as BaseTexture;
+    try {
+      hook.onCameraFrame?.(marked);
+      const wanted = manager.xrCameraFrame(W);
+      hook.onCameraFrame?.(marked);
+      const image = await wanted;
+      const row = (y: number): number => image!.data[(y * W) * 4];
+      expect(row(H - 1)).toBe(255);       // the marked row, at the bottom
+      expect(row(0)).not.toBe(255);
+    } finally {
+      manager.dispose();
+    }
+  });
+
   it('serves two askers from one readback', async () => {
     const { manager, hook } = await inSession();
     const { texture, state } = frameScopedTexture();
