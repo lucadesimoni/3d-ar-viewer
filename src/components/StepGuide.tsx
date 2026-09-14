@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../state/store';
 import { ASSEMBLIES } from '../data';
 import { useUiConfig } from '../ui/UiConfigContext';
+import { useScrollOverflow } from '../ui/useScrollOverflow';
 import { useStepPreview } from './useStepPreview';
 
 /** Left rail: the ordered build steps with live status, and the active card. */
@@ -25,25 +25,12 @@ export function StepGuide(): JSX.Element {
   // off" button under the tab bar (see the mobile rule for `.active-card`).
   // A box that clips and just stops looks identical to one that is broken;
   // this says, measured rather than guessed, whether there is more to see.
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [hasMore, setHasMore] = useState(false);
-  useEffect(() => {
-    const el = cardRef.current;
-    if (!el) { setHasMore(false); return; }
-    const update = (): void => {
-      setHasMore(el.scrollHeight - el.clientHeight - el.scrollTop > 4);
-    };
-    update();
-    el.addEventListener('scroll', update, { passive: true });
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    window.addEventListener('resize', update);
-    return () => {
-      el.removeEventListener('scroll', update);
-      window.removeEventListener('resize', update);
-      ro.disconnect();
-    };
-  }, [active?.step.id]);
+  const { ref: cardRef, hasMore } = useScrollOverflow<HTMLDivElement>('y', [active?.step.id]);
+
+  // The same question, sideways: the step strip starts at step 1, and on a
+  // 46-step assembly only the first handful of numbered circles fit. Nothing
+  // said the rest were a swipe away rather than simply not there.
+  const { ref: stepListRef, hasMore: moreSteps } = useScrollOverflow<HTMLOListElement>('x', [assembly.id]);
 
   return (
     <aside className="panel step-guide">
@@ -77,19 +64,24 @@ export function StepGuide(): JSX.Element {
         </div>
       </header>
 
-      <ol className="step-list">
-        {sequence.steps.map((s, i) => (
-          <li
-            key={s.step.id}
-            className={`step-row ${s.status} ${s.step.id === activeStepId ? 'selected' : ''}`}
-            onClick={() => setActiveStep(s.step.id)}
-          >
-            <span className={`bullet ${s.status}`}>{i + 1}</span>
-            <span className="step-title">{s.step.title}</span>
-            <span className={`chip ${s.status}`}>{s.status}</span>
-          </li>
-        ))}
-      </ol>
+      <div className={`step-list-wrap ${moreSteps ? 'has-more' : ''}`}>
+        <ol className="step-list" ref={stepListRef}>
+          {sequence.steps.map((s, i) => (
+            <li
+              key={s.step.id}
+              className={`step-row ${s.status} ${s.step.id === activeStepId ? 'selected' : ''}`}
+              onClick={() => setActiveStep(s.step.id)}
+            >
+              <span className={`bullet ${s.status}`}>{i + 1}</span>
+              <span className="step-title">{s.step.title}</span>
+              <span className={`chip ${s.status}`}>{s.status}</span>
+            </li>
+          ))}
+        </ol>
+        {/* Desktop shows the full titled list already — nothing to hide from
+            here, and the rule below only paints the strip on mobile anyway. */}
+        {moreSteps && <span className="scroll-more right" aria-hidden="true">›</span>}
+      </div>
 
       {active && (
         <div className={`active-card-wrap ${hasMore ? 'has-more' : ''}`}>
@@ -133,7 +125,7 @@ export function StepGuide(): JSX.Element {
           </div>
           {/* Only rendered when the card is actually short of room — a
               permanent hint on a card that always fits would be noise. */}
-          {hasMore && <span className="active-card-more" aria-hidden="true">More ↓</span>}
+          {hasMore && <span className="scroll-more down" aria-hidden="true">More ↓</span>}
         </div>
       )}
 

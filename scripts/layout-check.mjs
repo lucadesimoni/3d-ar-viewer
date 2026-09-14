@@ -376,6 +376,109 @@ for (const vp of VIEWPORTS) {
   await context.close();
 }
 
+// --- The step strip's far end, past what one screen at a time can show. ----
+// A 46-step assembly (the equipment rack) only shows the first handful of
+// step circles at once; the rest are a swipe away with nothing on screen
+// saying so before this scroll-affordance. Both directions of the claim are
+// checked — the badge showing while there is more, and going away once the
+// strip is genuinely scrolled to its end — because a badge that never turns
+// off would be as wrong as one that never turns on.
+{
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+  });
+  const page = await context.newPage();
+  await page.goto(URL, { waitUntil: 'networkidle' });
+  await page.waitForSelector('canvas.viewer-canvas');
+  await page.waitForTimeout(1500);
+  await page.selectOption('select.assembly-picker', { label: 'Modular Equipment Rack (14-bay)' }).catch(() => {});
+  await page.waitForTimeout(1000);
+
+  check('phone portrait, 46-step assembly: the step strip says there is more',
+    await page.locator('.step-list-wrap .scroll-more.right').count() === 1);
+
+  await page.evaluate(() => {
+    const ol = document.querySelector('.step-list');
+    ol.scrollLeft = ol.scrollWidth;
+    ol.dispatchEvent(new Event('scroll'));
+  });
+  await page.waitForTimeout(300);
+
+  const reach = await page.evaluate(() => {
+    const rows = document.querySelectorAll('.step-row');
+    const row = rows[rows.length - 1];
+    if (!row) return { missing: true };
+    // Same edge-midpoint hit test as the active-card check below: corners of
+    // a rounded target can miss even a fully visible one, and this is a
+    // circular bullet — the one shape where the edge midpoints sit exactly
+    // on the boundary rather than inside it.
+    const r = row.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2, edge = 2;
+    const points = [[cx, r.top + edge], [cx, r.bottom - edge], [r.left + edge, cy], [r.right - edge, cy]];
+    const results = points.map(([x, y]) => {
+      if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return false;
+      const hit = document.elementFromPoint(x, y);
+      return hit === row || row.contains(hit);
+    });
+    return { allEdgesReachable: results.every(Boolean), edges: results };
+  });
+  check('and step 46 is reachable once actually scrolled there, edge to edge',
+    Boolean(reach.allEdgesReachable), JSON.stringify(reach));
+  check('and the badge is gone once there is nothing more to scroll to',
+    await page.locator('.step-list-wrap .scroll-more.right').count() === 0);
+
+  await context.close();
+}
+
+// --- The More sheet, wherever its content runs past 46dvh. -----------------
+// The same gap, a different container: the register list is capped to
+// `46dvh` and scrolls, but nothing on screen said there was more once its
+// content — hint text, datum buttons, the result block — overflowed it.
+{
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+  });
+  const page = await context.newPage();
+  await page.goto(URL, { waitUntil: 'networkidle' });
+  await page.waitForSelector('canvas.viewer-canvas');
+  await page.waitForTimeout(1500);
+  await page.selectOption('select.assembly-picker', { label: 'Modular Equipment Rack (14-bay)' }).catch(() => {});
+  await page.waitForTimeout(1000);
+  await page.locator('.sheet-tabs button', { hasText: 'More' }).click();
+  await page.waitForTimeout(300);
+
+  check('phone portrait, More sheet, Register tab: the sheet says there is more',
+    await page.locator('.mobile-sheet .scroll-more.down').count() === 1);
+
+  await page.evaluate(() => {
+    const sheet = document.querySelector('.mobile-sheet');
+    sheet.scrollTop = sheet.scrollHeight;
+    sheet.dispatchEvent(new Event('scroll'));
+  });
+  await page.waitForTimeout(300);
+
+  const reach = await page.evaluate(() => {
+    const items = document.querySelectorAll('.datum-list li button');
+    const btn = items[items.length - 1];
+    if (!btn) return { missing: true };
+    const r = btn.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2, edge = 2;
+    const points = [[cx, r.top + edge], [cx, r.bottom - edge], [r.left + edge, cy], [r.right - edge, cy]];
+    const results = points.map(([x, y]) => {
+      if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return false;
+      const hit = document.elementFromPoint(x, y);
+      return hit === btn || btn.contains(hit);
+    });
+    return { allEdgesReachable: results.every(Boolean), edges: results };
+  });
+  check('and the last datum is reachable once actually scrolled there, edge to edge',
+    Boolean(reach.allEdgesReachable), JSON.stringify(reach));
+  check('and the badge is gone once there is nothing more to scroll to',
+    await page.locator('.mobile-sheet .scroll-more.down').count() === 0);
+
+  await context.close();
+}
+
 // --- Telling two adjacent counts apart by something other than colour. -----
 // "0" red beside "0" orange, and nothing else distinguishing them — silent to
 // a screen reader, and to anyone who cannot rely on that particular red and
