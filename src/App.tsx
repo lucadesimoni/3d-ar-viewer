@@ -17,6 +17,7 @@ import { StepAnnotations } from './components/StepAnnotations';
 import { Annotations } from './components/Annotations';
 import { ArHud } from './components/ArHud';
 import { DiagnosticsExport } from './components/DiagnosticsExport';
+import { MobileSheet } from './components/MobileSheet';
 import { UiConfigProvider } from './ui/UiConfigContext';
 import { resolveUiConfig, type UiConfig } from './ui/config';
 import { useMediaQuery } from './ui/useMediaQuery';
@@ -179,10 +180,10 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
               the register/collaborate/BOM drawers live in it too, reached from
               the same row of tabs as the steps and the errors. */}
           {isMobile && !arActive && mobileSheet === 'view' && ui.showModeBar && (
-            <div className="panel mobile-sheet"><ModeBar /></div>
+            <MobileSheet watch="view"><ModeBar /></MobileSheet>
           )}
           {isMobile && !arActive && mobileSheet === 'more' && ui.showDrawers && (
-            <div className="panel mobile-sheet">
+            <MobileSheet watch={`more:${drawer}`}>
               <div className="drawer-tabs">
                 <button className={drawer === 'register' ? 'active' : ''} onClick={() => setDrawer('register')}>Register</button>
                 <button className={drawer === 'collab' ? 'active' : ''} onClick={() => setDrawer('collab')}>Collaborate</button>
@@ -197,7 +198,7 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
                 : drawer === 'bom' ? <BomPanel />
                   : drawer === 'log' ? <DiagnosticsExport capabilities={capabilities} />
                     : <RegistrationPanel />}
-            </div>
+            </MobileSheet>
           )}
 
           {isMobile && !arActive && (
