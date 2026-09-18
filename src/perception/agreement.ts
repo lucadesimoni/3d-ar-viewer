@@ -78,37 +78,43 @@ export interface AgreementOptions {
 /**
  * Walk a projected outline and ask the image about it.
  *
- * Takes a quadrilateral rather than a rectangle because a facade seen from
- * anywhere but straight on is not a rectangle in the image, and forcing it into
- * one would put the sample points off the very edges they are meant to test.
- * Corner order only has to be a loop — the outward normal of each side is
- * derived from the quad's own centre, so a clockwise and an anticlockwise quad
- * give the same answer rather than opposite signs.
+ * Takes a polygon rather than a rectangle because a facade — or a part's own
+ * silhouette, seen from anywhere but straight on — is not a rectangle in the
+ * image, and forcing it into one would put the sample points off the very
+ * edges they are meant to test. Any loop of three or more points works, not
+ * just four: `contour.ts`'s convex hull of an obliquely-viewed box can have up
+ * to six corners. Winding order only has to be a loop — the outward normal of
+ * each side is derived from the polygon's own centroid, so a clockwise and an
+ * anticlockwise polygon give the same answer rather than opposite signs.
  */
-export function quadAgreement(
+export function polygonAgreement(
   field: EdgeField,
-  quad: Point2[],
+  polygon: Point2[],
   opts: AgreementOptions = {},
 ): Agreement {
   const perSide = opts.perSide ?? 16;
   const searchPx = opts.searchPx ?? 24;
   const empty: Agreement = { coverage: 0, medianOffsetPx: undefined, sides: [], samples: 0 };
-  if (quad.length !== 4) return empty;
+  const n = polygon.length;
+  if (n < 3) return empty;
 
-  const cx = (quad[0].x + quad[1].x + quad[2].x + quad[3].x) / 4;
-  const cy = (quad[0].y + quad[1].y + quad[2].y + quad[3].y) / 4;
+  let cx = 0;
+  let cy = 0;
+  for (const p of polygon) { cx += p.x; cy += p.y; }
+  cx /= n;
+  cy /= n;
 
   const all: number[] = [];
   const sides: SideAgreement[] = [];
   let hits = 0;
   let samples = 0;
 
-  for (let s = 0; s < 4; s++) {
-    const a = quad[s];
-    const b = quad[(s + 1) % 4];
+  for (let s = 0; s < n; s++) {
+    const a = polygon[s];
+    const b = polygon[(s + 1) % n];
     const dx = b.x - a.x;
     const dy = b.y - a.y;
-    // Perpendicular to the side, turned to point away from the centre.
+    // Perpendicular to the side, turned to point away from the centroid.
     const mx = (a.x + b.x) / 2;
     const my = (a.y + b.y) / 2;
     let nx = dy;
@@ -134,6 +140,9 @@ export function quadAgreement(
     samples,
   };
 }
+
+/** Alias kept for the one existing quad-only call site (`objectAnchor.ts`). */
+export const quadAgreement = polygonAgreement;
 
 /**
  * The weakest side of an outline.

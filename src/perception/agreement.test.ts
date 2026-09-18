@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { edgeField } from './edges';
-import { quadAgreement, weakestSide } from './agreement';
+import { polygonAgreement, quadAgreement, weakestSide, type Point2 } from './agreement';
 
 const W = 240;
 const H = 240;
@@ -83,5 +83,41 @@ describe('agreement', () => {
   it('refuses a quad that is not one', () => {
     const field = edgeField(box(60, 60, 120, 120), 240);
     expect(quadAgreement(field, [{ x: 0, y: 0 }]).samples).toBe(0);
+  });
+
+  it('walks a hexagon just as well as a quad — a contour is not always four points', () => {
+    // A convex hull of an obliquely-viewed box can have up to six corners; the
+    // walk must not assume exactly four.
+    const cx = 120;
+    const cy = 120;
+    const r = 50;
+    const hexagon: Point2[] = Array.from({ length: 6 }, (_, i) => {
+      const a = (Math.PI / 3) * i;
+      return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+    });
+    const inHexagon = (px: number, py: number): boolean => {
+      // Even-odd ray cast against the hexagon's own vertices.
+      let inside = false;
+      for (let i = 0, j = hexagon.length - 1; i < hexagon.length; j = i++) {
+        const { x: xi, y: yi } = hexagon[i];
+        const { x: xj, y: yj } = hexagon[j];
+        const crosses = yi > py !== yj > py;
+        if (crosses && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+      }
+      return inside;
+    };
+    const data = new Uint8ClampedArray(W * H * 4);
+    for (let py = 0; py < H; py++) {
+      for (let px = 0; px < W; px++) {
+        const i = (py * W + px) * 4;
+        const v = inHexagon(px, py) ? 225 : 45;
+        data[i] = data[i + 1] = data[i + 2] = v;
+        data[i + 3] = 255;
+      }
+    }
+    const field = edgeField(new ImageData(data, W, H), 240);
+    const a = polygonAgreement(field, hexagon);
+    expect(a.sides.length).toBe(6);
+    expect(a.coverage).toBeGreaterThan(0.8);
   });
 });
