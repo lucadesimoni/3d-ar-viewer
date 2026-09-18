@@ -1936,7 +1936,21 @@ export class SceneManager {
     // Let the operator get close without falling through the far side.
     this.camera.lowerRadiusLimit = Math.max(0.15, radius * 0.35);
     this.camera.upperRadiusLimit = distance * 4;
-    this.framing = false;
+
+    // Not `this.framing = false` here. Babylon does not recompute a dirty view
+    // matrix — and so does not fire `onViewMatrixChangedObservable` — until the
+    // next render frame's `camera.update()`, well after this function has
+    // already returned. Closing the guard synchronously left that window
+    // unprotected, so the very next frame's own deferred notification read
+    // `framing === false` and set `cameraTouched = true` on every single call,
+    // including the first one at scene setup, before the operator had done
+    // anything. Real furniture pays for this exactly as it paid for the
+    // KALLAX mis-lock: a log said "the shelf reads three rows" here it would
+    // have said "the camera never re-frames after the first resize" — except
+    // this one had no log to say it, only a screenshot of a shelf overflowing
+    // its own canvas after the sheet was collapsed. Reset once the frame that
+    // would carry the deferred notification has actually happened.
+    this.scene.onAfterRenderObservable.addOnce(() => { this.framing = false; });
   }
 
   /**

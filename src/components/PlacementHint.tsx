@@ -32,7 +32,6 @@ export function PlacementHint(): JSX.Element | null {
   const blind = source === 'camera' && !motion;
 
   if (placement === 'awaiting') {
-    const looking = target ? ' — or point it at the shelf' : '';
     // Placement is not armed until the platform has stopped guessing where it
     // is. Saying "tap" before then invites exactly the placement a real device
     // log recorded: three seconds in, 78 cm below the floor, and the assembly
@@ -45,17 +44,35 @@ export function PlacementHint(): JSX.Element | null {
         </div>
       );
     }
+
+    // A recognition target used to be a trailing "— or point it at the shelf"
+    // on the tap instruction, and a device log showed what that bought it: a
+    // session that tapped to place, by hand, four times in a row, never once
+    // giving the two or three detections recognition needs the seconds they
+    // take. Recognition is the more precise path when it is available — give
+    // it its own line, not a clause easy to read past.
+    if (target && !blind && source === 'webxr' && tracking?.reason !== 'timeout') {
+      return (
+        <div className="placement-hint recognizing">
+          <div className="hint-row">
+            <span className="dot scan" />
+            Point it at the {target.label} — hold it steady
+          </div>
+          <div className="hint-row secondary">or tap to place by hand</div>
+        </div>
+      );
+    }
+
+    const looking = target ? ' — or point it at the shelf' : '';
     return (
       <div className={`placement-hint ${blind ? 'warn' : ''}`}>
         <span className={`dot ${blind ? 'warn' : ''}`} />
         {blind
           ? 'No motion sensor — tap to place it straight ahead'
           : source === 'webxr'
-            ? tracking?.reason === 'timeout'
-              // Armed by the clock, not by the tracking: it can be placed, and
-              // the operator should expect the platform to move it afterwards.
-              ? `Tracking is still settling — tap to place anyway${looking}`
-              : `Move the phone to find a surface, then tap${looking}`
+            // Armed by the clock, not by the tracking: it can be placed, and
+            // the operator should expect the platform to move it afterwards.
+            ? `Tracking is still settling — tap to place anyway${looking}`
             : `Tap the ${surface} to place${looking}`}
       </div>
     );

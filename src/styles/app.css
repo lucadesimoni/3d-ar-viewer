@@ -471,8 +471,14 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
      shows status by colour, and costs one row. */
   .app.mobile .step-list {
     display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden;
-    flex: 0 0 auto; padding-bottom: 2px; scrollbar-width: none;
+    flex: 0 0 auto; scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
+    /* The selected bullet's outline ring sits 4px outside its own box
+       (2px width + 2px offset) — `overflow-y: hidden` exists only to stop an
+       accidental vertical scrollbar, not to clip that ring, so the list needs
+       4px of room top and bottom or the ring reads as a flat-topped smear
+       instead of a circle. */
+    padding: 4px 2px;
   }
   .app.mobile .step-list::-webkit-scrollbar { display: none; }
   .app.mobile .step-row { padding: 0; flex: 0 0 auto; background: none; }
@@ -744,6 +750,14 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 .app.ar .placement-hint { top: calc(10px + env(safe-area-inset-top, 0px)); }
 .placement-hint .dot.ok { background: #4ade80; animation: none; }
 .placement-hint.placed { background: rgba(6, 12, 18, 0.55); }
+/* Recognition gets equal billing with tap-to-place, not a trailing clause on
+   it — two stacked rows instead of the single flex row every other hint is.
+   The fallback stays visibly secondary: it is there for when recognition does
+   not land, not a competing instruction. */
+.placement-hint.recognizing { flex-direction: column; gap: 3px; padding: 9px 16px; }
+.placement-hint .hint-row { display: flex; align-items: center; gap: 8px; }
+.placement-hint .hint-row.secondary { color: var(--muted); font-size: 11.5px; }
+.placement-hint .dot.scan { background: var(--accent-2); }
 @keyframes hint-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) { .placement-hint .dot { animation: none; } }
 
