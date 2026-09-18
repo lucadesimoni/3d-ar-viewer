@@ -80,6 +80,33 @@ describe('object anchoring', () => {
     expect(tracker.hasLock).toBe(true);
   });
 
+  it('measures the outline its lock implies against the image it is looking at', () => {
+    const tracker = make();
+    tracker.update(frame(160, 60, 320), 0);
+    tracker.update(frame(160, 60, 320), 500);
+    tracker.update(frame(160, 60, 320), 1000);
+    expect(tracker.hasLock).toBe(true);
+
+    const obs = tracker.update(frame(160, 60, 320), 1033)!;
+    expect(obs.mode).toBe('tracked');
+    expect(obs.agreement, 'the first tracked frame is due a measurement').toBeDefined();
+    // The projection carries the target's full extent out to its corners
+    // through the tracked points' own homography. Getting the model convention
+    // wrong there would put the outline somewhere else entirely and this would
+    // read near zero, which is the point of asserting it.
+    expect(obs.agreement!.coverage, 'a correct lock finds its own edges').toBeGreaterThan(0.5);
+    expect(Math.abs(obs.agreement!.medianOffsetPx!), 'and finds them where it says').toBeLessThan(10);
+  });
+
+  it('does not pay for that measurement on every frame', () => {
+    const tracker = make();
+    tracker.update(frame(160, 60, 320), 0);
+    tracker.update(frame(160, 60, 320), 500);
+    tracker.update(frame(160, 60, 320), 1000);
+    expect(tracker.update(frame(160, 60, 320), 1033)!.agreement, 'due').toBeDefined();
+    expect(tracker.update(frame(160, 60, 320), 1066)!.agreement, 'not due yet').toBeUndefined();
+  });
+
   it('reports where the object is, at a plausible range and upright', () => {
     const tracker = make();
     tracker.update(frame(160, 60, 320), 0);
