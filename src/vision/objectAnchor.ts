@@ -1,11 +1,14 @@
 import { detectGridFacade, matchesGridTarget } from './gridRecognition';
-import { LatticeTracker } from './latticeTracker';
+import { LatticeTracker, type TrackedFrame } from './latticeTracker';
 import {
   estimateIntrinsics,
   planePoseFromPoints,
+  rectModelCorners,
   rectPoseFromCorners,
   solveHomography,
 } from '../engine/tracking/markerTracking';
+import { edgeField } from '../perception/edges';
+import { quadAgreement, type Agreement } from '../perception/agreement';
 import type { GridTargetDef, Pose } from '../engine/types';
 
 /**
@@ -73,6 +76,20 @@ export interface ObjectObservation {
   confidence: number;
   mode: AnchorMode;
   reprojectionPx: number;
+  /**
+   * How well the image agrees with the outline this lock implies — present on
+   * tracked frames, at the detection cadence, and never acted on.
+   *
+   * Reported rather than enforced on purpose. The measurement separates the
+   * known-bad KALLAX lock from the real facade by a factor of two overall and
+   * nearly twenty on the side that was actually wrong, but that is one bad pose
+   * and one hand-measured good one out of a single frame. A threshold set from
+   * that would drop good locks on the next device, which is a worse failure
+   * than the one it would prevent — this session already paid for guessing a
+   * number once. So the numbers go in the log first and the gate comes after
+   * there are device sessions to calibrate it against.
+   */
+  agreement?: Agreement;
 }
 
 export interface ObjectAnchorOptions {
@@ -95,6 +112,7 @@ export class ObjectAnchorTracker {
   // Negative infinity, not zero: the very first frame must be allowed to run a
   // detection rather than sitting out the first interval doing nothing.
   private lastDetectMs = Number.NEGATIVE_INFINITY;
+  private lastAgreementMs = Number.NEGATIVE_INFINITY;
   private locked = false;
 
   constructor(
@@ -120,21 +138,56 @@ export class ObjectAnchorTracker {
   }
 
   /**
+   * Ask the image whether the outline this lock implies is really there.
+   *
+   * The outline is not the tracked points — checking those against the image
+   * they were cut from would answer itself. It is the target's full extent,
+   * carried out to its corners through the same homography the tracked points
+   * fit. That is the step where a wrong lock gives itself away: the bad KALLAX
+   * pose held real edges at the points it was following and put the bottom
+   * board, which it had never seen, into the floor.
+   */
+  private measureAgreement(image: ImageData, tracked: TrackedFrame): Agreement | undefined {
+    const H = solveHomography(tracked.model, tracked.image);
+    if (!H) return undefined;
+    const quad = rectModelCorners(this.target.widthM, this.target.heightM).map((p) => {
+      const w = H[2][0] * p.x + H[2][1] * p.y + H[2][2];
+      if (!Number.isFinite(w) || Math.abs(w) < 1e-9) return undefined;
+      return {
+        x: (H[0][0] * p.x + H[0][1] * p.y + H[0][2]) / w,
+        y: (H[1][0] * p.x + H[1][1] * p.y + H[1][2]) / w,
+      };
+    });
+    if (quad.some((p) => p === undefined)) return undefined;
+    return quadAgreement(edgeField(image, this.opts.workingSize), quad as { x: number; y: number }[]);
+  }
+
+  /**
    * Feed one camera frame. Returns a pose whenever there is one to report —
    * every frame while tracking, and at the detection cadence otherwise.
    */
   update(image: ImageData, nowMs: number, fovDeg?: number): ObjectObservation | undefined {
     const K = this.intrinsics(image, fovDeg);
+    const interval = this.opts.detectIntervalMs ?? 500;
     if (this.hasLock) {
       const tracked = this.tracker.track(image);
       if (tracked) {
         const solved = planePoseFromPoints(tracked.model, tracked.image, K);
         if (solved && solved.reprojectionPx < 8) {
+          // At the detection cadence, not per frame: this is a full pass over
+          // the downsampled image, the same order of cost as the detection the
+          // unlocked path spends there anyway.
+          let agreement: Agreement | undefined;
+          if (nowMs - this.lastAgreementMs >= interval) {
+            this.lastAgreementMs = nowMs;
+            agreement = this.measureAgreement(image, tracked);
+          }
           return {
             pose: solved.pose,
             confidence: tracked.confidence,
             mode: 'tracked',
             reprojectionPx: solved.reprojectionPx,
+            agreement,
           };
         }
       }
@@ -144,7 +197,6 @@ export class ObjectAnchorTracker {
       this.pending = undefined;
     }
 
-    const interval = this.opts.detectIntervalMs ?? 500;
     if (nowMs - this.lastDetectMs < interval) return undefined;
     this.lastDetectMs = nowMs;
 

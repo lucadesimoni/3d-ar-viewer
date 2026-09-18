@@ -921,6 +921,22 @@ function applyObjectAnchor(
   const obs = tracker.update(image, nowMs, manager.frameIntrinsics(image).fovDeg);
   if (!obs) return false;
 
+  // Reported, not enforced. Whether a lock's implied outline is really in the
+  // image is the measurement that would have caught the KALLAX mis-lock, but
+  // the threshold for acting on it has to come from device sessions rather
+  // than from the single frame it was designed against — so it is logged and
+  // nothing branches on it yet.
+  if (obs.agreement) {
+    logEvent('place', 'recognition agreement', {
+      coverage: Number(obs.agreement.coverage.toFixed(3)),
+      weakestSide: Number(Math.min(...obs.agreement.sides.map((s) => s.coverage)).toFixed(3)),
+      medianOffsetPx: obs.agreement.medianOffsetPx === undefined
+        ? null : Number(obs.agreement.medianOffsetPx.toFixed(1)),
+      sides: obs.agreement.sides.map((s) => Number(s.coverage.toFixed(2))),
+      confidence: Number(obs.confidence.toFixed(2)),
+    });
+  }
+
   const world = manager.cameraToWorld(obs.pose);
   const anchor = alignToMarker(world, target.poseInAssembly);
   const state = useStore.getState();
