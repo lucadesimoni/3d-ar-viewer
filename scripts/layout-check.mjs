@@ -217,6 +217,26 @@ for (const vp of VIEWPORTS) {
     after > before + 0.1, `${Math.round(before * 100)}% → ${Math.round(after * 100)}% of the height`);
   check('and the handle goes with the panel it collapsed',
     await page.locator('.sheet-handle').count() === 0);
+
+  // The canvas growing this much is exactly what used to break the studio
+  // camera. `frameCamera` sets a guard flag and clears it before returning,
+  // but Babylon does not recompute a dirty view matrix — and so does not fire
+  // its changed-observable — until the *next* render frame, well after the
+  // flag was already cleared. That deferred, unrelated notification read as
+  // "the operator touched the camera" and disabled every future auto-refit,
+  // including the very first one this collapse needs. The tell is the same
+  // one an operator would see: the shelf spilling off both edges of a canvas
+  // it used to fit inside.
+  const fit = await page.evaluate(() => {
+    const scene = window.spatialScene();
+    const canvas = document.querySelector('canvas.viewer-canvas').getBoundingClientRect();
+    const pts = window.spatialStore.getState().assembly.parts
+      .map((p) => scene.projectPart(p.id)).filter(Boolean);
+    const xs = pts.map((q) => q.x);
+    return { spanX: Math.max(...xs) - Math.min(...xs), width: canvas.width };
+  });
+  check('and the 3D view re-frames to fill it rather than overflowing',
+    fit.spanX <= 1, `assembly spans ${(fit.spanX * 100).toFixed(0)}% of the ${Math.round(fit.width)}px-wide canvas`);
   await context.close();
 }
 
@@ -426,6 +446,29 @@ for (const vp of VIEWPORTS) {
     Boolean(reach.allEdgesReachable), JSON.stringify(reach));
   check('and the badge is gone once there is nothing more to scroll to',
     await page.locator('.step-list-wrap .scroll-more.right').count() === 0);
+
+  // The selected bullet's ring sits outside its own box — 2px width, 2px
+  // offset — and `.step-list` clips vertically (`overflow-y: hidden`) to stop
+  // an accidental scrollbar, not to trim that ring. Without enough padding on
+  // the list the ring reads as a flat-topped smear rather than a circle: a
+  // reported flaw, and a real one — this checks the ring's own box, not a
+  // screenshot, so it catches the clip whether it is 1px or 10px.
+  await page.locator('.step-row').nth(3).click();
+  await page.waitForTimeout(200);
+  const ring = await page.evaluate(() => {
+    const row = document.querySelector('.step-row.selected');
+    const bullet = row?.querySelector('.bullet');
+    const list = document.querySelector('.step-list');
+    if (!bullet || !list) return { missing: true };
+    const b = bullet.getBoundingClientRect();
+    const l = list.getBoundingClientRect();
+    const cs = getComputedStyle(bullet);
+    const grow = parseFloat(cs.outlineWidth) + parseFloat(cs.outlineOffset);
+    return { ringTop: b.top - grow, ringBottom: b.bottom + grow, listTop: l.top, listBottom: l.bottom };
+  });
+  check('the selected step\'s ring is not clipped top or bottom by the scroll strip',
+    !ring.missing && ring.ringTop >= ring.listTop - 0.5 && ring.ringBottom <= ring.listBottom + 0.5,
+    JSON.stringify(ring));
 
   await context.close();
 }
