@@ -12,27 +12,47 @@ const target = kallax.recognition!;
 const make = () => new ObjectAnchorTracker(target, { detectIntervalMs: 400, fovDeg: 60 });
 
 describe('object anchoring', () => {
-  it('needs two agreeing detections before it commits', () => {
+  /**
+   * Two frames used to be the price of a lock, and a device log showed what
+   * that buys: two instrument cases standing on a real KALLAX read as a fourth
+   * board line, and because the cases do not move, two consecutive detections
+   * agreed on the wrong lattice and committed it at 0.94 confidence. A steady
+   * misreading is not the one-frame fluke the two-frame rule was written for.
+   */
+  it('will not commit on two agreeing detections — a steady misreading has two', () => {
     const tracker = make();
     const shelf = frame(160, 60, 320);
     expect(tracker.update(shelf, 0), 'one frame must not be enough').toBeUndefined();
     expect(tracker.update(shelf, 200), 'and it should not re-detect too soon').toBeUndefined();
+    expect(tracker.update(shelf, 500), 'two agreeing frames must not be enough').toBeUndefined();
+    expect(tracker.hasLock, 'and no lock may be held on two').toBe(false);
 
-    const locked = tracker.update(shelf, 500);
-    expect(locked?.mode).toBe('detected');
+    const locked = tracker.update(shelf, 1000);
+    expect(locked?.mode, 'the third agreeing frame commits').toBe('detected');
     expect(tracker.hasLock).toBe(true);
+  });
+
+  it('starts the run again when a detection disagrees with the one before it', () => {
+    const tracker = make();
+    // Two frames of one reading, then one of a different one: the run resets to
+    // the newcomer rather than committing on a count that spans both.
+    tracker.update(frame(160, 60, 320), 0);
+    tracker.update(frame(160, 60, 320), 500);
+    expect(tracker.update(frame(40, 200, 180), 1000), 'a disagreeing frame cannot be the third').toBeUndefined();
+    expect(tracker.hasLock).toBe(false);
   });
 
   it('then reports a pose on every frame, not once per detection interval', () => {
     const tracker = make();
     tracker.update(frame(160, 60, 320), 0);
     tracker.update(frame(160, 60, 320), 500);
+    tracker.update(frame(160, 60, 320), 1000);
     expect(tracker.hasLock).toBe(true);
 
     // Frames arriving 33 ms apart — far inside the 400 ms detection interval.
     const ranges: number[] = [];
     for (let i = 1; i <= 10; i++) {
-      const obs = tracker.update(frame(160 - i * 3, 60 - i * 2, 320 + i * 6), 500 + i * 33);
+      const obs = tracker.update(frame(160 - i * 3, 60 - i * 2, 320 + i * 6), 1000 + i * 33);
       expect(obs, `no pose on frame ${i}`).toBeDefined();
       expect(obs!.mode).toBe('tracked');
       ranges.push(obs!.pose.position[2]);
@@ -46,14 +66,16 @@ describe('object anchoring', () => {
     const tracker = make();
     tracker.update(frame(160, 60, 320), 0);
     tracker.update(frame(160, 60, 320), 500);
+    tracker.update(frame(160, 60, 320), 1000);
     expect(tracker.hasLock).toBe(true);
 
     const blank = renderShelf({ width: W, height: H, left: -900, top: -900, span: 100 });
-    tracker.update(blank, 533);
+    tracker.update(blank, 1033);
     expect(tracker.hasLock).toBe(false);
 
-    tracker.update(frame(170, 70, 320), 1000);
-    const back = tracker.update(frame(170, 70, 320), 1500);
+    tracker.update(frame(170, 70, 320), 1500);
+    tracker.update(frame(170, 70, 320), 2000);
+    const back = tracker.update(frame(170, 70, 320), 2500);
     expect(back?.mode).toBe('detected');
     expect(tracker.hasLock).toBe(true);
   });
@@ -61,7 +83,8 @@ describe('object anchoring', () => {
   it('reports where the object is, at a plausible range and upright', () => {
     const tracker = make();
     tracker.update(frame(160, 60, 320), 0);
-    const obs = tracker.update(frame(160, 60, 320), 500)!;
+    tracker.update(frame(160, 60, 320), 500);
+    const obs = tracker.update(frame(160, 60, 320), 1000)!;
     // A 1.44 m lattice filling half a 60-degree frame is about 1.9 m away.
     expect(obs.pose.position[2]).toBeGreaterThan(1.5);
     expect(obs.pose.position[2]).toBeLessThan(2.5);
