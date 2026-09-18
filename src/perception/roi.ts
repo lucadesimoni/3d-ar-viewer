@@ -95,7 +95,7 @@ export function obbCorners(obb: Obb): Vector3[] {
 }
 
 /** Closer than this to the camera plane, a projection is a division by nothing. */
-const NEAR_M = 0.05;
+export const NEAR_M = 0.05;
 
 export interface RoiOptions {
   /** Grow the rectangle by this share of its own size, for pose error. */
