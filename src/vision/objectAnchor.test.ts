@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ObjectAnchorTracker } from './objectAnchor';
 import { renderShelf } from './testing/renderShelf';
 import { kallax } from '../data/kallax';
+import type { Pose } from '../engine/types';
 
 const W = 640;
 const H = 480;
@@ -39,6 +40,44 @@ describe('object anchoring', () => {
     tracker.update(frame(160, 60, 320), 0);
     tracker.update(frame(160, 60, 320), 500);
     expect(tracker.update(frame(40, 200, 180), 1000), 'a disagreeing frame cannot be the third').toBeUndefined();
+    expect(tracker.hasLock).toBe(false);
+  });
+
+  /**
+   * A real device log showed a session where recognition never once locked,
+   * despite the shelf being genuinely detectable — because the acquisition
+   * streak compared camera-space poses across frames from different camera
+   * positions. An operator aiming a handheld phone moves the camera by more
+   * than `AGREEMENT_M` between two detection intervals as a matter of
+   * course; that read as "the object moved" every time, and three agreeing
+   * frames never happened. Three different-looking screen reads here stand
+   * in for a phone being panned between detections; a `cameraToWorld` mock
+   * that puts them all at the same spot in the world is what the renderer's
+   * real transform does when the shelf has not actually moved.
+   */
+  it('agrees across frames once camera motion between them is accounted for', () => {
+    const tracker = make();
+    const fixedWorld: Pose = { position: [0, 0, 2], rotation: [0, 0, 0, 1] };
+    const toWorld = () => fixedWorld;
+    expect(tracker.update(frame(160, 60, 320), 0, undefined, toWorld)).toBeUndefined();
+    expect(tracker.update(frame(40, 200, 180), 500, undefined, toWorld)).toBeUndefined();
+    const locked = tracker.update(frame(220, 20, 380), 1000, undefined, toWorld);
+    expect(
+      locked?.mode,
+      'three genuinely different camera-space reads still commit once world space agrees',
+    ).toBe('detected');
+    expect(tracker.hasLock).toBe(true);
+  });
+
+  it('still rejects real disagreement when the camera has not moved', () => {
+    // The counterpart to the test above: with the default identity
+    // cameraToWorld (a stationary camera), genuinely different detections
+    // must still fail to agree — the fix must not make every reading agree
+    // regardless of the world-space transform.
+    const tracker = make();
+    tracker.update(frame(160, 60, 320), 0);
+    tracker.update(frame(40, 200, 180), 500);
+    expect(tracker.update(frame(220, 20, 380), 1000)).toBeUndefined();
     expect(tracker.hasLock).toBe(false);
   });
 
