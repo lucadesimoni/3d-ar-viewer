@@ -918,7 +918,12 @@ function applyObjectAnchor(
   // corrected for the `object-fit: cover` crop the operator is looking through;
   // this image is the whole camera frame, so applying that correction to it
   // counted the crop twice — on top of assuming 60 degrees in the first place.
-  const obs = tracker.update(image, nowMs, manager.frameIntrinsics(image).fovDeg);
+  const obs = tracker.update(
+    image,
+    nowMs,
+    manager.frameIntrinsics(image).fovDeg,
+    (pose) => manager.cameraToWorld(pose),
+  );
   if (!obs) return false;
 
   // Reported, not enforced. Whether a lock's implied outline is really in the

@@ -65,6 +65,15 @@ const AGREE_FRAMES = 3;
  * That 5.1 s is the worst case and it is a moving one. Real furniture holds
  * still, consecutive detections then land within millimetres of each other,
  * and the third frame costs one more interval — under a second.
+ *
+ * That measurement was taken against `ar-verify`'s synthetic sway, which
+ * moves the drawn object but not the camera. A real device log showed the
+ * gap: a handheld phone being aimed at a target moves *itself* by more than
+ * this between two detection intervals as a matter of course, and the frames
+ * used to compare directly in camera space — measuring the phone's own
+ * motion, not the object's. Fixed by comparing in world space instead (see
+ * `update()`); this budget still describes real, in-world disagreement, not
+ * the operator's hand.
  */
 const AGREEMENT_M = 0.2;
 
@@ -108,6 +117,7 @@ export interface ObjectAnchorOptions {
 
 export class ObjectAnchorTracker {
   private readonly tracker: LatticeTracker;
+  /** `pose` here is in world space, not camera space — see `update()`. */
   private pending: { pose: Pose; atMs: number; streak: number } | undefined;
   // Negative infinity, not zero: the very first frame must be allowed to run a
   // detection rather than sitting out the first interval doing nothing.
@@ -165,8 +175,19 @@ export class ObjectAnchorTracker {
   /**
    * Feed one camera frame. Returns a pose whenever there is one to report —
    * every frame while tracking, and at the detection cadence otherwise.
+   *
+   * `cameraToWorld` is optional and defaults to the identity — every existing
+   * caller and test that omits it keeps today's behaviour exactly, since
+   * camera space and world space then coincide. Pass the renderer's real
+   * transform (`SceneManager.cameraToWorld`) to acquire correctly: see the
+   * note on `AGREEMENT_M` below for why this matters.
    */
-  update(image: ImageData, nowMs: number, fovDeg?: number): ObjectObservation | undefined {
+  update(
+    image: ImageData,
+    nowMs: number,
+    fovDeg?: number,
+    cameraToWorld: (pose: Pose) => Pose = (pose) => pose,
+  ): ObjectObservation | undefined {
     const K = this.intrinsics(image, fovDeg);
     const interval = this.opts.detectIntervalMs ?? 500;
     if (this.hasLock) {
@@ -211,15 +232,24 @@ export class ObjectAnchorTracker {
     // A detection that agrees with the one before it extends the run; one that
     // does not — or one that arrives after the previous has gone stale — starts
     // a new run at this pose rather than throwing the evidence away.
+    //
+    // Compared in world space, not the camera space `solved.pose` arrives in —
+    // a real device log showed why: an operator aiming the phone moves the
+    // camera between two detection intervals (400-1000 ms apart) by more than
+    // `AGREEMENT_M` relative to itself, even while the shelf sits perfectly
+    // still in the world. Comparing camera-space positions across frames from
+    // different camera poses was measuring the phone's own motion, not the
+    // object's — three real, correct detections in a row could never agree.
+    const worldPose = cameraToWorld(solved.pose);
     const previous = this.pending;
     const fresh = previous !== undefined && nowMs - previous.atMs <= 4000;
     const drift = fresh ? Math.hypot(
-      solved.pose.position[0] - previous.pose.position[0],
-      solved.pose.position[1] - previous.pose.position[1],
-      solved.pose.position[2] - previous.pose.position[2],
+      worldPose.position[0] - previous.pose.position[0],
+      worldPose.position[1] - previous.pose.position[1],
+      worldPose.position[2] - previous.pose.position[2],
     ) : Infinity;
     const streak = drift <= (this.opts.agreementM ?? AGREEMENT_M) ? previous!.streak + 1 : 1;
-    this.pending = { pose: solved.pose, atMs: nowMs, streak };
+    this.pending = { pose: worldPose, atMs: nowMs, streak };
     if (streak < (this.opts.agreeFrames ?? AGREE_FRAMES)) return undefined;
 
     // Enough frames agree: commit, and hand the detection to the tracker so the
