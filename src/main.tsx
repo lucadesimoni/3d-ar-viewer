@@ -84,7 +84,13 @@ function reportLoadedAssets(registration: ServiceWorkerRegistration): void {
     }
     if (urls.length) registration.active?.postMessage({ type: 'cache-assets', urls });
   });
-  observer.observe({ type: 'resource', buffered: true });
+  // Older iOS Safari rejects the `type`/`buffered` form outright; there the
+  // renderer is simply cached by the fetch handler on the next visit instead.
+  try {
+    observer.observe({ type: 'resource', buffered: true });
+  } catch {
+    observer.disconnect();
+  }
 }
 
 // The app is exactly as tall as what the operator can see — measured, not
