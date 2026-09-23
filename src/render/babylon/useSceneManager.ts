@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { SceneManager, type SceneRenderState } from './SceneManager';
+import type { SceneManager, SceneRenderState } from './SceneManager';
 import { setActiveManager } from './managerRegistry';
 import type { RecognitionStatus } from '../../vision/verdict';
 import { useStore } from '../../state/store';
@@ -29,7 +29,14 @@ export function useSceneManager(
 
     // Engine creation is async (WebGPU with a WebGL2 fallback), so build the
     // manager in a promise and guard against unmount before it resolves.
-    void SceneManager.create(canvasRef.current, assembly, { transparent: opts.transparent }).then((m) => {
+    //
+    // The renderer module itself is loaded here too, not imported statically:
+    // Babylon is most of the app's JavaScript, and as a static import every byte
+    // of it had to be parsed before React could paint the step list the
+    // operator reads first. The canvas fills in a moment later instead.
+    const canvas = canvasRef.current;
+    void import('./SceneManager').then(({ SceneManager }) =>
+      SceneManager.create(canvas, assembly, { transparent: opts.transparent })).then((m) => {
       if (disposed) { m.dispose(); return; }
       if (opts.grid) m.addGroundGrid();
       m.frameCamera();

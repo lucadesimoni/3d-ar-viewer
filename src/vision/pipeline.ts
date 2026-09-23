@@ -148,6 +148,7 @@ export class RecognitionPipeline {
   private disposed = false;
   private generation = 0;
   private initializing: Promise<PipelineStatus> | undefined;
+  private warming: Promise<void> | undefined;
   private readonly errors: NonNullable<PipelineStatus['errors']> = {};
   private readonly tracker = new DetectionTracker();
   private readonly voter = new ClassificationVoter();
@@ -168,14 +169,6 @@ export class RecognitionPipeline {
       return this.status();
     }
     const tasks: Promise<unknown>[] = [];
-
-    tasks.push(
-      loadOpenCV(this.config.openCvUrl).then((cv) => {
-        if (this.disposed) return;
-        this.openCvReady = cv !== undefined;
-        if (!cv) this.errors.openCv = 'OpenCV unavailable; using JavaScript image processing.';
-      }).catch((error) => { if (!this.disposed) this.errors.openCv = errorMessage(error); }),
-    );
     if (this.config.detector) {
       this.detector = new VisionModel(this.config.detector, 'detection');
       tasks.push(this.detector.load());
@@ -191,6 +184,22 @@ export class RecognitionPipeline {
 
     await Promise.allSettled(tasks);
     return this.status();
+  }
+
+  /**
+   * Start loading OpenCV, once. Not part of `init()`: it is a multi-megabyte
+   * third-party script, and fetching it on every page view — including the
+   * ones that never open the camera — made it the largest download the app
+   * did at start-up. Everything that uses it has a JavaScript fallback, so the
+   * camera loop calls this as it starts and runs on the fallback until it lands.
+   */
+  warmOpenCv(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    return this.warming ??= loadOpenCV(this.config.openCvUrl).then((cv) => {
+      if (this.disposed) return;
+      this.openCvReady = cv !== undefined;
+      if (!cv) this.errors.openCv = 'OpenCV unavailable; using JavaScript image processing.';
+    }).catch((error) => { if (!this.disposed) this.errors.openCv = errorMessage(error); });
   }
 
   status(): PipelineStatus {

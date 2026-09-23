@@ -16,7 +16,11 @@ import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { Matrix, Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Plane } from '@babylonjs/core/Maths/math.plane';
 import { PointerEventTypes } from '@babylonjs/core/Events/pointerEvents';
-import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
+import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder';
+import { CreateDisc } from '@babylonjs/core/Meshes/Builders/discBuilder';
+import { CreateGround } from '@babylonjs/core/Meshes/Builders/groundBuilder';
+import { CreateLines } from '@babylonjs/core/Meshes/Builders/linesBuilder';
+import { CreateTorus } from '@babylonjs/core/Meshes/Builders/torusBuilder';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
@@ -26,7 +30,6 @@ import type { AssemblyDef, BackgroundRole, PartDef, PlacementState, Pose } from 
 import type { Severity } from '../../engine/diagnostics';
 import { assemblyCentroid, explodePose, pulseScale, sampleTimeline, type Timeline } from '../../engine/animation';
 import { clonePose } from '../../engine/math';
-import { loadPartModel } from './gltf';
 import {
   HardwareScalingOptimization,
   LensFlaresOptimization,
@@ -634,7 +637,7 @@ export class SceneManager {
    */
   private ensureReticle(): Mesh {
     if (this.reticle) return this.reticle;
-    const r = MeshBuilder.CreateTorus(
+    const r = CreateTorus(
       'ar-reticle', { diameter: 0.26, thickness: 0.012, tessellation: 48 }, this.scene,
     );
     r.rotation.x = Math.PI / 2;           // lie flat on the ground
@@ -652,7 +655,7 @@ export class SceneManager {
     // The tick is kept facing the camera, so the marker presents the same
     // aspect from anywhere — and it earns its place twice, because the side it
     // marks is the side the assembly will face once it is dropped there.
-    const tick = MeshBuilder.CreateBox(
+    const tick = CreateBox(
       'ar-reticle-tick', { width: 0.03, height: 0.004, depth: 0.07 }, this.scene,
     );
     tick.material = mat;
@@ -718,7 +721,7 @@ export class SceneManager {
     const y = min.y + 0.001;
 
     if (!this.groundShadow) {
-      const disc = MeshBuilder.CreateDisc('ar-ground-shadow', { radius: 0.5, tessellation: 48 }, this.scene);
+      const disc = CreateDisc('ar-ground-shadow', { radius: 0.5, tessellation: 48 }, this.scene);
       disc.rotation.x = Math.PI / 2;
       disc.bakeCurrentTransformIntoVertices();
       const mat = makeOverlayMaterial(this.scene, '#000000', 0.3, 'ar-ground-shadow-mat');
@@ -743,7 +746,7 @@ export class SceneManager {
       new Vector3(cx - hx, y, cz + hz),
     ];
     corners.push(corners[0].clone());
-    this.groundOutline = MeshBuilder.CreateLines(
+    this.groundOutline = CreateLines(
       'ar-ground-outline',
       { points: corners, instance: this.groundOutline as never, updatable: true },
       this.scene,
@@ -1662,10 +1665,11 @@ export class SceneManager {
       // Real geometry (glTF/GLB) loads asynchronously; the primitive above holds
       // the pose slot until it arrives, and remains as a fallback if it fails.
       if (part.mesh.type === 'url') {
-        void loadPartModel(this.scene, part.mesh.url, root, {
-          scale: part.mesh.scale,
-          draco: part.mesh.draco,
-        }).then((model) => {
+        const { url, scale, draco } = part.mesh;
+        void import('./gltf').then(({ loadPartModel }) => loadPartModel(this.scene, url, root, {
+          scale,
+          draco,
+        })).catch(() => undefined).then((model) => {
           if (!model) return; // load failed — keep the placeholder primitive
           visual.mesh.isVisible = false;
           visual.loadedMeshes = model.meshes;
@@ -1996,7 +2000,7 @@ export class SceneManager {
   }
 
   addGroundGrid(): void {
-    const grid = MeshBuilder.CreateGround('grid', { width: 2, height: 2, subdivisions: 20 }, this.scene);
+    const grid = CreateGround('grid', { width: 2, height: 2, subdivisions: 20 }, this.scene);
     const mat = makeOverlayMaterial(this.scene, '#1e293b', 0.25, 'gridmat');
     mat.wireframe = true;
     grid.material = mat;
@@ -2250,7 +2254,7 @@ export class SceneManager {
       return;
     }
     if (this.marker) return;
-    const box = MeshBuilder.CreateBox('ar-test-marker', { size: 0.2 }, this.scene);
+    const box = CreateBox('ar-test-marker', { size: 0.2 }, this.scene);
     const mat = new StandardMaterial('ar-test-marker-mat', this.scene);
     mat.disableLighting = true;
     mat.emissiveColor = Color3.FromHexString('#22d3ee');

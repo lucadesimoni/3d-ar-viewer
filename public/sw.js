@@ -56,6 +56,31 @@ async function precache() {
   }
 }
 
+/**
+ * Cache what the page already loaded before this worker controlled it.
+ *
+ * `precache()` only knows what index.html names. The renderer, and the shaders
+ * Babylon pulls in as the first materials compile, are loaded on demand by the
+ * page — on a first visit, before this worker is in control, so the fetch
+ * handler never sees them and the first offline visit had an app shell with no
+ * 3D view in it. The page reports its own loaded assets (see `main.tsx`); only
+ * same-origin fingerprinted bundles are accepted.
+ */
+self.addEventListener('message', (e) => {
+  if (e.data?.type !== 'cache-assets' || !Array.isArray(e.data.urls)) return;
+  e.waitUntil(cacheAssets(e.data.urls));
+});
+
+async function cacheAssets(urls) {
+  const cache = await caches.open(CACHE);
+  const wanted = urls.filter((u) => typeof u === 'string' && /^\/assets\/[A-Za-z0-9._-]+\.(?:m?js|css|wasm)$/.test(u));
+  await Promise.allSettled([...new Set(wanted)].map(async (url) => {
+    if (await cache.match(url)) return;
+    const response = await fetch(url);
+    if (cacheable(response)) await cache.put(url, response);
+  }));
+}
+
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()

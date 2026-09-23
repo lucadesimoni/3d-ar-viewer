@@ -8,9 +8,10 @@ const f = vi.hoisted(() => ({
   classify: vi.fn(),
   load: vi.fn(),
   dispose: vi.fn(),
+  loadOpenCV: vi.fn(async () => undefined),
 }));
 vi.mock('./opencv', () => ({
-  loadOpenCV: async () => undefined,
+  loadOpenCV: f.loadOpenCV,
   measureSharpness: () => ({ sharp: true, variance: 100 }),
 }));
 vi.mock('./onnx', async (original) => ({
@@ -97,6 +98,19 @@ describe('recognition label contract', () => {
 });
 
 describe('pipeline lifecycle', () => {
+  it('does not fetch OpenCV at init — only once the camera loop asks for it', async () => {
+    // OpenCV is a multi-megabyte third-party script. It used to load from the
+    // mount effect, so every page view paid for it, camera or not.
+    f.loadOpenCV.mockClear();
+    const pipeline = new RecognitionPipeline();
+    await pipeline.init();
+    expect(f.loadOpenCV).not.toHaveBeenCalled();
+    await pipeline.warmOpenCv();
+    await pipeline.warmOpenCv();
+    expect(f.loadOpenCV).toHaveBeenCalledTimes(1);
+    expect(pipeline.status().errors?.openCv).toMatch(/JavaScript/);
+  });
+
   it('retains the no-model baseline', async () => {
     const pipeline = new RecognitionPipeline();
     expect(await pipeline.init()).toMatchObject({ detector: false, classifier: false, segmenter: false });
