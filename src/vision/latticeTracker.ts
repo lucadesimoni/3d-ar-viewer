@@ -111,6 +111,8 @@ export class LatticeTracker {
     image: ImageData,
     obs: GridObservation,
     target: { cols: number; rows: number; widthM: number; heightM: number },
+    /** Where a lattice point really is in `image`, when `obs` was found in a leveled view. */
+    toImage?: (p: { x: number; y: number }) => { x: number; y: number } | undefined,
   ): boolean {
     const gray = toGray(image, this.working);
     const coarse = downsample2(gray);
@@ -121,8 +123,11 @@ export class LatticeTracker {
     const points: TrackPoint[] = [];
     for (const j of yi) {
       for (const i of xi) {
-        const px = obs.xLines[i] / gray.scale;
-        const py = obs.yLines[j] / gray.scale;
+        const crossing = obs.grid?.[j]?.[i] ?? { x: obs.xLines[i], y: obs.yLines[j] };
+        const at = toImage ? toImage(crossing) : crossing;
+        if (!at) continue;
+        const px = at.x / gray.scale;
+        const py = at.y / gray.scale;
         const patch = samplePatch(gray, px, py, this.patchRadius);
         if (!patch || patch.norm < 1e-3) continue;
         const coarsePatch = samplePatch(coarse, px / 2, py / 2, COARSE_PATCH_RADIUS);

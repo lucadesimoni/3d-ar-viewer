@@ -1,4 +1,5 @@
-import { toGray } from './imageOps';
+import { toGray, type GrayImage } from './imageOps';
+import { applyHomography, warpToLevel, type Leveling, type Pinhole } from './leveling';
 
 /**
  * Markerless recognition of a regular grid facade — a cube shelf, a drawer
@@ -55,6 +56,12 @@ export interface GridObservation {
   yLines: number[];
   /** 0..1 — how completely the fitted lattice is actually supported by edges. */
   confidence: number;
+  /**
+   * Every lattice crossing, `grid[row][col]`, once the lines have been measured
+   * at full resolution (`refineLines`). The lines need not be axis-aligned
+   * then, so this, not `xLines × yLines`, is where the crossings are.
+   */
+  grid?: Point2[][];
 }
 
 export interface GridDetectOptions {
@@ -282,18 +289,186 @@ function bestRun(
 }
 
 /**
+ * Put each board line on its board's centre, measured at full resolution.
+ *
+ * The lattice search works on a downsampled edge profile, where a board is two
+ * pixels wide and its two edges merge into one peak. For an inner board the
+ * peak is its centre — an opening either side, equal contrast. An outer board
+ * has the wall on one side and an opening on the other, the opening's edge is
+ * about twice as strong, and the peak is pulled inward. Measured on rendered
+ * frames: both outer lines half a working pixel in, the span a board short,
+ * and every pose 1.2% too far away square-on and up to 4% from above, where
+ * the leveling resample blurs the edges further.
+ *
+ * So each line is re-found in the full-resolution frame: brightness is
+ * averaged along the line and the board's two edges — one rising, one falling
+ * — are located across it; the centre is their midpoint, whichever side is
+ * darker. `toImage` carries detection coordinates into the frame for a
+ * leveled detection. A line whose two edges cannot be told apart keeps its
+ * coarse position.
+ */
+export function refineLines(
+  image: ImageData,
+  obs: GridObservation,
+  searchPx: number,
+  toImage: (p: Point2) => Point2 | undefined = (p) => p,
+): GridObservation {
+  const luma = (x: number, y: number): number | undefined => {
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    if (ix < 0 || iy < 0 || ix >= image.width - 1 || iy >= image.height - 1) return undefined;
+    const fx = x - ix;
+    const fy = y - iy;
+    const d = image.data;
+    const at = (px: number, py: number) => { const i = (py * image.width + px) * 4; return d[i] + 2 * d[i + 1] + d[i + 2]; };
+    return ((at(ix, iy) * (1 - fx) + at(ix + 1, iy) * fx) * (1 - fy)
+      + (at(ix, iy + 1) * (1 - fx) + at(ix + 1, iy + 1) * fx) * fy) / 4;
+  };
+
+  const step = 0.5;
+  const window = (half: number) => {
+    const out: number[] = [];
+    for (let o = -half; o <= half + 1e-9; o += step) out.push(o);
+    return out;
+  };
+
+  const refineOnce = (line: number, along: [number, number], vertical: boolean, offsets: number[]): number => {
+    const samples = 24;
+    const profile = new Float64Array(offsets.length);
+    const count = new Float64Array(offsets.length);
+    for (let s = 0; s < samples; s++) {
+      const a = along[0] + ((s + 0.5) / samples) * (along[1] - along[0]);
+      for (let k = 0; k < offsets.length; k++) {
+        const p = toImage(vertical ? { x: line + offsets[k], y: a } : { x: a, y: line + offsets[k] });
+        const v = p && luma(p.x, p.y);
+        if (v === undefined) continue;
+        profile[k] += v;
+        count[k]++;
+      }
+    }
+    for (let k = 0; k < offsets.length; k++) {
+      if (count[k] < samples / 2) return line;
+      profile[k] /= count[k];
+    }
+    // Central difference, then the strongest rise and the strongest fall.
+    const deriv = new Float64Array(offsets.length);
+    for (let k = 1; k < offsets.length - 1; k++) deriv[k] = (profile[k + 1] - profile[k - 1]) / 2;
+    let rise = 1;
+    let fall = 1;
+    for (let k = 1; k < offsets.length - 1; k++) {
+      if (deriv[k] > deriv[rise]) rise = k;
+      if (deriv[k] < deriv[fall]) fall = k;
+    }
+    const strongest = Math.max(deriv[rise], -deriv[fall]);
+    if (strongest <= 0 || deriv[rise] < 0.3 * strongest || -deriv[fall] < 0.3 * strongest) return line;
+    // An edge at the rim of the window may be the rim, not the board's edge.
+    const last = offsets.length - 2;
+    if (rise <= 1 || fall <= 1 || rise >= last || fall >= last) return line;
+    const peak = (k: number) => {
+      const a = deriv[k - 1];
+      const b = deriv[k];
+      const c = deriv[k + 1];
+      const den = a - 2 * b + c;
+      return offsets[k] + (den !== 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (a - c)) / den)) : 0) * step;
+    };
+    return line + (peak(rise) + peak(fall)) / 2;
+  };
+
+  // Twice: first wide, because a coarse line can sit most of a board off its
+  // centre (measured: 7 px on a 10 px board seen from above), then narrow and
+  // centred on the first answer, so a neighbouring edge cannot compete.
+  const wide = window(2 * searchPx);
+  const narrow = window(searchPx);
+  const refine = (line: number, along: [number, number], vertical: boolean): number =>
+    refineOnce(refineOnce(line, along, vertical, wide), along, vertical, narrow);
+
+  // Each line is measured in its two halves as well, so a line that is not
+  // quite along the axis is followed rather than averaged into a blur. Seen a
+  // little from the side, the boards that run across the facade converge on a
+  // vanishing point; forcing them level put the pose 2-7% out at 7-12 degrees.
+  // A half that cannot be measured leaves the whole line's single position.
+  type Line = { at: number; slope: number };
+  const measure = (coarse: number, span: [number, number], vertical: boolean): Line => {
+    const whole = refine(coarse, span, vertical);
+    const mid = (span[0] + span[1]) / 2;
+    const first: [number, number] = [span[0], mid];
+    const second: [number, number] = [mid, span[1]];
+    const a = refine(whole, first, vertical);
+    const b = refine(whole, second, vertical);
+    const ca = (first[0] + first[1]) / 2;
+    const cb = (second[0] + second[1]) / 2;
+    if (a === whole || b === whole || cb === ca) return { at: whole, slope: 0 };
+    const slope = (b - a) / (cb - ca);
+    // Position where the line crosses the middle of the span, and its slope.
+    return { at: a + (mid - ca) * slope, slope };
+  };
+
+  const xSpan: [number, number] = [obs.yLines[0], obs.yLines[obs.yLines.length - 1]];
+  const ySpan: [number, number] = [obs.xLines[0], obs.xLines[obs.xLines.length - 1]];
+  const xMid = (xSpan[0] + xSpan[1]) / 2;
+  const yMid = (ySpan[0] + ySpan[1]) / 2;
+  const vertical = obs.xLines.map((x) => measure(x, xSpan, true));
+  const horizontal = obs.yLines.map((y) => measure(y, ySpan, false));
+
+  // Where vertical line i (x = at + slope·(y − xMid)) meets horizontal line j
+  // (y = at + slope·(x − yMid)).
+  const cross = (v: Line, h: Line): Point2 => {
+    const denom = 1 - v.slope * h.slope;
+    const x = (v.at + v.slope * (h.at - h.slope * yMid - xMid)) / denom;
+    return { x, y: h.at + h.slope * (x - yMid) };
+  };
+  const grid = horizontal.map((h) => vertical.map((v) => cross(v, h)));
+  const last = (row: Point2[]) => row[row.length - 1];
+  const top = grid[0];
+  const bottom = grid[grid.length - 1];
+  return {
+    ...obs,
+    xLines: vertical.map((v) => v.at),
+    yLines: horizontal.map((h) => h.at),
+    grid,
+    quad: [top[0], last(top), last(bottom), bottom[0]],
+  };
+}
+
+/**
  * Find a grid facade in a camera frame. Returns undefined when the frame does
  * not contain a convincing lattice — which is most frames, and is the point:
  * this must stay quiet rather than anchoring the overlay to a bookshelf-shaped
  * pattern in the carpet.
  */
 export function detectGridFacade(image: ImageData, opts: GridDetectOptions = {}): GridObservation | undefined {
-  const workingSize = opts.workingSize ?? 240;
+  if (image.width < 16 || image.height < 16) return undefined;
+  const gray = toGray(image, opts.workingSize ?? 240);
+  const obs = detectOnGray(gray, opts, { x: 0, y: 0 });
+  return obs && refineLines(image, obs, 3 * gray.scale);
+}
+
+/**
+ * The same search on a view leveled by gravity (see `leveling.ts`), for a
+ * facade the camera sees from above or with the phone tipped.
+ *
+ * The observation is in the level camera's pixels — that is the frame in which
+ * the lattice is axis-aligned and `matchesGridTarget` means what it says —
+ * with `toImage` to carry any of its points back into the real frame.
+ */
+export function detectLeveledGridFacade(
+  image: ImageData,
+  level: Leveling,
+  k: Pinhole,
+  opts: GridDetectOptions = {},
+): { obs: GridObservation; toImage: (p: Point2) => Point2 | undefined } | undefined {
+  if (image.width < 16 || image.height < 16) return undefined;
+  const warped = warpToLevel(toGray(image, opts.workingSize ?? 240), image, level, k);
+  if (!warped) return undefined;
+  const coarse = detectOnGray(warped.gray, opts, warped.origin);
+  if (!coarse) return undefined;
+  const toImage = (p: Point2) => applyHomography(level.Hinv, p);
+  return { obs: refineLines(image, coarse, 3 * warped.gray.scale, toImage), toImage };
+}
+
+function detectOnGray(gray: GrayImage, opts: GridDetectOptions, origin: Point2): GridObservation | undefined {
   const minCells = opts.minCells ?? 2;
   const maxCells = opts.maxCells ?? 8;
-  if (image.width < 16 || image.height < 16) return undefined;
-
-  const gray = toGray(image, workingSize);
   const { data: g, width: w, height: h, scale } = gray;
   const { cols, rows } = edgeProfiles(g, w, h);
 
@@ -310,8 +485,8 @@ export function detectGridFacade(image: ImageData, opts: GridDetectOptions = {})
     yPos = bestRun(yPos, opts.target.rows + 1, (y) => edgeCoverage(g, w, h, 'horizontal', y, xPos[0], xPos[xPos.length - 1]), true);
   }
 
-  const xLines = xPos.map((p) => p * scale);
-  const yLines = yPos.map((p) => p * scale);
+  const xLines = xPos.map((p) => origin.x + p * scale);
+  const yLines = yPos.map((p) => origin.y + p * scale);
   const x0 = xLines[0];
   const x1 = xLines[xLines.length - 1];
   const y0 = yLines[0];

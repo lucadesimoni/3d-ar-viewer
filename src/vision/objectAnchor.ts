@@ -1,4 +1,5 @@
-import { detectGridFacade, matchesGridTarget } from './gridRecognition';
+import { detectGridFacade, detectLeveledGridFacade, matchesGridTarget, type GridObservation, type Point2 } from './gridRecognition';
+import { faceSquareOn, IDENTITY_LEVELING, levelingHomography, turnAboutVertical, type Leveling } from './leveling';
 import { LatticeTracker, type TrackedFrame } from './latticeTracker';
 import {
   estimateIntrinsics,
@@ -76,6 +77,17 @@ const AGREE_FRAMES = 3;
  * the operator's hand.
  */
 const AGREEMENT_M = 0.2;
+
+/**
+ * Below this, the camera counts as level and the leveled pass is skipped: the
+ * plain detector's own tolerance (about 20 degrees) covers it, and resampling
+ * would only blur the edges it measures.
+ */
+const LEVEL_MIN_TILT_DEG = 5;
+/** Above this, the plain detector's pose is too wrong to fall back on. */
+const PLAIN_MAX_TILT_DEG = 10;
+/** Directions to try when a facade is too far to the side to be found square-on. */
+const YAW_GUESSES_DEG = [-20, 20, -32, 32];
 
 export type AnchorMode = 'detected' | 'tracked';
 
@@ -173,6 +185,62 @@ export class ObjectAnchorTracker {
   }
 
   /**
+   * Find the target in a frame. A camera held level uses the plain detector,
+   * exactly as before; a tipped one looks in the view leveled by gravity,
+   * because only there is the facade the rectangle the detector fits.
+   */
+  private detect(
+    image: ImageData,
+    K: { fx: number; fy: number; cx: number; cy: number },
+    cameraToWorld: (pose: Pose) => Pose,
+  ): { obs: GridObservation; toImage?: (p: Point2) => Point2 | undefined } | undefined {
+    const rotation = cameraToWorld({ position: [0, 0, 0], rotation: [0, 0, 0, 1] }).rotation;
+    const level = levelingHomography(rotation, K);
+    let found: { obs: GridObservation; toImage?: (p: Point2) => Point2 | undefined } | undefined;
+    const tipped = level !== undefined && level.tiltDeg >= LEVEL_MIN_TILT_DEG;
+    let used: Leveling = tipped ? level : IDENTITY_LEVELING;
+    if (level && tipped) {
+      const leveled = detectLeveledGridFacade(image, level, K, { target: this.target });
+      if (leveled && matchesGridTarget(leveled.obs, this.target)) found = leveled;
+    }
+    // A tilted camera turns the facade into a trapezoid, and the plain
+    // detector's rectangle around it is a wrong pose, not an approximate one:
+    // measured, 7.6% of the range at 30 degrees of pitch and 127% with the
+    // phone rolled 25 degrees — a confident lock in the wrong place. Only a
+    // slight tilt may fall back to it.
+    if (!found && (!tipped || level!.tiltDeg <= PLAIN_MAX_TILT_DEG)) {
+      const plain = detectGridFacade(image, { target: this.target });
+      if (plain && matchesGridTarget(plain, this.target)) found = { obs: plain };
+    }
+    if (!found) {
+      // Seen from much more than 15 degrees to the side, the bays shrink so
+      // much with distance that no even lattice fits them, and there are no
+      // board slopes yet to say which way the facade faces. Guess a few
+      // directions; whichever finds it is then refined below.
+      for (const yaw of YAW_GUESSES_DEG) {
+        const turned = turnAboutVertical(used, yaw, K);
+        const guess = detectLeveledGridFacade(image, turned, K, { target: this.target });
+        if (guess && matchesGridTarget(guess.obs, this.target)) {
+          found = guess;
+          used = turned;
+          break;
+        }
+      }
+      if (!found) return undefined;
+    }
+    // Seen from the side, the facade is still a trapezoid after leveling; its
+    // across-boards say which way it faces. Look again square-on to it, and
+    // keep the first answer if that does not work out.
+    const rows = found.obs.grid?.map((r) => [r[0], r[r.length - 1]] as [Point2, Point2]);
+    const square = rows && faceSquareOn(used, rows, K);
+    if (square) {
+      const again = detectLeveledGridFacade(image, square, K, { target: this.target });
+      if (again && matchesGridTarget(again.obs, this.target)) return again;
+    }
+    return found;
+  }
+
+  /**
    * Feed one camera frame. Returns a pose whenever there is one to report —
    * every frame while tracking, and at the detection cadence otherwise.
    *
@@ -221,12 +289,18 @@ export class ObjectAnchorTracker {
     if (nowMs - this.lastDetectMs < interval) return undefined;
     this.lastDetectMs = nowMs;
 
-    const obs = detectGridFacade(image, { target: this.target });
-    if (!obs || !matchesGridTarget(obs, this.target)) {
+    const found = this.detect(image, K, cameraToWorld);
+    if (!found) {
       this.pending = undefined;
       return undefined;
     }
-    const solved = rectPoseFromCorners(obs.quad, this.target.widthM, this.target.heightM, K);
+    const { obs, toImage } = found;
+    const quad = toImage ? obs.quad.map(toImage) : obs.quad;
+    if (quad.some((p) => p === undefined)) {
+      this.pending = undefined;
+      return undefined;
+    }
+    const solved = rectPoseFromCorners(quad as Point2[], this.target.widthM, this.target.heightM, K);
     if (!solved || solved.reprojectionPx > 6) return undefined;
 
     // A detection that agrees with the one before it extends the run; one that
@@ -254,7 +328,7 @@ export class ObjectAnchorTracker {
 
     // Enough frames agree: commit, and hand the detection to the tracker so the
     // next frames are followed rather than searched for.
-    this.locked = this.tracker.seed(image, obs, this.target);
+    this.locked = this.tracker.seed(image, obs, this.target, toImage);
     return {
       pose: solved.pose,
       confidence: Math.max(0, Math.min(1, obs.confidence * (1 - solved.reprojectionPx / 8))),
