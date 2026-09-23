@@ -40,7 +40,10 @@ const f = vi.hoisted(() => {
   };
 });
 
-vi.mock('../render/babylon/managerRegistry', () => ({ getActiveManager: () => f.manager }));
+vi.mock('../render/babylon/managerRegistry', () => ({
+  getActiveManager: () => f.manager,
+  withActiveManager: (cb: (m: unknown) => void) => { cb(f.manager); return () => undefined; },
+}));
 vi.mock('../engine/tracking/capabilities', () => ({
   detectCapabilities: async () => f.capabilities,
 }));

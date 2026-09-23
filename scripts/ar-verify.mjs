@@ -1398,8 +1398,12 @@ const context = await browser.newContext({
       optional.includes('camera-access') && !required.includes('camera-access'),
       `optional: ${optional.join(', ') || 'none'}`);
   } else {
-    check('the AR session request could be observed', requested !== null,
-      'navigator.xr missing in this browser');
+    // An empty list is not "could not observe": navigator.xr was there and the
+    // tap asked for nothing within 3 s. That is how a session helper that was
+    // never prepared ahead of the tap showed up — as three checks that quietly
+    // stopped running rather than one that failed.
+    check('the tap asks for an AR session', requested !== null && requested.length > 0,
+      requested === null ? 'navigator.xr missing in this browser' : 'no requestSession within 3 s of the tap');
   }
 
   // One request per tap. `requestSession` consumes the transient activation, so

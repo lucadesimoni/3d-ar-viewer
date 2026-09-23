@@ -7,7 +7,7 @@ import { envModelConfig } from '../vision/defaultModels';
 import { classifyRecognition, type LabelInfo } from '../vision/verdict';
 import { ObjectAnchorTracker } from '../vision/objectAnchor';
 import { detectPerfProfile } from '../render/perf';
-import { getActiveManager } from '../render/babylon/managerRegistry';
+import { getActiveManager, withActiveManager } from '../render/babylon/managerRegistry';
 import { toImageData } from '../vision/opencv';
 import { alignToMarker } from '../engine/alignment';
 import { useStore, surfaceDrop } from '../state/store';
@@ -189,6 +189,7 @@ export function useArController(
 
   useEffect(() => {
     let alive = true;
+    let cancelPrepare: (() => void) | undefined;
     detectCapabilities().then((caps) => {
       if (!alive) return;
       setCapabilities(caps);
@@ -203,13 +204,19 @@ export function useArController(
       // is what Babylon's own AR button used to give us for free.
       if (caps.webxrSupported && caps.permissionsPolicy?.['xr-spatial-tracking'] !== 'denied') {
         void import('../render/babylon/xr');
-        void getActiveManager()?.prepareWebXr({
-          onPlace: (pose) => { if (xrSession.current) useStore.getState().setAnchor(pose, 0.9, 'floor'); },
-          onEnd: () => { if (xrSession.current) stop(); },
+        // The renderer loads on demand, so the manager may not exist yet when
+        // the capabilities come back. Preparing only if it already did left the
+        // helper to be built inside the tap — the exact activation cost this
+        // is here to avoid.
+        cancelPrepare = withActiveManager((manager) => {
+          void manager.prepareWebXr({
+            onPlace: (pose) => { if (xrSession.current) useStore.getState().setAnchor(pose, 0.9, 'floor'); },
+            onEnd: () => { if (xrSession.current) stop(); },
+          });
         });
       }
     });
-    return () => { alive = false; };
+    return () => { alive = false; cancelPrepare?.(); };
   }, [setArMode]);
 
   const stop = useCallback(() => {
