@@ -223,6 +223,29 @@ const context = await browser.newContext({
       `${tiltDeg(recognised.rotation).toFixed(1)}° from vertical`);
     check('it stands on the floor, not at eye level', recognised.anchor[1] < -0.4,
       `origin ${recognised.anchor[1].toFixed(2)} m below the camera`);
+
+    // Once locked, the app looks for each part of the step in the picture. The
+    // stream draws the shelf, so no drawn part may be reported missing; a part
+    // it cannot judge may say so, with a reason.
+    await page.waitForTimeout(3000);
+    const presence = await page.evaluate(() => {
+      const st = window.spatialStore.getState();
+      const step = st.assembly.steps.find((s) => s.id === st.activeStepId);
+      return { parts: step?.partIds ?? [], presence: st.partPresence };
+    });
+    const reported = presence.parts.filter((id) => presence.presence[id]);
+    check('the parts of the step are looked for once the shelf is locked',
+      reported.length === presence.parts.length && reported.length > 0,
+      reported.map((id) => { const p = presence.presence[id]; return `${id}=${p.state}${p.reasons.length ? `(${p.reasons.join('+')})` : ''}${p.coverage !== undefined ? ` coverage ${p.coverage.toFixed(2)}` : ''}`; }).join(', ') || 'none');
+    check('and none of the drawn parts is reported missing',
+      reported.every((id) => presence.presence[id].state !== 'absent'),
+      reported.filter((id) => presence.presence[id].state === 'absent').join(', ') || 'none absent');
+    // The positive end to end: the step's board is drawn on the facade, the
+    // lock holds, so repeated looks must settle on "seen" — not sit on
+    // "unknown" because evidence was cleared by every tracked frame.
+    check('and the board drawn on the shelf is reported seen',
+      reported.some((id) => presence.presence[id].state === 'present'),
+      reported.map((id) => `${id}=${presence.presence[id].state}`).join(', ') || 'none');
   }
 
   // The HUD replaces the desktop chrome in AR; it has to be there and work.
