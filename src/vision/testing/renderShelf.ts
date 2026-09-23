@@ -21,6 +21,11 @@ export interface ShelfView {
   noise?: number;
   /** Overall brightness multiplier, to stand in for auto-exposure moving. */
   exposure?: number;
+  /**
+   * Things standing around the shelf, drawn over it: a case on the top board,
+   * a basket in a bay. Pixel rectangles with a flat grey level.
+   */
+  clutter?: { x: number; y: number; w: number; h: number; value: number }[];
 }
 
 export function renderShelf(v: ShelfView): ImageData {
@@ -53,6 +58,12 @@ export function renderShelf(v: ShelfView): ImageData {
       for (let y = y0; y < Math.round(y0 + pitchY - boardPx); y++) {
         for (let x = x0; x < Math.round(x0 + pitchX - boardPx); x++) put(x, y, 42);  // openings
       }
+    }
+  }
+
+  for (const c of v.clutter ?? []) {
+    for (let y = Math.round(c.y); y < Math.round(c.y + c.h); y++) {
+      for (let x = Math.round(c.x); x < Math.round(c.x + c.w); x++) put(x, y, c.value);
     }
   }
 
