@@ -65,6 +65,13 @@ export interface GridDetectOptions {
   maxCells?: number;
   /** Peak must exceed mean + this many standard deviations of the profile. */
   peakSigma?: number;
+  /**
+   * The grid being looked for. When the fit finds more lines than it has — a
+   * case standing on the top board reads as one more board a pitch higher —
+   * the right run of lines is chosen by how continuously each one spans the
+   * facade, instead of the extra line turning a 4x2 into a 4x3.
+   */
+  target?: { cols: number; rows: number };
 }
 
 interface Lattice {
@@ -197,6 +204,84 @@ export function fitLattice(peaks: number[], minCells: number, maxCells: number, 
 }
 
 /**
+ * How continuously an edge runs along a candidate board line, 0..1.
+ *
+ * Samples the gradient across the line at every pixel between `from` and `to`
+ * (the facade's extent on the other axis), keeping the strongest response
+ * within two pixels either side — a line may sit on a board's edge or its
+ * centre depending on resolution. Returns the raw per-pixel responses; the
+ * threshold is set by `bestRun` relative to the strongest line, so exposure
+ * and contrast drop out.
+ */
+function edgeCoverage(
+  g: Float32Array, w: number, h: number,
+  orientation: 'horizontal' | 'vertical', at: number, from: number, to: number,
+): Float32Array {
+  const a = Math.max(1, Math.ceil(Math.min(from, to)));
+  const b = Math.min((orientation === 'horizontal' ? w : h) - 2, Math.floor(Math.max(from, to)));
+  const out = new Float32Array(Math.max(0, b - a + 1));
+  const c = Math.round(at);
+  for (let t = a; t <= b; t++) {
+    let best = 0;
+    for (let d = -2; d <= 2; d++) {
+      const s = c + d;
+      if (orientation === 'horizontal') {
+        if (s < 1 || s > h - 2) continue;
+        best = Math.max(best, Math.abs(g[(s + 1) * w + t] - g[(s - 1) * w + t]));
+      } else {
+        if (s < 1 || s > w - 2) continue;
+        best = Math.max(best, Math.abs(g[t * w + s + 1] - g[t * w + s - 1]));
+      }
+    }
+    out[t - a] = best;
+  }
+  return out;
+}
+
+function median(values: Float32Array): number {
+  if (values.length === 0) return 0;
+  const sorted = Array.from(values).sort((p, q) => p - q);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+/**
+ * Of more lattice lines than the target has, the run of `count` consecutive
+ * lines that best looks like the object.
+ *
+ * Each line is scored by the share of the facade it spans with a real edge,
+ * against a threshold of half the strongest line's typical response: a board
+ * runs the full width, the top of a case standing on the shelf does not. A
+ * run is only as good as its weakest line. When two runs score within a few
+ * per cent, `preferLater` picks the later one — for rows, the lower one,
+ * because clutter stands on furniture, not under it.
+ */
+function bestRun(
+  lines: number[], count: number, responses: (line: number) => Float32Array, preferLater: boolean,
+): number[] {
+  if (lines.length <= count) return lines;
+  const samples = lines.map(responses);
+  const reference = Math.max(...samples.map(median));
+  if (reference <= 0) return lines;
+  const threshold = reference / 2;
+  const coverage = samples.map((s) => {
+    if (s.length === 0) return 0;
+    let n = 0;
+    for (const v of s) if (v >= threshold) n++;
+    return n / s.length;
+  });
+  let best = 0;
+  let bestScore = -1;
+  for (let start = 0; start + count <= lines.length; start++) {
+    const score = Math.min(...coverage.slice(start, start + count));
+    if (score > bestScore + 0.05 || (preferLater && score >= bestScore - 0.05 && start > best)) {
+      if (score > bestScore) bestScore = score;
+      best = start;
+    }
+  }
+  return lines.slice(best, best + count);
+}
+
+/**
  * Find a grid facade in a camera frame. Returns undefined when the frame does
  * not contain a convincing lattice — which is most frames, and is the point:
  * this must stay quiet rather than anchoring the overlay to a bookshelf-shaped
@@ -218,8 +303,15 @@ export function detectGridFacade(image: ImageData, opts: GridDetectOptions = {})
   const yFit = fitLattice(yPeaks, minCells, maxCells, h - 1);
   if (!xFit || !yFit) return undefined;
 
-  const xLines = xFit.positions.map((p) => p * scale);
-  const yLines = yFit.positions.map((p) => p * scale);
+  let xPos = xFit.positions;
+  let yPos = yFit.positions;
+  if (opts.target) {
+    xPos = bestRun(xPos, opts.target.cols + 1, (x) => edgeCoverage(g, w, h, 'vertical', x, yPos[0], yPos[yPos.length - 1]), false);
+    yPos = bestRun(yPos, opts.target.rows + 1, (y) => edgeCoverage(g, w, h, 'horizontal', y, xPos[0], xPos[xPos.length - 1]), true);
+  }
+
+  const xLines = xPos.map((p) => p * scale);
+  const yLines = yPos.map((p) => p * scale);
   const x0 = xLines[0];
   const x1 = xLines[xLines.length - 1];
   const y0 = yLines[0];

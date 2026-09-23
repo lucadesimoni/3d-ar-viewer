@@ -221,7 +221,7 @@ export class ObjectAnchorTracker {
     if (nowMs - this.lastDetectMs < interval) return undefined;
     this.lastDetectMs = nowMs;
 
-    const obs = detectGridFacade(image);
+    const obs = detectGridFacade(image, { target: this.target });
     if (!obs || !matchesGridTarget(obs, this.target)) {
       this.pending = undefined;
       return undefined;

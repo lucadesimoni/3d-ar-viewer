@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { detectGridFacade, fitLattice, matchesGridTarget } from './gridRecognition';
-import { kallax, KALLAX_DIMENSIONS } from '../data/kallax';
+import { kallax, kallax4x2Assembly, KALLAX_DIMENSIONS } from '../data/kallax';
+import { renderShelf as renderShelfView } from './testing/renderShelf';
 import { estimateIntrinsics, rectPoseFromCorners } from '../engine/tracking/markerTracking';
 
 /**
@@ -128,5 +129,47 @@ describe('grid facade recognition', () => {
     expect(fit).toBeDefined();
     expect(fit!.spacing).toBeCloseTo(20, 1);
     expect(fit!.positions.length).toBe(5);
+  });
+
+  /**
+   * A real device session: a 4x2 KALLAX with a suitcase and an instrument case
+   * standing on it. Their top edges sit about one cube pitch above the top
+   * board, fit the lattice perfectly, and the shelf read as 4x3 — so every
+   * frame was rejected on bay count, or occasionally locked a row low.
+   */
+  describe('clutter standing on the shelf', () => {
+    const target = kallax4x2Assembly.recognition!;
+    const left = 110;
+    const top = 190;
+    const span = 400;
+    const pitch = span / 4;
+    const cases: [string, { x: number; y: number; w: number; h: number; value: number }[]][] = [
+      ['one case on the left', [{ x: left + 20, y: top - pitch, w: span * 0.45, h: pitch, value: 30 }]],
+      ['a wide case', [{ x: left + 10, y: top - pitch, w: span * 0.8, h: pitch, value: 30 }]],
+      ['two cases', [
+        { x: left + 10, y: top - pitch, w: span * 0.3, h: pitch, value: 30 },
+        { x: left + span * 0.5, y: top - pitch * 0.98, w: span * 0.35, h: pitch * 0.98, value: 25 },
+      ]],
+      // As wide as the shelf: every line spans the facade, so only the rule
+      // that clutter stands on furniture rather than under it can decide.
+      ['a box the full width of the shelf', [{ x: left, y: top - pitch, w: span, h: pitch, value: 30 }]],
+    ];
+    for (const [name, clutter] of cases) {
+      it(`${name}: reads the 4x2 it is looking for, not a 4x3`, () => {
+        const frame = renderShelfView({ width: 640, height: 640, left, top, span, cols: 4, rows: 2, clutter });
+        const blind = detectGridFacade(frame);
+        expect(blind?.rows, 'the scene really does read as an extra row without the target').toBe(3);
+        const obs = detectGridFacade(frame, { target })!;
+        expect(obs.cols).toBe(4);
+        expect(obs.rows).toBe(2);
+        expect(matchesGridTarget(obs, target)).toBe(true);
+        expect(obs.yLines[0], 'and the top line is the top board, not the case').toBeGreaterThan(top - pitch / 3);
+      });
+    }
+
+    it('changes nothing on a clean shelf', () => {
+      const frame = renderShelfView({ width: 640, height: 640, left, top, span, cols: 4, rows: 2 });
+      expect(detectGridFacade(frame, { target })).toEqual(detectGridFacade(frame));
+    });
   });
 });
