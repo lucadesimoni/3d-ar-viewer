@@ -6,11 +6,16 @@ import type { Scene } from '@babylonjs/core/scene';
 import type { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { Vec3 } from '../../engine/types';
 
-// Register the glTF 2.0 loader and Draco decompression on the side-effect import.
-// glTF/GLB is the runtime 3D format for the web; Draco keeps CAD-scale meshes
-// small enough to stream over cellular.
-import '@babylonjs/loaders/glTF/2.0';
+// The loader alone, with every extension registered as an on-demand import.
+// `glTF/2.0` registers all of them eagerly — FlowGraph, the audio engine,
+// Gaussian splatting — which put ~1 MB in front of the first frame for a
+// feature no bundled assembly uses. This whole module is itself loaded lazily
+// (see `SceneManager`), so none of it costs anything until a URL mesh appears.
+import '@babylonjs/loaders/glTF/2.0/glTFLoader';
+import { registerBuiltInGLTFExtensions } from '@babylonjs/loaders/glTF/2.0/Extensions/dynamic';
 import { DracoCompression } from '@babylonjs/core/Meshes/Compression/dracoCompression';
+
+registerBuiltInGLTFExtensions();
 
 let dracoConfigured = false;
 

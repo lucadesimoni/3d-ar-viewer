@@ -38,6 +38,25 @@ const check = (name, ok, detail) => {
   if (!ok) failures.push(name);
 };
 
+// --- 0. What a first visit has to download before anything paints. ----------
+// Measured 2026-09-23 on a 4G-like link with 4x CPU throttling: 57 preloaded
+// files and 2.66 MB of JS put first paint at 1.83 s, because the glTF loader
+// registered every extension (FlowGraph, the audio engine, Gaussian splats) and
+// the whole renderer was a static import. After making both load on demand: 4
+// files, 443 KB, first paint 0.95 s. The budget is that plus about a third, so
+// ordinary growth passes and a renderer creeping back into the preload does not.
+const PRELOAD_BUDGET_KB = 600;
+const indexHtml = await readFile('dist/index.html', 'utf8');
+const preloaded = [...indexHtml.matchAll(/(?:src|href)="\/(assets\/[^"]+\.js)"/g)].map((m) => m[1]);
+let preloadBytes = 0;
+for (const f of preloaded) preloadBytes += (await readFile(`dist/${f}`)).length;
+const unwanted = preloaded.filter((f) => /flowGraph|webAudio|abstractSound|sound|gaussian/i.test(f));
+check('the first paint does not wait for audio or FlowGraph code', unwanted.length === 0,
+  unwanted.join(', ') || 'none preloaded');
+check(`the first paint waits for at most ${PRELOAD_BUDGET_KB} KB of JavaScript`,
+  preloadBytes / 1024 <= PRELOAD_BUDGET_KB,
+  `${preloaded.length} files, ${Math.round(preloadBytes / 1024)} KB`);
+
 // --- Two "deployments" of the same app, differing only in bundle names. ------
 await rm(WORK, { recursive: true, force: true });
 await cp('dist', `${WORK}/a`, { recursive: true });
@@ -56,7 +75,12 @@ await writeFile(`${WORK}/b/index.html`, html.replaceAll(entry, renamed));
 // --- A deliberately dumb static host: no SPA fallback beyond index.html, no
 // caching headers, nothing our own server would add. ------------------------
 let root = `${WORK}/a`;
+// "Offline" means the host is unreachable, for everyone. Playwright's offline
+// switch only reaches the page: a service worker's own fetches still went out
+// and were answered, so the offline checks passed whatever the worker cached.
+let hostDown = false;
 const server = createServer(async (req, res) => {
+  if (hostDown) { req.socket.destroy(); return; }
   const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   let file = join(root, path === '/' ? '/index.html' : path);
   if (!existsSync(file) || !extname(file)) file = join(root, 'index.html');
@@ -75,6 +99,12 @@ const URL_BASE = `http://localhost:${PORT}/`;
 const browser = await chromium.launch(launchOptions());
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
 const page = await context.newPage();
+// Offline visits must be answered by the service worker, not the browser's own
+// HTTP cache — which happily serves every bundle of the last visit with the
+// network gone, and so made an offline check pass whatever the worker cached.
+const cdp = await context.newCDPSession(page);
+await cdp.send('Network.enable');
+const httpCache = (on) => cdp.send('Network.setCacheDisabled', { cacheDisabled: !on });
 
 // Third-party CDNs (OpenCV, ONNX) are optional by design and may be blocked by
 // the network this runs on; their absence is not a deployment defect, and the
@@ -92,9 +122,15 @@ page.on('requestfailed', (r) => {
 });
 page.on('response', (r) => { if (r.status() >= 400) problems.push(`${r.status()}: ${r.url()}`); });
 
+// Booted means the 3D view actually drew a frame. The canvas element and the
+// store are React's and exist even when the renderer failed to load, so a check
+// on them alone passed an offline visit that had no 3D view at all.
 const booted = async () => {
   await page.waitForSelector('canvas.viewer-canvas', { timeout: 20000 }).catch(() => null);
-  return page.evaluate(() => Boolean(document.querySelector('canvas.viewer-canvas') && window.spatialStore));
+  await page.waitForFunction(() => (window.spatialScene?.()?.renderStats().frames ?? 0) > 0,
+    undefined, { timeout: 20000 }).catch(() => null);
+  return page.evaluate(() => Boolean(document.querySelector('canvas.viewer-canvas') && window.spatialStore
+    && (window.spatialScene?.()?.renderStats().frames ?? 0) > 0));
 };
 
 // --- 1. First visit on a plain host. ---------------------------------------
@@ -110,10 +146,14 @@ check('the service worker installs and activates', swReady);
 // --- 2. Offline. -----------------------------------------------------------
 await page.evaluate(() => new Promise((r) => setTimeout(r, 1500)));   // let it cache
 await context.setOffline(true);
+hostDown = true;
+await httpCache(false);
 problems.length = 0;
 await page.goto(URL_BASE, { waitUntil: 'domcontentloaded' }).catch(() => null);
-check('it still opens with no network', await booted(), 'app shell served from cache');
+check('it still opens with no network, 3D view included', await booted(), 'served by the service worker');
 await context.setOffline(false);
+hostDown = false;
+await httpCache(true);
 
 // --- 3. Redeploy: same URL, new bundle names. ------------------------------
 root = `${WORK}/b`;
@@ -135,9 +175,13 @@ check('with no failed requests or module errors', local.length === 0,
 // --- 4. And offline again, on the new build. -------------------------------
 await page.evaluate(() => new Promise((r) => setTimeout(r, 1500)));
 await context.setOffline(true);
+hostDown = true;
+await httpCache(false);
 await page.goto(URL_BASE, { waitUntil: 'domcontentloaded' }).catch(() => null);
 check('the new build is offline-capable too', await booted());
 await context.setOffline(false);
+hostDown = false;
+await httpCache(true);
 
 await browser.close();
 server.close();

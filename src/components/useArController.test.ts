@@ -20,7 +20,7 @@ const f = vi.hoisted(() => {
     markerCallback: undefined as ((observation: MarkerObservation) => void) | undefined,
     markerCalibration: undefined as ((width: number, height: number) => unknown) | undefined,
     session: { end: vi.fn() },
-    pipeline: { init: vi.fn(), resetTemporal: vi.fn(), dispose: vi.fn(), process: vi.fn(), create: vi.fn(), status: vi.fn() },
+    pipeline: { init: vi.fn(), resetTemporal: vi.fn(), dispose: vi.fn(), process: vi.fn(), create: vi.fn(), status: vi.fn(), warmOpenCv: vi.fn() },
     manager: {
       prepareWebXr: vi.fn(),
       startWebXr: vi.fn(),
@@ -78,6 +78,7 @@ vi.mock('../vision/pipeline', () => ({
     dispose = f.pipeline.dispose;
     process = f.pipeline.process;
     status = f.pipeline.status;
+    warmOpenCv = f.pipeline.warmOpenCv;
   },
 }));
 vi.mock('../vision/opencv', async (original) => ({
@@ -106,6 +107,7 @@ beforeEach(async () => {
   f.pipeline.init.mockResolvedValue({ detector: true });
   f.pipeline.status.mockReturnValue({ detector: true, classifier: false });
   f.pipeline.process.mockResolvedValue({ tracks: [], ts: 1 });
+  f.pipeline.warmOpenCv.mockResolvedValue(undefined);
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});

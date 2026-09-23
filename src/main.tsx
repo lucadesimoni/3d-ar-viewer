@@ -58,8 +58,33 @@ if (parentOrigin && window.parent !== window) {
 // only; skipped in dev and where unsupported).
 if ('serviceWorker' in navigator && window.isSecureContext && !import.meta.env.DEV) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+    navigator.serviceWorker.register('/sw.js')
+      .then(() => navigator.serviceWorker.ready)
+      .then((registration) => reportLoadedAssets(registration))
+      .catch(() => undefined);
   });
+}
+
+/**
+ * Tell the worker which bundles this page has loaded, now and from here on.
+ *
+ * The renderer is loaded on demand, so on a first visit it arrives before the
+ * worker controls the page and never passes through its cache. `buffered`
+ * replays everything loaded so far; later loads are reported as they finish.
+ */
+function reportLoadedAssets(registration: ServiceWorkerRegistration): void {
+  if (typeof PerformanceObserver === 'undefined') return;
+  const observer = new PerformanceObserver((list) => {
+    const urls: string[] = [];
+    for (const entry of list.getEntries()) {
+      try {
+        const url = new URL(entry.name);
+        if (url.origin === location.origin && url.pathname.startsWith('/assets/')) urls.push(url.pathname);
+      } catch { /* not a URL */ }
+    }
+    if (urls.length) registration.active?.postMessage({ type: 'cache-assets', urls });
+  });
+  observer.observe({ type: 'resource', buffered: true });
 }
 
 // The app is exactly as tall as what the operator can see — measured, not

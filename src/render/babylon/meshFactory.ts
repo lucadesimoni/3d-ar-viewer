@@ -1,6 +1,8 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Matrix, Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
-import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
+import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder';
+import { CreateCylinder } from '@babylonjs/core/Meshes/Builders/cylinderBuilder';
+import { CreateSphere } from '@babylonjs/core/Meshes/Builders/sphereBuilder';
 import { CSG } from '@babylonjs/core/Meshes/csg';
 import { PBRMetallicRoughnessMaterial } from '@babylonjs/core/Materials/PBR/pbrMetallicRoughnessMaterial';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
@@ -20,11 +22,11 @@ import type { MaterialSpec, MeshSpec, Pose } from '../../engine/types';
 export function buildMesh(scene: Scene, spec: MeshSpec, name: string): Mesh {
   switch (spec.type) {
     case 'box':
-      return MeshBuilder.CreateBox(name, { width: spec.size[0], height: spec.size[1], depth: spec.size[2] }, scene);
+      return CreateBox(name, { width: spec.size[0], height: spec.size[1], depth: spec.size[2] }, scene);
     case 'sphere':
-      return MeshBuilder.CreateSphere(name, { diameter: spec.radius * 2, segments: 24 }, scene);
+      return CreateSphere(name, { diameter: spec.radius * 2, segments: 24 }, scene);
     case 'cylinder':
-      return MeshBuilder.CreateCylinder(
+      return CreateCylinder(
         name,
         { diameter: spec.radius * 2, height: spec.height, tessellation: spec.radialSegments ?? 32 },
         scene,
@@ -35,13 +37,13 @@ export function buildMesh(scene: Scene, spec: MeshSpec, name: string): Mesh {
       return buildPlate(scene, spec, name);
     case 'url':
       // Placeholder until the glTF resolves; keeps the pose slot occupied.
-      return MeshBuilder.CreateBox(name, { size: 0.02 }, scene);
+      return CreateBox(name, { size: 0.02 }, scene);
   }
 }
 
 function buildTube(scene: Scene, radius: number, height: number, wall: number, name: string): Mesh {
-  const outer = MeshBuilder.CreateCylinder(`${name}-o`, { diameter: radius * 2, height, tessellation: 32 }, scene);
-  const inner = MeshBuilder.CreateCylinder(
+  const outer = CreateCylinder(`${name}-o`, { diameter: radius * 2, height, tessellation: 32 }, scene);
+  const inner = CreateCylinder(
     `${name}-i`,
     { diameter: Math.max(0.0001, (radius - wall) * 2), height: height * 1.2, tessellation: 32 },
     scene,
@@ -54,13 +56,13 @@ function buildTube(scene: Scene, radius: number, height: number, wall: number, n
 
 /** A flat plate, optionally with a central bore — the bearing-cap shape. */
 function buildPlate(scene: Scene, spec: Extract<MeshSpec, { type: 'plate' }>, name: string): Mesh {
-  const plate = MeshBuilder.CreateBox(
+  const plate = CreateBox(
     name,
     { width: spec.size[0], height: spec.size[1], depth: spec.size[2] },
     scene,
   );
   if (!spec.holeRadius) return plate;
-  const bore = MeshBuilder.CreateCylinder(
+  const bore = CreateCylinder(
     `${name}-bore`,
     { diameter: spec.holeRadius * 2, height: spec.size[1] * 1.4, tessellation: 32 },
     scene,

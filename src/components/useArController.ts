@@ -366,6 +366,13 @@ export function useArController(
     // on its slow interval because it is comparatively enormous.
     const perf = detectPerfProfile();
     const trackIntervalMs = Math.max(30, Math.round(2000 / perf.targetFps));
+    const warming = pipelineRef.current;
+    const warmGeneration = recognitionGeneration.current;
+    void warming?.warmOpenCv().then(() => {
+      if (warmGeneration === recognitionGeneration.current && pipelineRef.current === warming) {
+        setPipelineStatus(warming.status());
+      }
+    });
     objectAnchor.current = assembly.recognition
       ? new ObjectAnchorTracker(assembly.recognition, { detectIntervalMs: perf.recognitionIntervalMs })
       : undefined;
