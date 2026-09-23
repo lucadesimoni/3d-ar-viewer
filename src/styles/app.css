@@ -262,6 +262,15 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
   text-transform: uppercase; color: var(--accent); margin-bottom: 2px; }
 .instruction { font-size: 13.5px; color: var(--text); margin: 4px 0 8px; }
 .tools { font-size: 12px; color: var(--muted); }
+/* What the camera sees of this step's parts: advisory, so quiet. */
+.presence { list-style: none; margin: 4px 0 8px; padding: 0; font-size: 12px; color: var(--muted); }
+.presence li { padding: 1px 0; }
+.presence li::before { display: inline-block; width: 1.2em; }
+.presence .presence-present { color: var(--ok); }
+.presence .presence-present::before { content: '✓'; }
+.presence .presence-absent { color: var(--warn); }
+.presence .presence-absent::before { content: '✗'; }
+.presence .presence-unknown::before { content: '·'; }
 .blocked { color: var(--warn); font-size: 12px; }
 .active-actions { display: flex; gap: 8px; margin-top: 10px; }
 .est { margin-top: 10px; font-size: 12px; color: var(--muted); text-align: center; }

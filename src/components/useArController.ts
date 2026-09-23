@@ -8,10 +8,14 @@ import { classifyRecognition, type LabelInfo } from '../vision/verdict';
 import { ObjectAnchorTracker } from '../vision/objectAnchor';
 import { detectPerfProfile } from '../render/perf';
 import { getActiveManager, withActiveManager } from '../render/babylon/managerRegistry';
-import { toImageData } from '../vision/opencv';
+import { measureSharpness, toImageData } from '../vision/opencv';
+import { isUniform } from '../render/babylon/cameraFrame';
+import { edgeField } from '../perception/edges';
+import { readPresence } from '../perception/presence';
+import { foldEvidence, initEvidence, type EvidenceState } from '../perception/evidence';
 import { alignToMarker } from '../engine/alignment';
-import { useStore, surfaceDrop } from '../state/store';
-import type { AssemblyDef, GridTargetDef } from '../engine/types';
+import { useStore, surfaceDrop, type PartPresence } from '../state/store';
+import type { AssemblyDef, GridTargetDef, Pose } from '../engine/types';
 import type { SceneManager } from '../render/babylon/SceneManager';
 import { logEvent } from '../diagnostics/log';
 
@@ -235,6 +239,7 @@ export function useArController(
     retryPending.current = false;
     recognitionGeneration.current++;
     safely('recognition', () => pipelineRef.current?.resetTemporal());
+    safely('presence', () => useStore.getState().setPartPresence({}));
     safely('frame loop', () => {
       if (frameTimer.current) window.clearInterval(frameTimer.current);
       if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
@@ -386,6 +391,8 @@ export function useArController(
 
     let lastTrack = 0;
     let lastPipeline = 0;
+    let lastPresence = 0;
+    const presence: PresenceMemory = { evidence: new Map() };
     let busyPipeline: RecognitionPipeline | undefined;
     /** A camera readback in flight — never ask for a second one behind it. */
     let busyFrame = false;
@@ -427,6 +434,12 @@ export function useArController(
           }
         } else {
           objectAnchor.current!.reset();
+        }
+        // Presence rides on the same frames, at the recognition cadence: it is
+        // a full edge pass, and a part does not appear or vanish per frame.
+        if (now - lastPresence >= perf.recognitionIntervalMs) {
+          lastPresence = now;
+          updatePresence(manager, image, presence);
         }
       }
 
@@ -918,6 +931,83 @@ function inspectionRoi(
   const roi = manager.roiForPart(partId, image, { padding: ROI_PADDING });
   if (!roi || roi.clipped || roi.areaFraction < ROI_MIN_AREA) return {};
   return { roi: roi.rect };
+}
+
+export interface PresenceMemory {
+  evidence: Map<string, EvidenceState>;
+  anchor?: Pose;
+  placement?: string;
+  assembly?: AssemblyDef;
+}
+
+/**
+ * Further than this and the anchor has been re-placed, not followed. A tracked
+ * lock updates the anchor every frame by millimetres; clearing on every update
+ * meant three agreeing looks never happened.
+ */
+const PRESENCE_RELOCATE_M = 0.05;
+
+/**
+ * One look at every part of the active step, folded into what is already known.
+ *
+ * Evidence is dropped when the assembly changes or the anchor is re-placed —
+ * a new source, or moved more than a few centimetres: that puts every
+ * silhouette somewhere else, and what was seen through the old pose says
+ * nothing about the new. A tracked anchor following the object is not that.
+ */
+export function updatePresence(manager: SceneManager | undefined, image: ImageData, memo: PresenceMemory): void {
+  const state = useStore.getState();
+  if (!manager || !state.assembly.recognition) return;
+  const relocated = !state.anchor || !memo.anchor || state.arPlacement !== memo.placement
+    || Math.hypot(
+      state.anchor.position[0] - memo.anchor.position[0],
+      state.anchor.position[1] - memo.anchor.position[1],
+      state.anchor.position[2] - memo.anchor.position[2],
+    ) > PRESENCE_RELOCATE_M;
+  if (relocated || state.assembly !== memo.assembly) {
+    memo.evidence.clear();
+    memo.placement = state.arPlacement;
+    memo.assembly = state.assembly;
+    if (Object.keys(state.partPresence).length) state.setPartPresence({});
+  }
+  // Remember where the evidence was gathered, not where tracking has drifted
+  // to since — so a slow creep still counts as a relocation eventually.
+  if (relocated) memo.anchor = state.anchor;
+  if (!state.anchor) return;
+  const step = state.assembly.steps.find((s) => s.id === state.activeStepId);
+  if (!step) return;
+
+  const k = manager.frameIntrinsics(image);
+  const viewMatrix = manager.viewMatrix();
+  const field = edgeField(image);
+  const gates = {
+    hasTarget: true,
+    anchored: true,
+    sharp: measureSharpness(image, 90).sharp,
+    // The passthrough camera has no settling phase; a session does.
+    trackingReady: state.arTracking?.ready ?? true,
+    explodeFactor: state.explodeFactor,
+    frameUniform: isUniform(image),
+  };
+  const next: Record<string, PartPresence> = {};
+  for (const partId of step.partIds) {
+    const box = manager.partBox(partId);
+    if (!box) continue;
+    const reading = readPresence({ field, box, viewMatrix, k, gates: { ...gates, occluded: manager.partOccluded(partId) } });
+    const before = memo.evidence.get(partId) ?? initEvidence();
+    const after = foldEvidence(before, reading.vote);
+    memo.evidence.set(partId, after);
+    next[partId] = { state: after.state, reasons: reading.eligibility.reasons, coverage: reading.agreement?.coverage };
+    if (after.state !== before.state) {
+      logEvent('place', 'part presence', {
+        partId,
+        state: after.state,
+        coverage: reading.agreement ? Number(reading.agreement.coverage.toFixed(3)) : null,
+        reasons: reading.eligibility.reasons,
+      });
+    }
+  }
+  state.setPartPresence(next);
 }
 
 function applyObjectAnchor(

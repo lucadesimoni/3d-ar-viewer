@@ -1,4 +1,5 @@
 import { useStore } from '../state/store';
+import type { EligibilityReason } from '../perception/eligibility';
 import { ASSEMBLIES } from '../data';
 import { useUiConfig } from '../ui/UiConfigContext';
 import { useScrollOverflow } from '../ui/useScrollOverflow';
@@ -107,6 +108,7 @@ export function StepGuide(): JSX.Element {
             {active.blockedBy.length > 0 && (
               <p className="blocked">Blocked until earlier steps are complete.</p>
             )}
+            <PresenceList partIds={active.step.partIds} />
             <div className="active-actions">
               <button className="ghost" onClick={preview.play}>▶ Show me</button>
               <button className="secondary" onClick={placeStep}>⤓ Place</button>
@@ -131,5 +133,42 @@ export function StepGuide(): JSX.Element {
 
       <footer className="est">≈ {remaining} min of work left</footer>
     </aside>
+  );
+}
+
+const REASON_TEXT: Record<EligibilityReason, string> = {
+  'no-target': 'nothing to recognise',
+  'no-anchor': 'not placed yet',
+  clipped: 'not fully in view',
+  'too-small': 'too small in the picture',
+  'too-far': 'too far away',
+  blurry: 'picture blurry, hold still',
+  'not-settled': 'tracking still settling',
+  exploded: 'exploded view is on',
+  occluded: 'hidden behind a fitted part',
+  'blank-frame': 'no camera picture',
+};
+
+/**
+ * What the camera can see of this step's parts — a suggestion, never a
+ * sign-off. Only there while a recognition target is anchored in AR; a purely
+ * virtual assembly has nothing real to look for.
+ */
+function PresenceList({ partIds }: { partIds: string[] }): JSX.Element | null {
+  const presence = useStore((s) => s.partPresence);
+  const parts = useStore((s) => s.assembly.parts);
+  const shown = partIds.filter((id) => presence[id]);
+  if (shown.length === 0) return null;
+  return (
+    <ul className="presence" aria-label="What the camera sees">
+      {shown.map((id) => {
+        const p = presence[id];
+        const name = parts.find((part) => part.id === id)?.name ?? id;
+        const text = p.state === 'present' ? 'seen'
+          : p.state === 'absent' ? 'not seen'
+            : p.reasons.length ? `can't check: ${REASON_TEXT[p.reasons[0]]}` : 'checking';
+        return <li key={id} className={`presence-${p.state}`}>{name} — {text}</li>;
+      })}
+    </ul>
   );
 }

@@ -7,6 +7,16 @@ import { clonePose } from '../engine/math';
 import { bestSnap, findSnapCandidates, type MateResidual } from '../engine/snapping';
 import { stagedPose, type Timeline } from '../engine/animation';
 import type { RecognitionState } from '../vision/verdict';
+import type { PresenceState } from '../perception/evidence';
+import type { EligibilityReason } from '../perception/eligibility';
+
+export interface PartPresence {
+  state: PresenceState;
+  /** Why the latest look could not count, when it could not. */
+  reasons: EligibilityReason[];
+  /** Share of the silhouette with a real edge on the latest look, 0..1 — kept for calibration. */
+  coverage?: number;
+}
 import type { AssemblyDef, PlacementState, Pose } from '../engine/types';
 import { gearbox } from '../data';
 import { logEvent } from '../diagnostics/log';
@@ -137,6 +147,13 @@ export interface AppState {
   animationT: number;
   /** Latest camera recognition + colour-coded discrepancy verdict. */
   recognition: RecognitionState | undefined;
+  /**
+   * Whether each part of the active step is really in front of the camera, per
+   * the edges where its silhouette should be. Advisory only — it never signs a
+   * step off — and only for assemblies with a recognition target, since a
+   * purely virtual assembly has nothing real to find.
+   */
+  partPresence: Record<string, PartPresence>;
   /** Snap a dropped part onto its mate when it is within capture range. */
   snapEnabled: boolean;
   /** Most recent successful snap, for transient UI feedback. */
@@ -176,6 +193,7 @@ export interface AppState {
   setExplodeFactor(f: number): void;
   setAnimation(timeline: Timeline | undefined, t: number): void;
   setRecognition(recognition: RecognitionState | undefined): void;
+  setPartPresence(presence: Record<string, PartPresence>): void;
   setSnapEnabled(on: boolean): void;
   selectPart(id: string | undefined): void;
   setAnnotating(on: boolean): void;
@@ -309,6 +327,7 @@ export const useStore = create<AppState>((set, get) => {
     animationTimeline: undefined,
     animationT: 0,
     recognition: undefined,
+    partPresence: {},
     snapEnabled: true,
     lastSnap: undefined,
     selectedPartId: undefined,
@@ -335,6 +354,7 @@ export const useStore = create<AppState>((set, get) => {
         selectedPartId: undefined,
         explodeFactor: 0,
         recognition: undefined,
+        partPresence: {},
         animationTimeline: undefined,
         animationT: 0,
         lastSnap: undefined,
@@ -404,6 +424,9 @@ export const useStore = create<AppState>((set, get) => {
     },
     setRecognition(recognition) {
       set({ recognition });
+    },
+    setPartPresence(partPresence) {
+      set({ partPresence });
     },
     setSnapEnabled(on) {
       set({ snapEnabled: on });

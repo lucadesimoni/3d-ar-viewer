@@ -3,7 +3,7 @@ import '@babylonjs/core/Rendering/edgesRenderer';
 // Side-effect import: tree-shaken builds ship Scene without ray casting, and
 // `createPickingRay` then throws at the first tap. Floor placement is built on
 // it, so it has to be pulled in explicitly.
-import '@babylonjs/core/Culling/ray';
+import { Ray } from '@babylonjs/core/Culling/ray';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import type { AbstractEngine } from '@babylonjs/core/Engines/abstractEngine';
 import { Scene } from '@babylonjs/core/scene';
@@ -912,18 +912,64 @@ export class SceneManager {
     frame: { width: number; height: number },
     opts: { padding?: number } = {},
   ): PartRoi | undefined {
+    const box = this.partBox(partId);
+    if (!box) return undefined;
+    return roiForBox(box, this.scene.getViewMatrix().asArray(), this.frameIntrinsics(frame), opts);
+  }
+
+  /**
+   * A part's oriented box in world space, as plain numbers — centred on what is
+   * drawn, not on the part's root. The root is its datum origin, which for a
+   * long part (a rail, a shaft) sits at one end; a box around it would ask the
+   * image about a region half off the part.
+   */
+  partBox(partId: string): {
+    center: [number, number, number];
+    halfExtents: [number, number, number];
+    rotation: [number, number, number, number];
+  } | undefined {
     const part = this.assembly.parts.find((p) => p.id === partId);
     const visual = this.parts.get(partId);
     if (!part || !visual) return undefined;
-    const position = new Vector3();
     const rotation = new Quaternion();
-    if (!visual.root.getWorldMatrix().decompose(undefined, rotation, position)) return undefined;
+    if (!visual.root.getWorldMatrix().decompose(undefined, rotation, undefined)) return undefined;
+    const c = this.visualCentre(visual);
     const he = meshHalfExtents(part.mesh);
-    return roiForBox({
-      center: [position.x, position.y, position.z],
+    return {
+      center: [c.x, c.y, c.z],
       halfExtents: [he.x, he.y, he.z],
       rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
-    }, this.scene.getViewMatrix().asArray(), this.frameIntrinsics(frame), opts);
+    };
+  }
+
+  /** The active camera's view matrix, as the renderer computed it. */
+  viewMatrix(): number[] {
+    return Array.from(this.scene.getViewMatrix().asArray());
+  }
+
+  /**
+   * Whether another part that is already in place stands between the camera
+   * and this one's centre. A part hidden behind a board the operator has
+   * fitted cannot be seen, and must not be reported missing for it.
+   */
+  partOccluded(partId: string): boolean {
+    const visual = this.parts.get(partId);
+    const cam = this.scene.activeCamera;
+    if (!visual || !cam) return false;
+    const target = this.visualCentre(visual);
+    const origin = cam.globalPosition;
+    const toward = target.subtract(origin);
+    const distance = toward.length();
+    if (distance < 1e-6) return false;
+    const placements = this.state?.placements;
+    const hit = this.scene.pickWithRay(new Ray(origin, toward.scale(1 / distance), distance), (mesh) => {
+      if (!mesh.name.startsWith('mesh-')) return false;
+      const id = mesh.name.slice(5);
+      if (id === partId) return false;
+      const status = placements?.get(id)?.status;
+      return status === 'placed' || status === 'verified';
+    });
+    return Boolean(hit?.hit && hit.distance < distance - 0.01);
   }
 
   /**
