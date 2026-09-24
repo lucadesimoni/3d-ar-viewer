@@ -9,6 +9,7 @@ import { stagedPose, type Timeline } from '../engine/animation';
 import type { RecognitionState } from '../vision/verdict';
 import type { PresenceState } from '../perception/evidence';
 import type { EligibilityReason } from '../perception/eligibility';
+import type { XrCameraImage } from '../components/xrCameraWatch';
 
 export interface PartPresence {
   state: PresenceState;
@@ -154,6 +155,12 @@ export interface AppState {
    * purely virtual assembly has nothing real to find.
    */
   partPresence: Record<string, PartPresence>;
+  /**
+   * In a WebXR session: whether the host hands over its camera image. Chrome on
+   * Android does; the App Clip that provides WebXR on iPhone and iPad may not.
+   * Undefined outside a session.
+   */
+  xrCameraImage: XrCameraImage | undefined;
   /** Snap a dropped part onto its mate when it is within capture range. */
   snapEnabled: boolean;
   /** Most recent successful snap, for transient UI feedback. */
@@ -194,6 +201,7 @@ export interface AppState {
   setAnimation(timeline: Timeline | undefined, t: number): void;
   setRecognition(recognition: RecognitionState | undefined): void;
   setPartPresence(presence: Record<string, PartPresence>): void;
+  setXrCameraImage(image: XrCameraImage | undefined): void;
   setSnapEnabled(on: boolean): void;
   selectPart(id: string | undefined): void;
   setAnnotating(on: boolean): void;
@@ -328,6 +336,7 @@ export const useStore = create<AppState>((set, get) => {
     animationT: 0,
     recognition: undefined,
     partPresence: {},
+    xrCameraImage: undefined,
     snapEnabled: true,
     lastSnap: undefined,
     selectedPartId: undefined,
@@ -427,6 +436,9 @@ export const useStore = create<AppState>((set, get) => {
     },
     setPartPresence(partPresence) {
       set({ partPresence });
+    },
+    setXrCameraImage(xrCameraImage) {
+      set({ xrCameraImage });
     },
     setSnapEnabled(on) {
       set({ snapEnabled: on });

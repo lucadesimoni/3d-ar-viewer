@@ -10,6 +10,7 @@ import { detectPerfProfile } from '../render/perf';
 import { getActiveManager, withActiveManager } from '../render/babylon/managerRegistry';
 import { measureSharpness, toImageData } from '../vision/opencv';
 import { isUniform } from '../render/babylon/cameraFrame';
+import { watchXrCamera } from './xrCameraWatch';
 import { edgeField } from '../perception/edges';
 import { readPresence } from '../perception/presence';
 import { foldEvidence, initEvidence, type EvidenceState } from '../perception/evidence';
@@ -120,6 +121,7 @@ export function useArController(
   const wakeLock = useRef<WakeLock | undefined>(undefined);
   const cameraSuspended = useRef(false);
   const objectAnchor = useRef<ObjectAnchorTracker | undefined>(undefined);
+  const xrCameraWatch = useRef<(() => void) | undefined>(undefined);
   const videoGeometryCleanup = useRef<(() => void) | undefined>(undefined);
 
   const setAnchor = useStore((s) => s.setAnchor);
@@ -240,6 +242,11 @@ export function useArController(
     recognitionGeneration.current++;
     safely('recognition', () => pipelineRef.current?.resetTemporal());
     safely('presence', () => useStore.getState().setPartPresence({}));
+    safely('xr camera watch', () => {
+      xrCameraWatch.current?.();
+      xrCameraWatch.current = undefined;
+      useStore.getState().setXrCameraImage(undefined);
+    });
     safely('frame loop', () => {
       if (frameTimer.current) window.clearInterval(frameTimer.current);
       if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
@@ -612,6 +619,17 @@ export function useArController(
     // so there is exactly one loop on `rafRef` at a time, and `stop()` cancels
     // whichever it is.
     startVisionLoop(manager, undefined, useStore.getState().assembly, 'xr');
+    useStore.getState().setXrCameraImage('unknown');
+    xrCameraWatch.current = watchXrCamera(
+      () => manager.hasXrCameraFrame,
+      () => xrSession.current === session,
+      (result, waitedMs) => {
+        useStore.getState().setXrCameraImage(result);
+        if (result === 'unavailable') {
+          logEvent('xr', 'no camera image from this AR host', { waitedMs: Math.round(waitedMs) });
+        }
+      },
+    );
 
     const lock = await takeWakeLock();
     if (current()) wakeLock.current = lock;
