@@ -18,6 +18,12 @@ error · **unverified** = correct as far as it can be tested here · **chore**.
   `?appclip=`). The link's shape is tested; that our page actually runs inside
   that clip is not, and cannot be from here — it needs an iPhone. Verify before
   relying on it, and note it points at a third party.
+  Recognition and the per-part presence check need the session's camera image
+  (WebXR `camera-access`), which the clip may not provide. A diagnostics log
+  exported inside the clip answers it: `render.frameSource` is `xr-raw` with
+  the image and `xr-blind` without, and the log records "no camera image from
+  this AR host" after 5 s without a frame. Without it the placement hint stops
+  inviting recognition and asks for a tap instead.
   `src/components/AppClipLink.tsx`
 
 - **gap — no ONNX model ships.** `vision/pipeline` is wired for detection,

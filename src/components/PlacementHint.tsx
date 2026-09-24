@@ -22,6 +22,7 @@ export function PlacementHint(): JSX.Element | null {
   const source = useStore((s) => s.arSource);
   const motion = useStore((s) => s.arMotion);
   const tracking = useStore((s) => s.arTracking);
+  const cameraImage = useStore((s) => s.xrCameraImage);
   const surface = surfaceName(useStore((s) => s.arSettings.surfaceHeightM));
 
   if (placement === 'idle') return null;
@@ -51,6 +52,18 @@ export function PlacementHint(): JSX.Element | null {
     // giving the two or three detections recognition needs the seconds they
     // take. Recognition is the more precise path when it is available — give
     // it its own line, not a clause easy to read past.
+    // An AR host that gives no camera image — the App Clip on iPhone and iPad
+    // may be one — can never recognise the shelf. Saying "point it at the
+    // shelf" there promises something that will not happen; say what will.
+    if (target && source === 'webxr' && cameraImage === 'unavailable') {
+      return (
+        <div className="placement-hint">
+          <span className="dot" />
+          This AR view gives no camera image — tap to place it by hand
+        </div>
+      );
+    }
+
     if (target && !blind && source === 'webxr' && tracking?.reason !== 'timeout') {
       return (
         <div className="placement-hint recognizing">
