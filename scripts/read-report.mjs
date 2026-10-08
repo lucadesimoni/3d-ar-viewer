@@ -31,6 +31,28 @@ export function browserOf(ua = '') {
   return undefined;
 }
 
+/**
+ * Where an iOS report came from: Safari, or a web view — which is what the
+ * Needle App Clip hosts the page in. A web view's user agent has no `Safari/`
+ * token. An iPad asking for the desktop site says "Macintosh", so the app's
+ * own `isIPad` is believed over the user agent.
+ */
+export function iosHost(report) {
+  const caps = report?.capabilities ?? {};
+  const ua = report?.device?.userAgent ?? '';
+  const ios = caps.isIOS || caps.isIPad || /iPhone|iPad|iPod/.test(ua);
+  if (!ios) return undefined;
+  return /Safari\//.test(ua) ? 'safari' : 'webview';
+}
+
+function deviceOf(report) {
+  const caps = report?.capabilities ?? {};
+  const ua = report?.device?.userAgent ?? '';
+  if (caps.isIPad || /iPad/.test(ua)) return `iPad${ua.match(/OS ([\d_]+)/) ? ` (iOS ${ua.match(/OS ([\d_]+)/)[1].replace(/_/g, '.')})` : ''}`;
+  if (caps.isIOS || /iPhone/.test(ua)) return `iPhone${ua.match(/OS ([\d_]+)/) ? ` (iOS ${ua.match(/OS ([\d_]+)/)[1].replace(/_/g, '.')})` : ''}`;
+  return ua.match(/(Android [\d.]+|Mac OS X [\d_]+|Windows NT [\d.]+)/)?.[1];
+}
+
 /** The facts, the findings and the timeline of one report. Pure: no I/O. */
 export function summarise(report) {
   const r = report ?? {};
@@ -43,8 +65,9 @@ export function summarise(report) {
   const facts = {
     build: r.build?.commit ?? 'unknown',
     at: r.at,
-    device: [device.platform, device.userAgent?.match(/(Android [\d.]+|iPhone OS [\d_]+|iPad|Mac OS X [\d_]+|Windows NT [\d.]+)/)?.[1],
-      browserOf(device.userAgent)].filter(Boolean).join(' · '),
+    device: [device.platform, deviceOf(r),
+      browserOf(device.userAgent) ?? (iosHost(r) === 'webview' ? 'iOS web view (the App Clip?)' : undefined)]
+      .filter(Boolean).join(' · '),
     screen: `${device.viewport?.join('×') ?? '?'} css @ ${round(dpr)}x`,
     assembly: r.assembly ? `${r.assembly.name} (${r.assembly.id}), step ${r.assembly.activeStep}` : 'none',
     ar: `${ar.mode ?? ar.source ?? 'off'} · placement ${ar.placement ?? '?'}${ar.xrSession?.camera?.granted ? ' · camera granted' : ''}`,
@@ -68,6 +91,14 @@ export function summarise(report) {
   }
   if (ar.xrSession && ar.xrSession.camera?.requested && !ar.xrSession.camera?.granted) {
     say('info', 'the session was asked for its camera and did not give it — no recognition possible');
+  }
+  // The two iOS paths, each with its own known limit.
+  const host = iosHost(r);
+  if (host === 'webview' && render.frameSource === 'xr-blind') {
+    say('warn', 'App Clip session with no camera image (xr-blind): recognition and frame capture cannot work there — placement by hand only');
+  }
+  if (host === 'safari' && (ar.mode ?? ar.source) === 'camera') {
+    say('info', 'iOS Safari has no WebXR: the camera path, orientation only — position is not tracked; the App Clip is the route to real tracking');
   }
 
   // A tap, then the platform moving the anchor within a fraction of a second:

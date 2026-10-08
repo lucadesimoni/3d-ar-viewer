@@ -156,7 +156,13 @@ device. These need a person and a phone, and there is no honest way around it:
       tracking". Placement starts fresh in the XR reference frame; the old
       camera reticle, preview timer, and marker tracker must not move the anchor.
 - [ ] **iOS Safari** — the HUD is not hidden behind the browser toolbar, and
-      Exit → Enter AR works twice in a row.
+      Exit → Enter AR works twice in a row. Safari has no WebXR: this is the
+      camera path, orientation only, and the report reader says so.
+- [ ] **iPhone / iPad App Clip** (the "real tracking" link on iOS) — the
+      session enters, the AR bar is visible, and tapping places. Export a
+      report from inside the clip: `read-report.mjs` should say "iOS web view";
+      its `camera` line answers whether the clip gives the page a camera image
+      (`xr-raw`) or not (`xr-blind`, which rules out recognition there).
 - [ ] **Sleep** — the screen stays on during a session (wake lock).
 
 Report anything that fails with a screenshot: every fix in this repo's history

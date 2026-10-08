@@ -657,6 +657,12 @@ export class SceneManager {
     }
     this.setTransparent(enabled);
     this.updateGroundContact();
+    // The camera path — iOS Safari's only AR, which has no WebXR — draws the
+    // overlay into this canvas, so its resolution matters there; but whatever
+    // was judged in the studio view (or during the camera starting up) says
+    // nothing about the view now on screen. Judged afresh, in both directions.
+    // A WebXR session pauses the optimizer instead, and restores it on exit.
+    if (!this.inXrSession && !this.xrEntering) this.restartAdaptiveOptimizer();
   }
 
   /**
@@ -1699,10 +1705,9 @@ export class SceneManager {
             this.arMode = true;
             this.setTransparent(true);
           } else {
-            this.setArMode(false);
+            this.setArMode(false);           // restores the resolution, too
             this.setReticle(undefined);
             this.trackingListener?.(undefined);
-            this.restartAdaptiveOptimizer();
             // The session is over and the helper is free. Hand it back, so the
             // next "Enter AR" is a real session rather than a wasted tap.
             if (this.xrInUse) {

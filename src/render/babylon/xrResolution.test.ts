@@ -122,3 +122,22 @@ describe('what the log says about a session', () => {
     }
   });
 });
+
+describe('resolution on the camera path — iOS Safari, which has no WebXR', () => {
+  it('is judged afresh entering AR and given back leaving it', async () => {
+    const { manager, m, scaling } = await inSession();
+    try {
+      // Say the studio view had been degraded to CSS pixels.
+      vi.spyOn(NullEngine.prototype, 'getHardwareScalingLevel').mockReturnValue(1);
+      scaling.mockClear();
+      manager.setArMode(true);
+      expect(scaling.mock.calls.at(-1)?.[0], 'entering: full resolution').toBeCloseTo(m.baseScalingLevel, 6);
+      expect(m.optimizer?._isRunning, 'and judged in AR').toBe(true);
+      scaling.mockClear();
+      manager.setArMode(false);
+      expect(scaling.mock.calls.at(-1)?.[0], 'leaving: full resolution').toBeCloseTo(m.baseScalingLevel, 6);
+    } finally {
+      manager.dispose();
+    }
+  });
+});
