@@ -14,7 +14,7 @@
  * granted, what the app did, and what failed.
  */
 
-export type LogKind = 'ar' | 'xr' | 'place' | 'render' | 'error' | 'note' | 'capture';
+export type LogKind = 'ar' | 'xr' | 'place' | 'render' | 'error' | 'note' | 'capture' | 'ui';
 
 export interface LogEntry {
   /** Milliseconds since the page loaded — the only clock every layer shares. */

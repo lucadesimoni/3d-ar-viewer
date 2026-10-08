@@ -364,6 +364,53 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 3b'''. The log can be reached when the AR controls cannot. -------------
+// Inside the Needle App Clip the model has been seen over the room with not one
+// control on screen — and the log export is behind those controls. Recreated
+// here the way it was measured: the app column taller than the visible area,
+// so the bar that holds every control sits below the bottom of the screen.
+{
+  const page = await context.newPage();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  await page.locator('.ar-enter').click();
+  await page.waitForSelector('.ar-bar', { timeout: 10000 }).catch(() => null);
+  await page.waitForTimeout(3500);
+  check('in an ordinary AR session no rescue button gets in the way',
+    await page.locator('.log-rescue-trigger').count() === 0);
+
+  await page.evaluate(() => document.documentElement.style.setProperty('--app-h', '1600px'));
+  const trigger = page.locator('.log-rescue-trigger');
+  const appeared = await trigger.waitFor({ state: 'visible', timeout: 6000 }).then(() => true, () => false);
+  const onTop = appeared && await page.evaluate(() => {
+    const b = document.querySelector('.log-rescue-trigger');
+    const r = b.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return (hit === b || b.contains(hit)) && r.top >= 0 && r.bottom <= window.innerHeight;
+  });
+  check('with the controls pushed off screen, a way to the log appears at the top', appeared && onTop,
+    `appeared=${appeared}, takes the tap=${onTop}`);
+  if (appeared) await trigger.click();
+  const panel = page.locator('.log-rescue[role="dialog"]');
+  const hasExport = await panel.getByRole('button', { name: 'Save diagnostics log' }).count() === 1;
+  const hasExit = await panel.getByRole('button', { name: 'Exit AR' }).count() === 1;
+  check('and it opens the log, with a way out of AR', hasExport && hasExit, `save=${hasExport}, exit=${hasExit}`);
+  if (hasExit) await panel.getByRole('button', { name: 'Exit AR' }).click();
+  await page.waitForTimeout(800);
+  check('and "Exit AR" there leaves AR', await page.evaluate(() => window.spatialStore.getState().arSource === undefined));
+
+  // Three fingers, anywhere: no button needed at all.
+  await page.evaluate(() => document.documentElement.style.removeProperty('--app-h'));
+  await page.evaluate(() => {
+    const t = (id) => new Touch({ identifier: id, target: document.body, clientX: 100 + id * 40, clientY: 400 });
+    const touches = [t(1), t(2), t(3)];
+    document.dispatchEvent(new TouchEvent('touchstart', { touches, targetTouches: touches, changedTouches: touches, bubbles: true }));
+  });
+  check('a three-finger tap anywhere opens the log, AR or not',
+    await page.locator('.log-rescue[role="dialog"]').isVisible().catch(() => false));
+  await page.close();
+}
+
 // --- 3c. Placement is a mode, not a permanent state. ----------------------
 {
   const page = await context.newPage();

@@ -1043,3 +1043,25 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
   input:not([type="range"]):not([type="checkbox"]), textarea, select { font-size: max(16px, 1em); }
 }
 .badge.idle { border-style: dashed; }
+
+/* Reachable whatever happened to the rest of the layout (see LogRescue):
+   fixed to the top, which the host's chrome has never been seen to cover. */
+.log-rescue-trigger {
+  position: fixed; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+  z-index: 60; min-height: 40px; padding: 8px 14px; border-radius: 999px;
+  background: rgba(9, 14, 20, 0.92); border: 1px solid var(--warn, #f59e0b); color: var(--text);
+}
+.log-rescue {
+  position: fixed; inset: 0; z-index: 61; overflow: auto;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  background: var(--bg, #0b0f14); color: var(--text);
+}
+.log-rescue-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.log-rescue-offer {
+  position: fixed; top: max(8px, env(safe-area-inset-top)); left: 8px; right: 8px; z-index: 40;
+  display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px;
+  background: rgba(9, 14, 20, 0.95); border: 1px solid var(--edge); color: var(--text); font-size: 13px;
+}
+.log-rescue-offer p { margin: 0; }
+.log-rescue-offer textarea { width: 100%; font: 11px/1.4 ui-monospace, monospace; }
