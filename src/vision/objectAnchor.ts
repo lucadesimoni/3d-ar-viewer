@@ -241,6 +241,16 @@ export class ObjectAnchorTracker {
   }
 
   /**
+   * Whether `update` would look at a frame now: always while locked (the
+   * tracker follows every frame), otherwise only once the detection interval
+   * has passed. A frame offered at any other time is dropped unread, so the
+   * caller can skip capturing it at all.
+   */
+  wantsFrame(nowMs: number): boolean {
+    return this.hasLock || nowMs - this.lastDetectMs >= (this.opts.detectIntervalMs ?? 500);
+  }
+
+  /**
    * Feed one camera frame. Returns a pose whenever there is one to report —
    * every frame while tracking, and at the detection cadence otherwise.
    *

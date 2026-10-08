@@ -85,14 +85,14 @@ export function ArHud({ onExit, onReplace, onBringInFront, onRetryWebXr, capabil
       </div>
 
       <div className="ar-bar" role="toolbar" aria-label="AR controls">
-        <button className={`ar-btn ${sheet === 'steps' ? 'active' : ''}`} onClick={() => toggle('steps')}>
-          <span className="ar-btn-icon">☰</span>Steps
+        <button className={`ar-btn ${sheet === 'steps' ? 'active' : ''}`} onClick={() => toggle('steps')} aria-expanded={sheet === 'steps'}>
+          <span className="ar-btn-icon" aria-hidden="true">☰</span>Steps
         </button>
-        <button className={`ar-btn ${sheet === 'errors' ? 'active' : ''} ${errors ? 'alert' : ''}`} onClick={() => toggle('errors')}>
-          <span className="ar-btn-icon">⚠</span>Errors{errors > 0 && <span className="ar-count">{errors}</span>}
+        <button className={`ar-btn ${sheet === 'errors' ? 'active' : ''} ${errors ? 'alert' : ''}`} onClick={() => toggle('errors')} aria-expanded={sheet === 'errors'} aria-label={errors > 0 ? `Errors, ${errors}` : 'Errors'}>
+          <span className="ar-btn-icon" aria-hidden="true">⚠</span>Errors{errors > 0 && <span className="ar-count">{errors}</span>}
         </button>
-        <button className={`ar-btn ${sheet === 'view' ? 'active' : ''}`} onClick={() => toggle('view')}>
-          <span className="ar-btn-icon">❋</span>View
+        <button className={`ar-btn ${sheet === 'view' ? 'active' : ''}`} onClick={() => toggle('view')} aria-expanded={sheet === 'view'}>
+          <span className="ar-btn-icon" aria-hidden="true">❋</span>View
         </button>
         {/* "Move" is how the operator says where this goes. It stays lit while
             the tap is armed, so it is obvious that the next tap will be taken
@@ -110,17 +110,18 @@ export function ArHud({ onExit, onReplace, onBringInFront, onRetryWebXr, capabil
           }}
           aria-pressed={placing}
         >
-          <span className="ar-btn-icon">◎</span>Move
+          <span className="ar-btn-icon" aria-hidden="true">◎</span>Move
         </button>
         <button
           className={`ar-btn ${sheet === 'settings' ? 'active' : ''}`}
           onClick={() => toggle('settings')}
           aria-label="AR settings"
+          aria-expanded={sheet === 'settings'}
         >
-          <span className="ar-btn-icon">⚙</span>Settings
+          <span className="ar-btn-icon" aria-hidden="true">⚙</span>Settings
         </button>
         <button className="ar-btn danger" onClick={onExit}>
-          <span className="ar-btn-icon">✕</span>Exit
+          <span className="ar-btn-icon" aria-hidden="true">✕</span>Exit
         </button>
       </div>
     </div>

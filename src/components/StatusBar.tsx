@@ -21,7 +21,10 @@ interface Props {
 
 /** Top bar: identity, the AR-entry button, and honest capability badges. */
 export function StatusBar({ capabilities, pipeline, onEnterAr, arActive, showEnterAr = true }: Props): JSX.Element {
-  const anchorQuality = useStore((s) => s.anchorQuality);
+  // Whole percent, so tracking at frame rate does not re-render the bar.
+  const anchorPct = useStore((s) => Math.round(s.anchorQuality * 100));
+  // Exit is never held back; only the way in waits for the renderer.
+  const holdEntry = useStore((s) => s.sceneStatus === 'loading') && !arActive;
   const gpu = useMemo(() => detectGpu(), []);
   // The active engine is created asynchronously; reflect WebGPU once it is live.
   const [backend, setBackend] = useState<'webgpu' | 'webgl' | undefined>(undefined);
@@ -46,15 +49,16 @@ export function StatusBar({ capabilities, pipeline, onEnterAr, arActive, showEnt
         <span className={`badge ${gpu.accelerated ? 'on' : 'off'}`} title={`Renderer: ${gpu.renderer || 'unknown'} · ML: ${gpu.mlProvider}`}>GPU · {backend === 'webgpu' ? 'WebGPU' : gpuLabel(gpu)}</span>
         <Badge on={capabilities?.immersiveAr} label="WebXR" />
         <Badge on={capabilities?.camera} label="Camera" />
-        <Badge on={pipeline?.openCv} label="OpenCV" />
+        <Badge on={pipeline?.openCv} label="OpenCV" pending={arActive ? undefined : 'Loads when the camera starts'} />
         <Badge on={pipeline?.detector || pipeline?.classifier} label={`ONNX${pipeline?.provider ? ` · ${pipeline.provider}` : ''}`} />
-        {anchorQuality > 0 && (
-          <span className="badge on">Anchor {Math.round(anchorQuality * 100)}%</span>
+        {anchorPct > 0 && (
+          <span className="badge on">Anchor {anchorPct}%</span>
         )}
       </div>
 
       {showEnterAr && (
-        <button className={`ar-enter ${arActive ? 'active' : ''}`} onClick={onEnterAr}>
+        <button className={`ar-enter ${arActive ? 'active' : ''}`} onClick={onEnterAr}
+          disabled={holdEntry} aria-busy={holdEntry || undefined} title={holdEntry ? 'Loading the 3D view…' : undefined}>
           {arActive ? 'Exit AR' : (
             <>
               Enter AR
@@ -68,6 +72,11 @@ export function StatusBar({ capabilities, pipeline, onEnterAr, arActive, showEnt
   );
 }
 
-function Badge({ on, label }: { on: boolean | undefined; label: string }): JSX.Element {
+/**
+ * `pending` is for what is loaded on demand: OpenCV arrives with the camera,
+ * so before AR it is not "unavailable", and a dimmed badge said it was.
+ */
+function Badge({ on, label, pending }: { on: boolean | undefined; label: string; pending?: string }): JSX.Element {
+  if (!on && pending) return <span className="badge idle" title={pending}>{label}</span>;
   return <span className={`badge ${on ? 'on' : 'off'}`} title={on ? 'available' : 'unavailable'}>{label}</span>;
 }

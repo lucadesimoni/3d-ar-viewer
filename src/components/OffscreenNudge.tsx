@@ -44,7 +44,7 @@ export function OffscreenNudge({ onBringInFront }: { onBringInFront: () => void 
     : `${state.distanceM.toFixed(1)} m away, off screen`;
 
   return (
-    <div className="offscreen-nudge">
+    <div className="offscreen-nudge" role="status">
       <span className="offscreen-arrow" aria-hidden>{ARROWS[state.direction]}</span>
       <span className="offscreen-text">
         The assembly is {where}

@@ -47,22 +47,44 @@ export function readDeviceSignals(): DeviceSignals {
   const ua = nav?.userAgent ?? '';
   const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (nav?.maxTouchPoints ?? 0) > 1;
 
-  let maxTextureSize = 8192;
-  let renderer = '';
-  if (typeof document !== 'undefined') {
-    try {
-      const gl = document.createElement('canvas').getContext('webgl2') ??
-        document.createElement('canvas').getContext('webgl');
-      if (gl) {
-        maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
-        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
-        if (dbg) renderer = String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) ?? '').toLowerCase();
-      }
-    } catch {
-      /* headless / blocked — fall back to defaults */
-    }
-  }
+  const { maxTextureSize, renderer } = probeGl();
   return { cores, memoryGB, dpr, mobile, maxTextureSize, renderer };
+}
+
+interface GlProbe { webgl2: boolean; webgl: boolean; maxTextureSize: number; renderer: string }
+let glProbe: GlProbe | undefined;
+
+/**
+ * What the GPU says about itself, asked once per page.
+ *
+ * Each probe used to create a WebGL context and keep it: once per AR entry
+ * and once per settings panel. A mobile browser allows only a handful and
+ * drops the oldest when there are too many — which can be the one drawing
+ * the scene. The answer does not change, so ask once and give the context
+ * straight back.
+ */
+function probeGl(): GlProbe {
+  if (glProbe) return glProbe;
+  const probe: GlProbe = { webgl2: false, webgl: false, maxTextureSize: 8192, renderer: '' };
+  if (typeof document === 'undefined') return probe;
+  try {
+    const c = document.createElement('canvas');
+    const gl2 = c.getContext('webgl2');
+    const gl = gl2 ?? c.getContext('webgl');
+    probe.webgl2 = gl2 !== null;
+    probe.webgl = gl !== null;
+    if (gl) {
+      probe.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      if (dbg) probe.renderer = String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) ?? '').toLowerCase();
+      gl.getExtension('WEBGL_lose_context')?.loseContext();
+      // No context can mean "none left right now", so only a real answer sticks.
+      glProbe = probe;
+    }
+  } catch {
+    /* headless / blocked — fall back to defaults, and try again next time */
+  }
+  return probe;
 }
 
 /**
@@ -183,24 +205,7 @@ export function describeGpu(
 
 /** Probe the current device's GPU acceleration status. */
 export function detectGpu(): GpuInfo {
-  let hasWebgl2 = false;
-  let hasWebgl1 = false;
-  let renderer = '';
-  if (typeof document !== 'undefined') {
-    try {
-      const c = document.createElement('canvas');
-      const gl2 = c.getContext('webgl2');
-      hasWebgl2 = gl2 !== null;
-      const gl = gl2 ?? c.getContext('webgl');
-      hasWebgl1 = gl !== null;
-      if (gl) {
-        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
-        if (dbg) renderer = String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) ?? '').toLowerCase();
-      }
-    } catch {
-      /* blocked */
-    }
-  }
+  const { webgl2: hasWebgl2, webgl: hasWebgl1, renderer } = probeGl();
   const hasWebgpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
   return describeGpu(renderer, hasWebgl2, hasWebgl1, hasWebgpu);
 }

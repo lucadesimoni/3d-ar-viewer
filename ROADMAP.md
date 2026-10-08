@@ -52,10 +52,11 @@ from breaking one of them:
    absence removes a capability and breaks nothing. The geometry-driven app
    runs on a laptop with no hardware at all.
 4. **Claims are measured, not asserted.** Anything that can only be seen in a
-   running browser has a check script that asserts it in numbers — 42 checks on
-   AR anchoring, tracking and the HUD, 12 on the step guidance, 7 on placing and
-   snapping, 8 on the deployed-app behaviours a static host has to satisfy. CI
-   runs all four on every push, alongside 161 unit tests.
+   running browser has a check script that asserts it in numbers — 153 checks
+   on AR anchoring, tracking and the HUD, 64 on layout, 26 on the diagnostics
+   log, 20 on the step guidance, 14 on placing and snapping, 14 on what a
+   static host has to satisfy, 11 on operator notes — alongside 539 unit
+   tests.
 
 ---
 

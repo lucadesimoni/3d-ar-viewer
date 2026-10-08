@@ -20,7 +20,9 @@
 export function trackVisibleHeight(root: HTMLElement = document.documentElement): () => void {
   const vv = window.visualViewport;
   const apply = (): void => {
-    const h = vv?.height ?? window.innerHeight;
+    // At the unzoomed scale: a pinch-zoom shrinks `height` by the zoom
+    // factor, and following it would squash the layout instead of enlarging it.
+    const h = vv ? vv.height * (vv.scale || 1) : window.innerHeight;
     if (h > 0) root.style.setProperty('--app-h', `${Math.round(h)}px`);
   };
   apply();

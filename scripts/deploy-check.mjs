@@ -71,6 +71,13 @@ const renamed = entry.replace(/^index-/, 'index-redeploy');
 await rename(`${WORK}/b/assets/${entry}`, `${WORK}/b/assets/${renamed}`);
 const html = await readFile(`${WORK}/b/index.html`, 'utf8');
 await writeFile(`${WORK}/b/index.html`, html.replaceAll(entry, renamed));
+// Lazy chunks import shared code from the entry too. Left pointing at the old
+// name, B was broken for any visitor without A's copy cached — the renderer
+// failed to load and the redeploy checks only passed on the worker's cache.
+for (const f of assets.filter((a) => a.endsWith('.js') && a !== entry)) {
+  const code = await readFile(`${WORK}/b/assets/${f}`, 'utf8');
+  if (code.includes(entry)) await writeFile(`${WORK}/b/assets/${f}`, code.replaceAll(entry, renamed));
+}
 
 // --- A deliberately dumb static host: no SPA fallback beyond index.html, no
 // caching headers, nothing our own server would add. ------------------------
@@ -182,6 +189,59 @@ check('the new build is offline-capable too', await booted());
 await context.setOffline(false);
 hostDown = false;
 await httpCache(true);
+
+// --- 5. The renderer never arrives. ---------------------------------------
+// A first visit that loses the connection between the page and the 3D chunk
+// (or a device with no WebGL) used to leave an empty stage that said nothing.
+// It must say so, hold the AR button back, and come back on "Try again".
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+  const p2 = await ctx.newPage();
+  let blockRenderer = true;
+  await p2.route(/\/assets\/SceneManager-[^/]*\.js$/, (route) => (blockRenderer ? route.abort('failed') : route.continue()));
+  await p2.goto(URL_BASE, { waitUntil: 'domcontentloaded' });
+  const failedShown = await p2.waitForSelector('.viewer-status.failed', { timeout: 20000 }).then(() => true, () => false);
+  check('a renderer that does not load says so, with a way to retry', failedShown
+    && /could not load/.test(await p2.locator('.viewer-status.failed').innerText()));
+  blockRenderer = false;
+  // A chunk that failed once is remembered as failed by the browser, so the
+  // retry is a reload; wait for it rather than poll a page being replaced.
+  await Promise.all([
+    p2.waitForEvent('load', { timeout: 20000 }).catch(() => null),
+    p2.locator('.viewer-status.failed button').click().catch(() => null),
+  ]);
+  const recovered = await p2.waitForFunction(() => (window.spatialScene?.()?.renderStats().frames ?? 0) > 0,
+    undefined, { timeout: 20000 }).then(() => true, () => false);
+  const leftover = await p2.locator('.viewer-status').count().catch(() => -1);
+  check('and "Try again" brings the 3D view back', recovered && leftover === 0,
+    `drawing: ${recovered}, status overlays left: ${leftover}`);
+  await ctx.close();
+}
+
+// While the renderer is still on its way, AR entry waits for it.
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+  const p3 = await ctx.newPage();
+  let release;
+  const held = new Promise((r) => { release = r; });
+  await p3.route(/\/assets\/SceneManager-[^/]*\.js$/, async (route) => { await held; await route.continue(); });
+  await p3.goto(URL_BASE, { waitUntil: 'domcontentloaded' });
+  await p3.waitForSelector('.viewer-status', { timeout: 20000 }).catch(() => null);
+  const whileLoading = await p3.evaluate(() => [...document.querySelectorAll('.ar-enter')]
+    .map((b) => ({ visible: b.getClientRects().length > 0, disabled: b.disabled, label: b.textContent })));
+  const visible = whileLoading.filter((b) => b.visible);
+  check('AR entry waits for the 3D view, and says it is loading', visible.length > 0
+    && visible.every((b) => b.disabled && /Enter AR/.test(b.label ?? ''))
+    && /Loading the 3D view/.test(await p3.locator('.viewer-status').innerText().catch(() => '')),
+    JSON.stringify(whileLoading));
+  release();
+  await p3.waitForFunction(() => (window.spatialScene?.()?.renderStats().frames ?? 0) > 0,
+    undefined, { timeout: 20000 }).catch(() => null);
+  const enabled = await p3.evaluate(() => [...document.querySelectorAll('.ar-enter')]
+    .filter((b) => b.getClientRects().length > 0).every((b) => !b.disabled));
+  check('and is available once it is there', enabled);
+  await ctx.close();
+}
 
 await browser.close();
 server.close();

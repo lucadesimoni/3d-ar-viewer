@@ -137,6 +137,35 @@ describe('object anchoring', () => {
     expect(Math.abs(obs.agreement!.medianOffsetPx!), 'and finds them where it says').toBeLessThan(10);
   });
 
+  /**
+   * The camera loop asks before copying a frame: an unlocked tracker drops
+   * every frame inside the detection interval unread, and the copy was most
+   * of the cost. Only valid if skipping those frames changes nothing.
+   */
+  it('wants a frame only when it would read it — and skipping the rest changes nothing', () => {
+    const every = make();
+    const asked = make();
+    const shelf = frame(160, 60, 320);
+    const skipped: number[] = [];
+    let lockedEvery: number | undefined;
+    let lockedAsked: number | undefined;
+    for (let t = 0; t <= 1300; t += 44) {
+      const a = every.update(shelf, t);
+      if (asked.wantsFrame(t)) {
+        const b = asked.update(shelf, t);
+        expect(b?.mode, `same answer at ${t} ms`).toBe(a?.mode);
+      } else {
+        expect(a, `a frame it did not want at ${t} ms was not used`).toBeUndefined();
+        skipped.push(t);
+      }
+      if (lockedEvery === undefined && every.hasLock) lockedEvery = t;
+      if (lockedAsked === undefined && asked.hasLock) lockedAsked = t;
+    }
+    expect(lockedAsked, 'locks on the same frame').toBe(lockedEvery);
+    expect(skipped.length, 'most unlocked frames need no copy').toBeGreaterThan(15);
+    expect(asked.wantsFrame(1300 + 1), 'once locked it follows every frame').toBe(true);
+  });
+
   it('does not pay for that measurement on every frame', () => {
     const tracker = make();
     tracker.update(frame(160, 60, 320), 0);

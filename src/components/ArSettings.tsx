@@ -37,7 +37,7 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
   const setSnapEnabled = useStore((s) => s.setSnapEnabled);
   const placement = useStore((s) => s.arPlacement);
   const source = useStore((s) => s.arSource);
-  const quality = useStore((s) => s.anchorQuality);
+  const qualityPct = useStore((s) => Math.round(s.anchorQuality * 100));
   const gpu = useMemo(() => detectGpu(), []);
   const shapeTarget = useStore((s) => s.assembly.recognition?.label);
   // Sampled while the sheet is open; the sheet is not on screen long enough for
@@ -49,7 +49,7 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
   const [xrInfo, setXrInfo] = useState<{ space?: string; features: string[] }>();
   const [xrReady, setXrReady] = useState(false);
   useEffect(() => {
-    void getActiveManager()?.xrFailure().then(setXrWhy);
+    void getActiveManager()?.xrFailure().then(setXrWhy).catch(() => undefined);
     void getActiveManager()?.xrSessionInfo().then(setXrInfo);
     // The helper is rebuilt in the background after a failed attempt; the
     // button must not promise a session it cannot request yet.
@@ -240,7 +240,7 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
         </label>
 
       <dl className="ar-facts">
-        <div><dt>Anchor</dt><dd>{placement === 'idle' ? 'none' : `${placement} · ${Math.round(quality * 100)}%`}</dd></div>
+        <div><dt>Anchor</dt><dd>{placement === 'idle' ? 'none' : `${placement} · ${qualityPct}%`}</dd></div>
         {/* Answers "camera works, but I see nothing" without a debugger: either
             the assembly is in view and the problem is rendering, or it is not
             and the problem is where you are looking. */}
@@ -337,7 +337,7 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
               disabled={!xrReady}
               onClick={() => {
                 void onRetryWebXr().then((ok) => {
-                  if (!ok) void getActiveManager()?.xrFailure().then(setXrWhy);
+                  if (!ok) void getActiveManager()?.xrFailure().then(setXrWhy).catch(() => undefined);
                 });
               }}
             >

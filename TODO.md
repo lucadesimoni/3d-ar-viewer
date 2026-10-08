@@ -130,16 +130,14 @@ error · **unverified** = correct as far as it can be tested here · **chore**.
 
 ## Engineering chores
 
-- **chore — the entry bundle is 1.6 MB** (425 kB gzipped). Splitting Babylon out
-  was measured and rejected — it pulls the lazily-loaded shaders into one eager
-  chunk and makes first paint worse. Lazy-loading the whole renderer behind the
-  shell is the version that would actually help. `vite.config.ts`
 - **chore — `autoPlaceActiveStep` and `placeActiveStepFromStandoff` overlap.**
   The first teleports parts to nominal (used by the screenshot script), the
   second brings them in through the snap solver (used by the UI). One of them
   should go. `src/state/store.ts`
-- **chore — no accessibility pass.** Focus rings and roles are in place; nothing
-  has been through a screen reader.
+- **chore — no screen-reader pass.** Step and diagnostic rows work from the
+  keyboard, AR guidance is announced through live regions, HUD icons are
+  hidden from assistive tech and counts are spoken ("Errors, 3"), and the page
+  can be zoomed. None of it has been through VoiceOver or TalkBack yet.
 - **chore — `/healthz` exists only on the bundled server**, not on a static
   host, so uptime monitoring of the Vercel deployment has to hit `/`.
 
@@ -148,12 +146,17 @@ error · **unverified** = correct as far as it can be tested here · **chore**.
 ## How to check you have not broken any of this
 
 ```
-npm run typecheck && npm test        # 161 unit tests, geometry and vision
-npm run build && npm run serve &     # then, against the real build:
-npm run ar:verify                    # 42 checks: AR anchoring, tracking, HUD
-npm run steps:check                  # 12 checks: step labels and animation
-npm run place:check                  # 7 checks: placing and snapping
-npm run deploy:check                 # 8 checks: static host, offline, redeploy
+npm run typecheck && npm test        # 539 unit tests, geometry, vision, UI
+npm run build && npm run preview &   # then, against the real build
+                                     # (PREVIEW_URL=http://localhost:4173/):
+npm run ar:verify                    # 153 checks: AR anchoring, tracking, HUD
+npm run layout:check                 # 64 checks: layouts from phone to desktop
+npm run log:check                    # 26 checks: the diagnostics log
+npm run steps:check                  # 20 checks: step labels, animation, keyboard
+npm run place:check                  # 14 checks: placing and snapping
+npm run deploy:check                 # 14 checks: static host, offline, redeploy,
+                                     #   a renderer that fails to load
+npm run notes:check                  # 11 checks: operator notes
 ```
 
 CI runs all of it on every push to `main` and every pull request.

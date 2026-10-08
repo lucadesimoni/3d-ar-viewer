@@ -2,6 +2,7 @@ import { useStore, type ViewMode } from '../state/store';
 import { assemblyTimeline } from '../engine/animation';
 import { getActiveManager } from '../render/babylon/managerRegistry';
 import { useEffect, useRef, useState } from 'react';
+import { prefersReducedMotion } from '../ui/motion';
 
 const MODES: { id: ViewMode; label: string; icon: string }[] = [
   { id: 'guide', label: 'Guide', icon: '◎' },
@@ -158,8 +159,12 @@ function AnimationScrubber(): JSX.Element {
   // Play once on arrival. A mode whose whole purpose is motion, entered to find
   // a still picture and one small button, reads as broken — and was reported
   // as exactly that.
+  //
+  // Unless the device asks for less motion: then arrive at the finished
+  // assembly and leave playing to the button.
   useEffect(() => {
-    start(0);
+    if (prefersReducedMotion()) apply(timeline.current.durationS);
+    else start(0);
     return () => {
       running.current = false;
       cancelAnimationFrame(rafRef.current);
