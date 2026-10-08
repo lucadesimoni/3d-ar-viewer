@@ -184,8 +184,8 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
   position: relative;
 }
 .ar-btn-icon { font-size: 17px; line-height: 1; }
-/* Six buttons share a phone's width: the base button's 14px side padding left
-   "Settings" 20px to sit in on a 390px screen, and it spilled over its edges. */
+/* Six buttons share a phone's width, and the base button's 14px side padding
+   is most of a narrow one: at 320px "Settings" spilled over its own edges. */
 .ar-btn { padding: 6px 2px; }
 @media (max-width: 359px) {
   /* Under 360px the labels cannot fit at all; the icons carry it, and each

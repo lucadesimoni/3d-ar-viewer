@@ -342,8 +342,8 @@ const context = await browser.newContext({
 }
 
 // --- 3b''. The AR control bar fits the narrowest phones. -------------------
-// Six buttons share the width; with the base button padding "Settings" spilled
-// over its own edges on a 390px phone, and at 320px every label did.
+// Six buttons share the width; at 320px "Settings" spilled over its own edges.
+// 390px is the common phone and must stay as it was.
 {
   const page = await context.newPage();
   await open(page, `${URL}?assembly=kallax-4x4`);

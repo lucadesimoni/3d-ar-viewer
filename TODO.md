@@ -146,12 +146,17 @@ error · **unverified** = correct as far as it can be tested here · **chore**.
 ## How to check you have not broken any of this
 
 ```
-npm run typecheck && npm test        # 161 unit tests, geometry and vision
-npm run build && npm run serve &     # then, against the real build:
-npm run ar:verify                    # 42 checks: AR anchoring, tracking, HUD
-npm run steps:check                  # 12 checks: step labels and animation
-npm run place:check                  # 7 checks: placing and snapping
-npm run deploy:check                 # 8 checks: static host, offline, redeploy
+npm run typecheck && npm test        # 539 unit tests, geometry, vision, UI
+npm run build && npm run preview &   # then, against the real build
+                                     # (PREVIEW_URL=http://localhost:4173/):
+npm run ar:verify                    # 153 checks: AR anchoring, tracking, HUD
+npm run layout:check                 # 64 checks: layouts from phone to desktop
+npm run log:check                    # 26 checks: the diagnostics log
+npm run steps:check                  # 20 checks: step labels, animation, keyboard
+npm run place:check                  # 14 checks: placing and snapping
+npm run deploy:check                 # 14 checks: static host, offline, redeploy,
+                                     #   a renderer that fails to load
+npm run notes:check                  # 11 checks: operator notes
 ```
 
 CI runs all of it on every push to `main` and every pull request.
