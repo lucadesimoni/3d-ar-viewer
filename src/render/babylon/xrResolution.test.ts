@@ -68,6 +68,7 @@ describe('what the log says about a session', () => {
       scene: { activeCamera: unknown };
       watchXrCamera: (now: number) => void;
       lastXrCamera: unknown;
+      xrTracking: { ready: boolean } | undefined;
     };
     const real = m.scene.activeCamera;
     const at = (x: number, t: number) => {
@@ -76,6 +77,15 @@ describe('what the log says about a session', () => {
     };
     try {
       const before = jumps().length;
+      // A session starting: the pose sits at the origin until the floor height
+      // arrives — the false "jumped 1.235 m" of the first log with this entry.
+      m.xrTracking = { ready: false };
+      m.scene.activeCamera = { globalPosition: new Vector3(0, 0, 0) };
+      m.watchXrCamera(900);
+      m.scene.activeCamera = { globalPosition: new Vector3(0, 1.235, 0) };
+      m.watchXrCamera(928);
+      expect(jumps().length - before).toBe(0);
+      m.xrTracking = { ready: true };
       at(0, 1000);
       at(0.06, 1042);            // walking briskly: 1.4 m/s
       at(0.36, 1442);            // a dropped frame: far, but slow

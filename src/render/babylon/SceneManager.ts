@@ -536,7 +536,11 @@ export class SceneManager {
    */
   private watchXrCamera(now: number): void {
     const cam = this.scene.activeCamera;
-    if (!cam) return;
+    // Not before tracking has settled. A session's first poses sit at the
+    // origin until the floor height arrives, and the first device log with
+    // this entry opened on "jumped 1.235 m" — to [0, 1.235, 0], exactly the
+    // height of the phone. That is the space being set up, not re-based.
+    if (!cam || !this.xrTracking?.ready) { this.lastXrCamera = undefined; return; }
     const p = cam.globalPosition;
     const last = this.lastXrCamera;
     this.lastXrCamera = { x: p.x, y: p.y, z: p.z, at: now };
@@ -1313,16 +1317,22 @@ export class SceneManager {
    *
    * The assembly used to move with it. That is what an anchor is for — the
    * platform holds a real spot in the room and carries it along as it learns
-   * the room better — and it is why this was built. Five sessions of device
-   * logs say the trade is bad. The platform re-estimates that spot after every
-   * single touch of the screen, sixty to seventy milliseconds later, by two
-   * to forty centimetres: thirteen taps in one session, thirteen moves. From
-   * the operator's side that is indistinguishable from "every tap repositions
-   * it", because it is exactly that.
+   * the room better — and it is why this was built. Device logs then showed
+   * it moving sixty to seventy milliseconds after every single touch of the
+   * screen, by two to forty centimetres, and from the operator's side that was
+   * "every tap repositions it", because it was exactly that.
    *
-   * So the rule is theirs, and it is the simple one: placed is placed. Only
-   * "Move" and a snap onto something recognised may move an assembly, and both
-   * go through `setAnchor`, not through here.
+   * The cause turned out to be ours, not the platform's: every tap made a new
+   * anchor, declined or not, at wherever the reticle pointed, and the newest
+   * became the one followed (see `place` in xr.ts — fixed). A camera-jump
+   * entry in the log ("camera jumped") now also tells a re-based room apart
+   * from a moved anchor.
+   *
+   * The rule stays the operator's, and it is the simple one: placed is
+   * placed. Only "Move" and a snap onto something recognised may move an
+   * assembly, and both go through `setAnchor`, not through here. With the
+   * phantom anchors gone, what is logged below is the platform's own
+   * corrections — the evidence to decide on whether following should return.
    *
    * What is still reported stays reported. The size of every declined
    * correction goes in the log, so the case this defended against — the whole
@@ -1652,13 +1662,14 @@ export class SceneManager {
         onSelectAnchor: (pose) => {
           // Logged, not silent: a tap that moves the whole assembly and a tap
           // that does nothing are the two halves of the same bug report.
+          // Declined taps return false, so no platform anchor is made for them.
           if (!this.placementActive) {
             logEvent('xr', 'tap ignored — placement is not armed');
-            return;
+            return false;
           }
           if (performance.now() - this.placementArmedAtMs < PLACEMENT_ARM_DELAY_MS) {
             logEvent('xr', 'tap ignored — arriving with the arming tap');
-            return;
+            return false;
           }
           logEvent('place', 'placing on a tap', {
             at: pose.position.map((v) => Number(v.toFixed(3))),
@@ -1678,6 +1689,7 @@ export class SceneManager {
           // clears this for every pose the app sets.
           this.onPlatformAnchor = true;
           this.setPlacementActive(false);
+          return true;
         },
         onStateChange: (inXr) => {
           this.inXrSession = inXr;
