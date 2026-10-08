@@ -23,8 +23,31 @@ export interface GrayImage {
  * so the edges that survive are real edges and not aliasing artefacts of a
  * fine repeating pattern — which is exactly what a shelf front is.
  */
+/**
+ * Grey images already made from a frame, by downsampling step.
+ *
+ * One camera frame is converted by everything that looks at it: up to seven
+ * detection passes on an unlocked frame, then the tracker, the outline check
+ * and the presence check on a locked one — all at the same step for a 480px
+ * frame. The conversion is the hottest loop in the AR path, and they all got
+ * identical results. Keyed weakly by the frame, so it goes when the frame
+ * does. Every frame is a fresh `ImageData` and nothing writes to the result;
+ * both are what make sharing it safe.
+ */
+const grayByFrame = new WeakMap<ImageData, Map<number, GrayImage>>();
+
 export function toGray(image: ImageData, workingSize: number): GrayImage {
   const step = Math.max(1, Math.ceil(Math.max(image.width, image.height) / workingSize));
+  let made = grayByFrame.get(image);
+  const known = made?.get(step);
+  if (known) return known;
+  const gray = grayAtStep(image, step);
+  if (!made) grayByFrame.set(image, (made = new Map()));
+  made.set(step, gray);
+  return gray;
+}
+
+function grayAtStep(image: ImageData, step: number): GrayImage {
   const width = Math.floor(image.width / step);
   const height = Math.floor(image.height / step);
   const data = new Float32Array(width * height);

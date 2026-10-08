@@ -25,6 +25,7 @@ export function StatusBar({ capabilities, pipeline, onEnterAr, arActive, showEnt
   const anchorPct = useStore((s) => Math.round(s.anchorQuality * 100));
   // Exit is never held back; only the way in waits for the renderer.
   const holdEntry = useStore((s) => s.sceneStatus === 'loading') && !arActive;
+  const hasModel = Boolean(pipeline?.detector || pipeline?.classifier || pipeline?.segmenter);
   const gpu = useMemo(() => detectGpu(), []);
   // The active engine is created asynchronously; reflect WebGPU once it is live.
   const [backend, setBackend] = useState<'webgpu' | 'webgl' | undefined>(undefined);
@@ -49,7 +50,8 @@ export function StatusBar({ capabilities, pipeline, onEnterAr, arActive, showEnt
         <span className={`badge ${gpu.accelerated ? 'on' : 'off'}`} title={`Renderer: ${gpu.renderer || 'unknown'} · ML: ${gpu.mlProvider}`}>GPU · {backend === 'webgpu' ? 'WebGPU' : gpuLabel(gpu)}</span>
         <Badge on={capabilities?.immersiveAr} label="WebXR" />
         <Badge on={capabilities?.camera} label="Camera" />
-        <Badge on={pipeline?.openCv} label="OpenCV" pending={arActive ? undefined : 'Loads when the camera starts'} />
+        <Badge on={pipeline?.openCv} label="OpenCV" pending={!hasModel ? 'Not needed: no recognition model'
+          : arActive ? undefined : 'Loads when the camera starts'} />
         <Badge on={pipeline?.detector || pipeline?.classifier} label={`ONNX${pipeline?.provider ? ` · ${pipeline.provider}` : ''}`} />
         {anchorPct > 0 && (
           <span className="badge on">Anchor {anchorPct}%</span>

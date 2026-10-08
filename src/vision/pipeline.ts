@@ -194,12 +194,23 @@ export class RecognitionPipeline {
    * camera loop calls this as it starts and runs on the fallback until it lands.
    */
   warmOpenCv(): Promise<void> {
-    if (this.disposed) return Promise.resolve();
+    // And only for a pipeline with a model to feed: OpenCV prepares frames
+    // for inference, and with no model there is none. Its one other reader,
+    // the presence check's sharpness test, has a JavaScript twin that agrees
+    // to within 1% — measured, with no frame on the other side of the
+    // threshold — so ~10 MB and a main-thread compile on every first AR entry
+    // bought nothing.
+    if (this.disposed || !this.hasModel()) return Promise.resolve();
     return this.warming ??= loadOpenCV(this.config.openCvUrl).then((cv) => {
       if (this.disposed) return;
       this.openCvReady = cv !== undefined;
       if (!cv) this.errors.openCv = 'OpenCV unavailable; using JavaScript image processing.';
     }).catch((error) => { if (!this.disposed) this.errors.openCv = errorMessage(error); });
+  }
+
+  /** Whether any model is configured — the only work OpenCV does here. */
+  hasModel(): boolean {
+    return Boolean(this.config.detector || this.config.classifier || this.config.segmenter);
   }
 
   status(): PipelineStatus {
