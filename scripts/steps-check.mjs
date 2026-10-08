@@ -11,14 +11,11 @@
  */
 import { chromium } from 'playwright';
 import { launchOptions } from './chrome.mjs';
+import { createChecks, PREVIEW_URL } from './checks.mjs';
 
-const URL_BASE = process.env.PREVIEW_URL ?? 'http://localhost:8080/';
+const URL_BASE = PREVIEW_URL;
 
-const failures = [];
-const check = (name, ok, detail) => {
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!ok) failures.push(name);
-};
+const { check, finish } = createChecks();
 
 const browser = await chromium.launch(launchOptions());
 const page = await browser.newPage({ viewport: { width: 1100, height: 800 }, deviceScaleFactor: 2 });
@@ -215,5 +212,4 @@ check('and no label runs off the right edge',
 }
 
 await browser.close();
-console.log(failures.length ? `\n${failures.length} FAILED` : '\nall step checks passed');
-process.exit(failures.length ? 1 : 0);
+finish('all step checks passed');

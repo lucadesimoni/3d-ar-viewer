@@ -110,6 +110,14 @@ const FPS_WINDOW_MS = 500;
  * stops costing anything within half a second.
  */
 const IDLE_AFTER_MS = 500;
+/**
+ * A WebXR camera that covers this much ground, this fast, between two frames
+ * was not carried there: people move at most a couple of metres a second, and
+ * a dropped frame does not add speed. It is the platform re-basing its idea of
+ * the room — the other half of "the platform moved the anchor".
+ */
+const XR_JUMP_MIN_M = 0.15;
+const XR_JUMP_MIN_SPEED = 3;
 /** An anchor correction this big is something the operator can see happen. */
 const VISIBLE_CORRECTION_M = 0.02;
 /** How often anchor corrections are worth a log line, ms. */
@@ -514,6 +522,37 @@ export class SceneManager {
     this.fpsWindowFrames = this.frames;
   }
 
+  private lastXrCamera: { x: number; y: number; z: number; at: number } | undefined;
+
+  /**
+   * Log a jump of the session camera — a re-based room.
+   *
+   * Two device sessions logged the anchor moving by 0.97 m and 2.03 m right
+   * after a tap, and the log could not say which of two things it was: the
+   * platform correcting one anchor, or the platform re-estimating the whole
+   * room — in which case the camera jumps too, and the assembly, which does not
+   * follow anchors any more, is the thing now in the wrong place. This is the
+   * entry that tells them apart.
+   */
+  private watchXrCamera(now: number): void {
+    const cam = this.scene.activeCamera;
+    if (!cam) return;
+    const p = cam.globalPosition;
+    const last = this.lastXrCamera;
+    this.lastXrCamera = { x: p.x, y: p.y, z: p.z, at: now };
+    if (!last) return;
+    const dt = (now - last.at) / 1000;
+    if (dt <= 0 || dt > 0.5) return;            // a pause is not a jump
+    const moved = Math.hypot(p.x - last.x, p.y - last.y, p.z - last.z);
+    if (moved >= XR_JUMP_MIN_M && moved / dt >= XR_JUMP_MIN_SPEED) {
+      logEvent('xr', 'camera jumped', {
+        byM: Number(moved.toFixed(3)),
+        inMs: Math.round(dt * 1000),
+        to: [p.x, p.y, p.z].map((v) => Number(v.toFixed(3))),
+      });
+    }
+  }
+
   /** When something last changed what the studio view shows. */
   private lastChangeAtMs = 0;
   /** The scene has reported ready since that change: nothing left settling. */
@@ -566,6 +605,7 @@ export class SceneManager {
       this.sampleFps();
       if (!this.needsRender(performance.now())) { this.idleFrames++; return; }
       this.scene.render();
+      if (this.inXrSession) this.watchXrCamera(performance.now());
       this.lastFrameBuffer = [this.engine.getRenderWidth(), this.engine.getRenderHeight()];
       if (this.paintSampleWanted) {
         this.paintSampleWanted = false;
@@ -1641,6 +1681,7 @@ export class SceneManager {
         },
         onStateChange: (inXr) => {
           this.inXrSession = inXr;
+          this.lastXrCamera = undefined;
           logEvent('xr', inXr ? 'in session' : 'session ended', { clock: this.frameClock });
           if (inXr) {
             this.arMode = true;
@@ -2779,6 +2820,17 @@ export class SceneManager {
       new HardwareScalingOptimization(2, Math.max(1, this.baseScalingLevel), 0.25),
     );
     this.optimizer = new SceneOptimizer(this.scene, options);
+    // A blurry session has a cause, and it belongs in the log: which way the
+    // resolution went, how fast the page was running when it did, and where.
+    this.optimizer.onNewOptimizationAppliedObservable.add((applied) => {
+      if (!(applied instanceof HardwareScalingOptimization)) return;
+      logEvent('render', 'resolution lowered', {
+        scaling: Number(this.engine.getHardwareScalingLevel().toFixed(3)),
+        fps: Math.round(this.engine.getFps()),
+        targetFps: this.perf.targetFps,
+        xr: this.inXrSession,
+      });
+    });
     this.optimizer.start();
   }
 
@@ -2797,6 +2849,12 @@ export class SceneManager {
     this.optimizer?.stop();
     this.optimizer?.dispose?.();
     this.optimizer = undefined;
+    const was = this.engine.getHardwareScalingLevel();
+    if (Math.abs(was - this.baseScalingLevel) > 1e-6) {
+      logEvent('render', 'resolution restored', {
+        from: Number(was.toFixed(3)), to: Number(this.baseScalingLevel.toFixed(3)),
+      });
+    }
     this.engine.setHardwareScalingLevel(this.baseScalingLevel);
     this.startAdaptiveOptimizer();
   }

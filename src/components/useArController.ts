@@ -803,7 +803,14 @@ export function useArController(
     stopPlacement.current = undefined;
     objectAnchor.current?.reset();
     if (previewTimer.current) window.clearTimeout(previewTimer.current);
-    useStore.getState().setAnchor(manager.bringInFront(), 0.6, 'manual');
+    // Said by name: the anchor entry that follows only reads "manual", and a
+    // device log then has to guess which control the operator reached for.
+    const pose = manager.bringInFront();
+    logEvent('place', 'brought in front', {
+      from: useStore.getState().anchor?.position.map((v) => Number(v.toFixed(3))) ?? null,
+      to: pose.position.map((v) => Number(v.toFixed(3))),
+    });
+    useStore.getState().setAnchor(pose, 0.6, 'manual');
   }, [arActive]);
 
   /**
@@ -820,6 +827,10 @@ export function useArController(
     // Forget the object lock too: "Move" means the operator wants to say where
     // this goes, and a tracked recognition would otherwise pull it straight back.
     objectAnchor.current?.reset();
+    logEvent('place', 'move pressed', {
+      from: useStore.getState().anchor?.position.map((v) => Number(v.toFixed(3))) ?? null,
+      path: xrSession.current ? 'webxr' : 'camera',
+    });
     useStore.getState().setAnchor(undefined, 0, 'awaiting');
 
     useStore.getState().setArPlacement('awaiting');

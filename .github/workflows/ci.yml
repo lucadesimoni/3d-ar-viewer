@@ -55,25 +55,22 @@ jobs:
             curl -sf http://localhost:8080/healthz > /dev/null && break
             sleep 1
           done
-      - run: npm run ar:verify
+      # One step for all seven suites, not one each: a failing step stops the
+      # job, so a red ar-verify used to keep the other six from running at
+      # all. Every suite runs; failures become annotations (readable through
+      # the checks API, unlike the job log) and a table in the job summary;
+      # and a check that stops being reported fails against the baseline.
+      - name: Browser checks
         env:
           PREVIEW_URL: http://localhost:8080/
-      - run: npm run steps:check
-        env:
-          PREVIEW_URL: http://localhost:8080/
-      - run: npm run layout:check
-        env:
-          PREVIEW_URL: http://localhost:8080/
-      - run: npm run place:check
-        env:
-          PREVIEW_URL: http://localhost:8080/
-      - run: npm run notes:check
-        env:
-          PREVIEW_URL: http://localhost:8080/
-      - run: npm run log:check
-        env:
-          PREVIEW_URL: http://localhost:8080/
-      - run: npm run deploy:check
+        run: node scripts/check-all.mjs
+      - name: Keep the check logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-results
+          path: check-results
+          retention-days: 7
 
   # Nightly (and on demand): the same browser checks, pointed at the deployed
   # site instead of a local build. This is what catches a bad deploy, a stale
@@ -94,10 +91,5 @@ jobs:
         env:
           # Override with a repository variable if the deployment moves.
           PREVIEW_URL: ${{ vars.PREVIEW_URL || 'https://3d-ar-viewer-ten.vercel.app/' }}
-        run: |
-          npm run ar:verify
-          npm run steps:check
-          npm run layout:check
-          npm run place:check
-          npm run notes:check
-          npm run log:check
+        # deploy-check builds its own static host; the live site is the host here.
+        run: node scripts/check-all.mjs --only=ar-verify,steps-check,layout-check,place-check,notes-check,log-check --no-baseline

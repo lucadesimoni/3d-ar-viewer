@@ -6,6 +6,7 @@ import { useStore } from '../state/store';
 import type { MarkerObservation } from '../engine/tracking/markerTracking';
 import type { PipelineConfig } from '../vision/pipeline';
 import type { Capabilities } from '../engine/tracking/capabilities';
+import { logEntries } from '../diagnostics/log';
 
 const f = vi.hoisted(() => {
   const stopPlacement = vi.fn();
@@ -36,6 +37,7 @@ const f = vi.hoisted(() => {
       cameraToWorld: vi.fn((pose) => pose),
       startGroundPlacement: vi.fn(() => stopPlacement),
       computeAnchorInFront: vi.fn(() => ({ position: [0, 0, 1], rotation: [0, 0, 0, 1] })),
+      bringInFront: vi.fn(() => ({ position: [0.6, 0.7, -0.1], rotation: [0, 0, 0, 1] })),
     },
   };
 });
@@ -458,5 +460,28 @@ describe('what the marker tracker is told about the camera', () => {
     expect(k.fovDeg).toBeCloseTo(72.18, 2);
     // The whole frame, not the cropped view on screen.
     expect(f.manager.frameIntrinsics).toHaveBeenCalledWith({ width: 1080, height: 1920 });
+  });
+});
+
+describe('what the log says the operator did', () => {
+  const last = (message: string) => logEntries().filter((e) => e.message === message).at(-1);
+
+  it('names "Bring it in front", with where it was and where it went', async () => {
+    // A device log read "anchor set · manual" and left the control to be
+    // guessed — and then reported a stale anchor as if the model sat on it.
+    await act(async () => {
+      useStore.getState().setAnchor({ position: [0.364, -0.191, 1.193], rotation: [0, 0, 0, 1] }, 0.9, 'floor');
+    });
+    await act(async () => controller.bringInFront());
+    expect(last('brought in front')?.data).toEqual({ from: [0.364, -0.191, 1.193], to: [0.6, 0.7, -0.1] });
+    expect(useStore.getState().anchor?.position).toEqual([0.6, 0.7, -0.1]);
+  });
+
+  it('names "Move", and which path it re-arms', async () => {
+    await act(async () => {
+      useStore.getState().setAnchor({ position: [1, 0, 2], rotation: [0, 0, 0, 1] }, 0.9, 'floor');
+    });
+    await act(async () => controller.replaceAnchor());
+    expect(last('move pressed')?.data).toEqual({ from: [1, 0, 2], path: 'camera' });
   });
 });
