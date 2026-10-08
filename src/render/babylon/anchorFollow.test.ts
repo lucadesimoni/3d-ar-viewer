@@ -4,6 +4,7 @@ import { SceneManager } from './SceneManager';
 import { gearbox } from '../../data';
 import type { XrHooks } from './xr';
 import type { Pose } from '../../engine/types';
+import { logEntries } from '../../diagnostics/log';
 
 const prepare = vi.hoisted(() => vi.fn());
 vi.mock('./xr', () => ({ prepareImmersiveAr: prepare }));
@@ -154,6 +155,38 @@ describe('the two things that may still move it', () => {
     try {
       manager.setAnchor(undefined);
       expect(where(manager)).toEqual([0, 0, 0]);
+    } finally {
+      manager.dispose();
+    }
+  });
+});
+
+describe('what the log says about the platform anchor', () => {
+  const moves = () => logEntries().filter((e) => e.message === 'the platform moved the anchor').length;
+
+  it('reports a big move of the anchor a tap placed the assembly on', async () => {
+    const { manager, hook } = await placed();
+    try {
+      hook.onAnchorPose?.(pose(0, 0, 2));
+      const before = moves();
+      hook.onAnchorPose?.(pose(0.9, 0, 2));
+      expect(moves() - before).toBe(1);
+    } finally {
+      manager.dispose();
+    }
+  });
+
+  it('says nothing about it once the assembly has been put somewhere else', async () => {
+    // A device log: "moved the anchor by 0.97 m" at a tap's floor spot, twenty
+    // seconds after "Bring it in front" had moved the assembly off it.
+    const { manager, hook } = await placed();
+    try {
+      hook.onAnchorPose?.(pose(0, 0, 2));
+      manager.setAnchor(pose(0.6, 0.7, 0));          // brought in front
+      const before = moves();
+      hook.onAnchorPose?.(pose(0, 0, 2));
+      hook.onAnchorPose?.(pose(0.9, 0, 2));
+      expect(moves() - before).toBe(0);
     } finally {
       manager.dispose();
     }

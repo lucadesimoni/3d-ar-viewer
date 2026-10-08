@@ -359,6 +359,13 @@ export class SceneManager {
   }) | undefined;
   /** The last report we actually moved to — what a new one is measured against. */
   private anchorApplied: Pose | undefined;
+  /**
+   * Whether the assembly stands on the platform's anchor at all: placed by a
+   * tap, which is the only placement that creates one. "Bring it in front" and
+   * a snap onto something recognised put it somewhere else, and the old
+   * anchor's reports are then about a spot nothing stands on.
+   */
+  private onPlatformAnchor = false;
   /** The last pose the *app* asked for, so a repeat of it changes nothing. */
   private storeAnchor: Pose | undefined;
   /**
@@ -1284,6 +1291,11 @@ export class SceneManager {
    * not take, and following can come back on that evidence.
    */
   private followAnchor(pose: Pose): void {
+    // A device log had "the platform moved the anchor" by 0.97 m, at the
+    // floor spot of a tap — twenty seconds after "Bring it in front" had put
+    // the assembly somewhere else entirely. Reports about an anchor nothing
+    // stands on only mislead whoever reads the file.
+    if (!this.onPlatformAnchor) return;
     if (!this.anchorApplied) { this.anchorApplied = pose; return; }
     this.anchorCorrections++;
     if (!anchorMoved(this.anchorApplied, pose)) return;
@@ -1481,6 +1493,8 @@ export class SceneManager {
     // An earlier stall may have left the loop on the timer clock, which cannot
     // drive a session. Hand over a loop the session can actually use.
     this.xrEntering = true;
+    // Not judged while a session owns the display; see `restartAdaptiveOptimizer`.
+    this.optimizer?.stop();
     if (this.frameClock !== 'raf') {
       this.frameClock = 'raf';
       this.restartRenderLoop();
@@ -1505,6 +1519,7 @@ export class SceneManager {
     if (!controller) {
       // Back to whatever the mode says, so a refused session leaves no trace.
       this.setTransparent(this.arMode);
+      this.restartAdaptiveOptimizer();
       this.xrInUse = undefined;
       prepared.dispose();
       // Build the next one now, in the background, so a retry costs only the
@@ -1619,6 +1634,9 @@ export class SceneManager {
           // again, so the log says how far it has moved *since this tap*.
           this.anchorApplied = undefined;
           callbacks.onPlace(placed);
+          // After the placement has come back through `setAnchor`, which
+          // clears this for every pose the app sets.
+          this.onPlatformAnchor = true;
           this.setPlacementActive(false);
         },
         onStateChange: (inXr) => {
@@ -1631,6 +1649,7 @@ export class SceneManager {
             this.setArMode(false);
             this.setReticle(undefined);
             this.trackingListener?.(undefined);
+            this.restartAdaptiveOptimizer();
             // The session is over and the helper is free. Hand it back, so the
             // next "Enter AR" is a real session rather than a wasted tap.
             if (this.xrInUse) {
@@ -1868,8 +1887,11 @@ export class SceneManager {
     }
     this.storeAnchor = pose ? clonePose(pose) : undefined;
     // The app has moved it — "Move", or a snap onto something recognised —
-    // so the platform's reports are measured from here again.
+    // so the platform's reports are measured from here again; and unless this
+    // is a tap's own placement (which re-sets the flag right after), the
+    // assembly no longer stands on the platform's anchor at all.
     this.anchorApplied = undefined;
+    this.onPlatformAnchor = false;
     this.applyAnchor(pose);
   }
 
@@ -2758,6 +2780,25 @@ export class SceneManager {
     );
     this.optimizer = new SceneOptimizer(this.scene, options);
     this.optimizer.start();
+  }
+
+  /**
+   * Back to full resolution, judged afresh — after a WebXR session.
+   *
+   * A session draws into its own framebuffer, so the canvas resolution this
+   * optimizer trades away buys nothing there, while the session's frame rate
+   * (24 fps on an Android phone aiming for 60) and the hand-over before it
+   * read to it as a page that cannot keep up. A device log showed the result:
+   * the same phone, two sessions — one at full resolution, one degraded all the
+   * way to CSS pixels for good, depending only on whether its first check fell
+   * before or after "Enter AR".
+   */
+  private restartAdaptiveOptimizer(): void {
+    this.optimizer?.stop();
+    this.optimizer?.dispose?.();
+    this.optimizer = undefined;
+    this.engine.setHardwareScalingLevel(this.baseScalingLevel);
+    this.startAdaptiveOptimizer();
   }
 
   /** Background geometry never moves — freeze its matrices and materials. */
