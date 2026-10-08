@@ -55,7 +55,7 @@ from breaking one of them:
    running browser has a check script that asserts it in numbers — 153 checks
    on AR anchoring, tracking and the HUD, 64 on layout, 26 on the diagnostics
    log, 20 on the step guidance, 14 on placing and snapping, 14 on what a
-   static host has to satisfy, 11 on operator notes — alongside 539 unit
+   static host has to satisfy, 11 on operator notes — alongside 572 unit
    tests.
 
 ---
