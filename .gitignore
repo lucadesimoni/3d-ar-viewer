@@ -30,3 +30,6 @@ pnpm-debug.log*
 
 # Screenshot output
 /shots/
+
+# Browser check output (check-all.mjs)
+/check-results/

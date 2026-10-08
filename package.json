@@ -24,7 +24,8 @@
     "start": "npm run build && node server/serve.mjs",
     "serve": "node server/serve.mjs",
     "notes:check": "node scripts/notes-check.mjs",
-    "log:check": "node scripts/log-check.mjs"
+    "log:check": "node scripts/log-check.mjs",
+    "check:all": "node scripts/check-all.mjs --serve"
   },
   "dependencies": {
     "@babylonjs/core": "^9.24.0",

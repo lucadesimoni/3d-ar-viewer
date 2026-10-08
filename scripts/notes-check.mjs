@@ -11,13 +11,10 @@
  */
 import { chromium } from 'playwright';
 import { launchOptions } from './chrome.mjs';
+import { createChecks, PREVIEW_URL } from './checks.mjs';
 
-const URL = process.env.PREVIEW_URL ?? 'http://localhost:4173/';
-const failures = [];
-const check = (name, ok, detail) => {
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!ok) failures.push(name);
-};
+const URL = PREVIEW_URL;
+const { check, finish } = createChecks();
 
 const browser = await chromium.launch(launchOptions());
 const context = await browser.newContext({
@@ -150,5 +147,4 @@ check('and stays deleted', (await page.evaluate(() => window.spatialStore.getSta
 }
 
 await browser.close();
-console.log(failures.length ? `\n${failures.length} FAILED` : '\nall note checks passed');
-process.exit(failures.length ? 1 : 0);
+finish('all note checks passed');

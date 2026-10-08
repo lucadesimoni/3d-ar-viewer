@@ -15,17 +15,14 @@
  */
 import { chromium } from 'playwright';
 import { launchOptions, FAKE_CAMERA } from './chrome.mjs';
+import { createChecks, PREVIEW_URL } from './checks.mjs';
 
-const URL = process.env.PREVIEW_URL ?? 'http://localhost:4173/';
+const URL = PREVIEW_URL;
 const OUT = process.argv[2] ?? '/tmp/ar-verify';
 
 const browser = await chromium.launch(launchOptions(FAKE_CAMERA));
 
-const failures = [];
-const check = (name, ok, detail) => {
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!ok) failures.push(name);
-};
+const { check, finish } = createChecks();
 
 /** Draw a cube shelf into a canvas and serve it as the camera stream. */
 const SHELF_STREAM = ({ cols, rows, span, sway = 0 }) => {
@@ -1734,5 +1731,4 @@ const context = await browser.newContext({
 }
 
 await browser.close();
-console.log(failures.length ? `\n${failures.length} FAILED` : '\nall checks passed');
-process.exit(failures.length ? 1 : 0);
+finish('all checks passed');

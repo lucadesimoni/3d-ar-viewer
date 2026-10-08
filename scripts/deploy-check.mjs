@@ -19,6 +19,7 @@
 import { createServer } from 'node:http';
 import { chromium } from 'playwright';
 import { launchOptions } from './chrome.mjs';
+import { createChecks } from './checks.mjs';
 import { cp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { extname, join } from 'node:path';
@@ -32,11 +33,7 @@ const MIME = {
   '.png': 'image/png', '.ico': 'image/x-icon', '.wasm': 'application/wasm',
 };
 
-const failures = [];
-const check = (name, ok, detail) => {
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!ok) failures.push(name);
-};
+const { check, finish } = createChecks();
 
 // --- 0. What a first visit has to download before anything paints. ----------
 // Measured 2026-09-23 on a 4G-like link with 4x CPU throttling: 57 preloaded
@@ -245,5 +242,4 @@ await httpCache(true);
 
 await browser.close();
 server.close();
-console.log(failures.length ? `\n${failures.length} FAILED` : '\nall deployment checks passed');
-process.exit(failures.length ? 1 : 0);
+finish('all deployment checks passed');

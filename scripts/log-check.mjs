@@ -13,13 +13,10 @@
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { launchOptions, FAKE_CAMERA } from './chrome.mjs';
+import { createChecks, PREVIEW_URL } from './checks.mjs';
 
-const URL = process.env.PREVIEW_URL ?? 'http://localhost:4173/';
-const failures = [];
-const check = (name, ok, detail) => {
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!ok) failures.push(name);
-};
+const URL = PREVIEW_URL;
+const { check, finish } = createChecks();
 
 const browser = await chromium.launch(launchOptions(FAKE_CAMERA));
 const context = await browser.newContext({
@@ -231,5 +228,4 @@ check('and where the app expected every part to be, as numbers',
   capture ? `${capture.parts.length} parts, ${capture.parts.filter((p) => p.onScreen).length} on screen; first ${JSON.stringify(capture.parts[0])}` : 'none');
 
 await browser.close();
-console.log(failures.length ? `\n${failures.length} FAILED` : '\nall log checks passed');
-process.exit(failures.length ? 1 : 0);
+finish('all log checks passed');

@@ -8,7 +8,7 @@ cannot.
 | --- | --- | --- | --- |
 | Types | `npm run typecheck` | The whole repo compiles | Everything about behaviour |
 | Unit | `npm test` | Geometry, assembly import, iframe protocol, camera lifecycle, recognition identity and inference lifecycle, snapping, diagnostics, sequencing, vision maths | Real camera optics, device GPU/sensors, and browser layout |
-| Browser | `ar:verify`, `steps:check`, `layout:check`, `place:check` | AR anchoring and tracking, the HUD on phone/tablet viewports, step guidance, placing and snapping — against a real Chromium and the real build | Real camera optics, real motion sensors, real WebXR |
+| Browser | `check:all` — `ar:verify`, `steps:check`, `layout:check`, `place:check`, `notes:check`, `log:check` | AR anchoring and tracking, the HUD on phone/tablet viewports, step guidance, placing and snapping, operator notes, the diagnostics log — against a real Chromium and the real build | Real camera optics, real motion sensors, real WebXR |
 | Deployment | `deploy:check` | First visit, offline, redeploy with new bundle names, offline again — against a deliberately dumb static host | Whether the actual host sets the headers |
 | Production | the same browser checks with `PREVIEW_URL=https://…` | The site that is actually serving: bad deploy, stale worker, missing header | Same hardware blind spots |
 
@@ -18,21 +18,73 @@ demand (Actions ▸ CI ▸ Run workflow).
 ## Running the lot locally
 
 ```bash
-npm run typecheck && npm test
+npm run typecheck && npm test      # 572 unit tests, including the check tooling's own
 npm run build
-npm run serve &                 # http://localhost:8080
-npm run ar:verify               # 74 checks
-npm run steps:check             # 12 checks
-npm run layout:check            # 19 checks
-npm run place:check             # 7 checks
-npm run deploy:check            # 8 checks — starts its own host
+npm run check:all                  # all seven browser suites, 302 checks
 ```
+
+`check:all` serves `dist` with `vite preview` if nothing is serving
+`PREVIEW_URL` (default `http://localhost:4173/`), runs every suite even when an
+earlier one fails, and prints only failures and a summary:
+
+```
+suite         passed  failed  time    status
+ar-verify     153     0       343s    ok
+steps-check   20      0       40s     ok
+layout-check  64      0       66s     ok
+place-check   14      0       43s     ok
+notes-check   11      0       23s     ok
+log-check     26      0       13s     ok
+deploy-check  14      0       16s     ok
+```
+
+Each suite's full output is in `check-results/<suite>.log`, and every result
+is a JSON line in `check-results/results.jsonl`.
+
+**The baseline.** `scripts/check-baseline.json` lists every check by name. A
+check that stops being reported fails the run as `DROPPED`, even when
+everything that did run passed: a suite that silently skips its own checks
+looks exactly like one that passed. After deliberately adding or removing
+checks, accept the new set from a full, green run:
+
+```bash
+npm run check:all -- --write-baseline
+```
+
+One suite, or a few: `npm run check:all -- --only=steps-check,place-check`.
+Each suite still runs on its own, too (`npm run ar:verify`, …).
 
 Against the deployed site instead of a local build:
 
 ```bash
-PREVIEW_URL=https://your-deployment.example/ npm run ar:verify
+PREVIEW_URL=https://your-deployment.example/ npm run check:all -- \
+  --only=ar-verify,steps-check,layout-check,place-check,notes-check,log-check --no-baseline
 ```
+
+**On CI** all seven run in one step through the same runner. A failing check,
+or a suite that crashes, becomes an annotation on the run — readable in the
+UI and through the checks API — and the job summary has the table above with
+the failures listed under it. The logs are kept as the `check-results`
+artifact for a week. This replaced one step per suite, where a failing
+`ar-verify` stopped the other six from running, and the only record of which
+check failed was a job log the tooling here cannot fetch: `main` was red for a
+week in September and nothing readable said why.
+
+## Reading a report from a device
+
+The app's diagnostics export is the one window onto a real phone. To read one:
+
+```bash
+node scripts/read-report.mjs spatial-ar-2026-10-08T13-38-00-514Z.json [--images=out/]
+```
+
+It prints the build, device, browser, AR path and how rendering went; then
+what it flags — a studio view drawn below the screen's resolution, a tap
+followed by the platform moving the anchor, the session camera jumping (the
+platform re-basing the room), blank camera frames, stalls, errors; then the
+whole event log as a timeline. `--images` writes the captured camera frames
+out. Reports hold someone's camera images: read them locally, never commit
+them.
 
 ## What the browser checks actually do
 
@@ -115,7 +167,8 @@ started as one, and the screenshot is usually enough to name the cause.
 - **On demand.** Ask a Claude Code session to run the battery; it will report
   numbers rather than a verdict, and can fix what it breaks.
 - **On every push.** Already the case — see `.github/workflows/ci.yml`. A red
-  run is a real failure; there are no known flaky checks.
+  run is a real failure; there are no known flaky checks. The annotations on
+  the run say which checks failed.
 - **Nightly against production.** The `production-smoke` job. Point it at a
   different deployment with a repository variable named `PREVIEW_URL`.
 - **On a schedule, with triage.** A Claude *Routine* can wake a session on a

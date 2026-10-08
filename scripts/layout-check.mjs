@@ -12,15 +12,12 @@
  */
 import { chromium } from 'playwright';
 import { launchOptions, FAKE_CAMERA } from './chrome.mjs';
+import { createChecks, PREVIEW_URL } from './checks.mjs';
 
-const URL = process.env.PREVIEW_URL ?? 'http://localhost:4173/';
+const URL = PREVIEW_URL;
 const OUT = process.argv[2] ?? '/tmp/layout-check';
 
-const failures = [];
-const check = (name, ok, detail) => {
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!ok) failures.push(name);
-};
+const { check, finish } = createChecks();
 
 const browser = await chromium.launch(launchOptions());
 
@@ -541,5 +538,4 @@ for (const vp of VIEWPORTS) {
 }
 
 await browser.close();
-console.log(failures.length ? `\n${failures.length} FAILED` : '\nall layout checks passed');
-process.exit(failures.length ? 1 : 0);
+finish('all layout checks passed');
