@@ -103,6 +103,13 @@ const PLACEMENT_ARM_DELAY_MS = 350;
 const XR_PREPARE_WAIT_MS = 2000;
 /** The window the frame rate is averaged over, ms. Long enough to be steady. */
 const FPS_WINDOW_MS = 500;
+/**
+ * How long the studio view keeps drawing after the last thing that changed it.
+ * Long enough for whatever settles on its own after a change — a texture
+ * upload, the frame after a resize — and short enough that a still scene
+ * stops costing anything within half a second.
+ */
+const IDLE_AFTER_MS = 500;
 /** An anchor correction this big is something the operator can see happen. */
 const VISIBLE_CORRECTION_M = 0.02;
 /** How often anchor corrections are worth a log line, ms. */
@@ -220,6 +227,10 @@ export class SceneManager {
 
     this.camera = new ArcRotateCamera('cam', -Math.PI / 2.2, Math.PI / 2.6, 0.7, new Vector3(0, 0.05, 0), this.scene);
     this.camera.attachControl(canvas, true);
+    // Any touch, drag, wheel or key may move the view; the idle check then
+    // keeps drawing while the camera coasts to a stop.
+    this.scene.onPointerObservable.add(this.invalidate);
+    this.scene.onKeyboardObservable.add(this.invalidate);
     // Any orbit, pinch or wheel is the operator choosing a view; auto-fit stops
     // second-guessing them from that point on.
     this.camera.onViewMatrixChangedObservable.add(() => {
@@ -278,6 +289,8 @@ export class SceneManager {
       this.resizeObserver = new ResizeObserver(this.onResize);
       this.resizeObserver.observe(this.canvas);
     }
+    // A new scene has everything still to draw.
+    this.invalidate();
   }
 
   /**
@@ -402,7 +415,7 @@ export class SceneManager {
   private groundShadow: Mesh | undefined;
   private groundOutline: import('@babylonjs/core/Meshes/linesMesh').LinesMesh | undefined;
   private showBackground = true;
-  /** Frames actually rendered — a loop that has stopped shows up here first. */
+  /** Loop ticks since start — a loop that has stopped shows up here first. */
   private frames = 0;
   private renderError: string | undefined;
   private contextLost = false;
@@ -436,6 +449,7 @@ export class SceneManager {
     logEvent('render', 'WebGL context lost');
   };
   private onContextRestored = (): void => {
+    this.invalidate();
     this.contextLost = false;
     this.restartRenderLoop();
   };
@@ -493,11 +507,58 @@ export class SceneManager {
     this.fpsWindowFrames = this.frames;
   }
 
+  /** When something last changed what the studio view shows. */
+  private lastChangeAtMs = 0;
+  /** The scene has reported ready since that change: nothing left settling. */
+  private settled = false;
+  /** Loop ticks that drew nothing because nothing had changed. */
+  private idleFrames = 0;
+
+  /** Something on screen may have changed: draw again. */
+  private invalidate = (): void => {
+    this.lastChangeAtMs = performance.now();
+    this.settled = false;
+  };
+
+  /**
+   * Whether this tick has anything new to draw.
+   *
+   * The studio view drew every display frame — at twice the CSS resolution,
+   * with MSAA, on a phone — while the operator read a step and nothing moved.
+   * A canvas that is not drawn keeps showing its last frame, so a still scene
+   * can stop drawing and look exactly the same.
+   *
+   * AR never stops: there the camera moves under the overlay every frame. And
+   * the studio view keeps drawing while the camera coasts, while anything is
+   * still loading or compiling, and for a moment after any change.
+   */
+  private needsRender(now: number): boolean {
+    if (this.arMode || this.inXrSession || this.xrEntering || this.placementActive
+      || this.marker || this.paintSampleWanted || this.contextLost) return true;
+    if (now - this.lastChangeAtMs < IDLE_AFTER_MS) return true;
+    const c = this.camera;
+    if (c.inertialAlphaOffset || c.inertialBetaOffset || c.inertialRadiusOffset
+      || c.inertialPanningX || c.inertialPanningY) return true;
+    if (this.scene.animatables.length > 0 || this.scene.getWaitingItemsCount() > 0) return true;
+    // Shaders compile in the background on some GPUs and a mesh is skipped
+    // until its material is ready — asked once per change, not every frame.
+    // The tick that finds it ready still draws: the frame before it may have
+    // skipped the very mesh that has just become ready.
+    if (!this.settled) {
+      if (this.scene.isReady()) this.settled = true;
+      return true;
+    }
+    return false;
+  }
+
   private renderFrame = (): void => {
     try {
-      this.scene.render();
+      // The loop itself keeps ticking, drawn or not: the watchdog reads a
+      // stopped count as a dead loop, and an idle scene is not one.
       this.frames++;
       this.sampleFps();
+      if (!this.needsRender(performance.now())) { this.idleFrames++; return; }
+      this.scene.render();
       this.lastFrameBuffer = [this.engine.getRenderWidth(), this.engine.getRenderHeight()];
       if (this.paintSampleWanted) {
         this.paintSampleWanted = false;
@@ -532,6 +593,7 @@ export class SceneManager {
    * transparent so the camera feed shows through.
    */
   setArMode(enabled: boolean): void {
+    this.invalidate();
     if (this.arMode === enabled) return;
     this.arMode = enabled;
     if (enabled && this.arCamera) {
@@ -1119,6 +1181,7 @@ export class SceneManager {
 
   /** Recalibrate the assumed camera FOV live, from the AR settings sheet. */
   setCameraFov(fovDeg: number): void {
+    this.invalidate();
     if (!(fovDeg > 1 && fovDeg < 179)) return;
     this.cameraFovDeg = fovDeg;
     this.applyPassthroughFov();
@@ -1133,6 +1196,7 @@ export class SceneManager {
    */
   /** Set the drop from the device to the surface being placed on, in metres. */
   setSurfaceDrop(metres: number): void {
+    this.invalidate();
     this.surfaceDropM = metres;
   }
 
@@ -1657,6 +1721,7 @@ export class SceneManager {
 
   /** Clear to transparent (AR passthrough) or to the opaque studio background. */
   setTransparent(on: boolean): void {
+    this.invalidate();
     this.scene.clearColor = on ? new Color4(0, 0, 0, 0) : new Color4(0.05, 0.07, 0.1, 1);
     // The ground grid is a studio aid; it must not float over the real world.
     this.scene.getMeshByName('grid')?.setEnabled(!on);
@@ -1685,6 +1750,7 @@ export class SceneManager {
   private resizeObserver: ResizeObserver | undefined;
 
   private onResize = (): void => {
+    this.invalidate();
     const rect = this.canvas.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) return;   // hidden; resizing to 0 kills the depth buffer
     this.engine.resize();
@@ -1751,6 +1817,7 @@ export class SceneManager {
 
   /** Re-point the whole scene at a new assembly. */
   loadAssembly(assembly: AssemblyDef): void {
+    this.invalidate();
     // Each part owns two materials and wears one at a time; disposing the
     // node only frees the one it is wearing, so the other leaked on every
     // swap. Background meshes kept all of theirs.
@@ -1787,6 +1854,7 @@ export class SceneManager {
    * undone by the next correction of an anchor it no longer sits on.
    */
   setAnchor(pose: Pose | undefined): void {
+    this.invalidate();
     if (samePose(pose, this.storeAnchor)) {
       // Nothing new from the app — so do not touch where the assembly is. What
       // still has to be reconciled is whether it should be drawn at all: this
@@ -1829,6 +1897,7 @@ export class SceneManager {
    * while an animation or explode is active, once per frame via `tick`.
    */
   update(state: SceneRenderState): void {
+    this.invalidate();
     this.state = state;
     const animated = state.timeline ? sampleTimeline(state.timeline, state.timelineT ?? 0) : undefined;
     // Once per update, not once per part: each measures the whole assembly
@@ -1989,6 +2058,7 @@ export class SceneManager {
    * the width and a wide one on a laptop by the height.
    */
   frameCamera(): void {
+    this.invalidate();
     // Frame the *parts*. Measured with its bench and wall the gearbox reads as
     // a 0.72 m object instead of a 0.13 m one, and the camera pulls back to
     // suit: on a phone the assembly came out 11% of the screen wide and 4% of
@@ -2068,6 +2138,7 @@ export class SceneManager {
   }
 
   addGroundGrid(): void {
+    this.invalidate();
     const grid = CreateGround('grid', { width: 2, height: 2, subdivisions: 20 }, this.scene);
     const mat = makeOverlayMaterial(this.scene, '#1e293b', 0.25, 'gridmat');
     mat.wireframe = true;
@@ -2086,6 +2157,7 @@ export class SceneManager {
    * idempotent: Babylon replaces the loop rather than stacking a second one.
    */
   restartRenderLoop(): void {
+    this.invalidate();
     // No watchdog is armed here. It is armed once, in the constructor. Arming
     // one per restart meant every stall doubled the number of timers, each of
     // which restarts and arms another: a device reported 13436 restarts, and
@@ -2314,6 +2386,7 @@ export class SceneManager {
   }
 
   setTestMarker(on: boolean): void {
+    this.invalidate();
     if (!on) {
       if (this.markerObserver) this.scene.onBeforeRenderObservable.remove(this.markerObserver);
       this.markerObserver = undefined;
@@ -2382,8 +2455,10 @@ export class SceneManager {
     bufferSize: [number, number];
     scaling: number;
     cameraY: number;
-    /** Frames rendered since start: not advancing means the loop is dead. */
+    /** Loop ticks since start: not advancing means the loop is dead. */
     frames: number;
+    /** Of those, ticks that drew nothing because nothing had changed. */
+    idleFrames: number;
     fps: number;
     /** Times the watchdog had to restart a stalled loop. */
     stalls: number;
@@ -2408,6 +2483,7 @@ export class SceneManager {
     const babylonLost = (this.engine as unknown as { _contextWasLost?: boolean })._contextWasLost;
     return {
       frames: this.frames,
+      idleFrames: this.idleFrames,
       fps,
       stalls: this.stalls,
       clock: this.frameClock,

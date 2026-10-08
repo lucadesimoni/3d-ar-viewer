@@ -102,13 +102,25 @@ describe('pipeline lifecycle', () => {
     // OpenCV is a multi-megabyte third-party script. It used to load from the
     // mount effect, so every page view paid for it, camera or not.
     f.loadOpenCV.mockClear();
-    const pipeline = new RecognitionPipeline();
+    const pipeline = new RecognitionPipeline(config);
     await pipeline.init();
     expect(f.loadOpenCV).not.toHaveBeenCalled();
     await pipeline.warmOpenCv();
     await pipeline.warmOpenCv();
     expect(f.loadOpenCV).toHaveBeenCalledTimes(1);
     expect(pipeline.status().errors?.openCv).toMatch(/JavaScript/);
+  });
+
+  it('does not fetch it at all without a model to prepare frames for', async () => {
+    // ~10 MB and a compile on the main thread, for a pipeline whose only other
+    // use of it (sharpness) has a JavaScript twin that agrees to within 1%.
+    f.loadOpenCV.mockClear();
+    const pipeline = new RecognitionPipeline();
+    await pipeline.init();
+    await pipeline.warmOpenCv();
+    expect(f.loadOpenCV).not.toHaveBeenCalled();
+    expect(pipeline.status()).toMatchObject({ openCv: false });
+    expect(pipeline.status().errors?.openCv).toBeUndefined();
   });
 
   it('retains the no-model baseline', async () => {

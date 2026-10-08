@@ -440,7 +440,18 @@ export function detectGridFacade(image: ImageData, opts: GridDetectOptions = {})
   if (image.width < 16 || image.height < 16) return undefined;
   const gray = toGray(image, opts.workingSize ?? 240);
   const obs = detectOnGray(gray, opts, { x: 0, y: 0 });
-  return obs && refineLines(image, obs, 3 * gray.scale);
+  if (!obs || wrongCount(obs, opts)) return obs;
+  return refineLines(image, obs, 3 * gray.scale);
+}
+
+/**
+ * The lattice has a different number of bays than the target, so no amount of
+ * refinement can make it the target: refining moves lines, never adds or drops
+ * one. Skipping it saves the most expensive step of a detection that is about
+ * to be rejected anyway — on most frames, every pass but one.
+ */
+function wrongCount(obs: GridObservation, opts: GridDetectOptions): boolean {
+  return opts.target !== undefined && (obs.cols !== opts.target.cols || obs.rows !== opts.target.rows);
 }
 
 /**
@@ -463,6 +474,7 @@ export function detectLeveledGridFacade(
   const coarse = detectOnGray(warped.gray, opts, warped.origin);
   if (!coarse) return undefined;
   const toImage = (p: Point2) => applyHomography(level.Hinv, p);
+  if (wrongCount(coarse, opts)) return { obs: coarse, toImage };
   return { obs: refineLines(image, coarse, 3 * warped.gray.scale, toImage), toImage };
 }
 
