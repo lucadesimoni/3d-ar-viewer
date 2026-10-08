@@ -70,10 +70,10 @@ describe('placed is placed', () => {
   it('is not moved by anything the platform says about the spot', async () => {
     // The rule the operator asked for, after five sessions of logs: once it is
     // positioned it stays exactly where it was put, unless they press "Move" or
-    // it snaps onto something recognised. The platform re-estimates that spot
-    // after every single touch of the screen — thirteen taps in one recorded
-    // session, thirteen moves, sixty to seventy milliseconds later each time —
-    // and from the operator's side that is "every tap repositions it".
+    // it snaps onto something recognised. Those logs showed the spot moving
+    // sixty to seventy milliseconds after every tap — later traced to the app
+    // making a new anchor on every tap (fixed in xr.ts), not to the platform.
+    // The rule stands regardless: whatever the platform reports, it stays.
     const { manager, hook } = await placed();
     try {
       const start = where(manager);
@@ -187,6 +187,20 @@ describe('what the log says about the platform anchor', () => {
       hook.onAnchorPose?.(pose(0, 0, 2));
       hook.onAnchorPose?.(pose(0.9, 0, 2));
       expect(moves() - before).toBe(0);
+    } finally {
+      manager.dispose();
+    }
+  });
+});
+
+describe('which taps the platform is asked to hold', () => {
+  it('declines a tap while placement is not armed, so no anchor is made for it', async () => {
+    const { manager, hook } = await placed();
+    try {
+      expect(hook.onSelectAnchor?.(pose(0.3, 0, 1.8))).toBe(false);
+      manager.setPlacementActive(true);
+      vi.mocked(performance.now).mockReturnValue(9000);
+      expect(hook.onSelectAnchor?.(pose(0.3, 0, 1.8))).toBe(true);
     } finally {
       manager.dispose();
     }

@@ -25,8 +25,11 @@ export interface XrHooks {
   onStateChange?: (inXr: boolean) => void;
   /** Pose of the surface reticle each frame, world frame. */
   onReticle?: (pose: Pose | undefined) => void;
-  /** Operator selected (tapped) at this pose — the anchor drop. */
-  onSelectAnchor?: (pose: Pose) => void;
+  /**
+   * Operator selected (tapped) at this pose — the anchor drop. Return `false`
+   * to decline it (placement not armed, say): then no anchor is made either.
+   */
+  onSelectAnchor?: (pose: Pose) => boolean | void;
   /**
    * The platform corrected where the placed spot really is.
    *
@@ -404,6 +407,7 @@ export async function prepareImmersiveAr(
   let cameraTexture: BaseTexture | undefined;
   /** The anchor the assembly is currently riding, if the device grants them. */
   let placedAnchorId: number | undefined;
+  let placedAnchor: { remove?: () => void } | undefined;
   const settle = createSettleTracker();
   /** When the running session began, and when it first saw a surface. */
   let sessionAtMs = 0;
@@ -427,11 +431,24 @@ export async function prepareImmersiveAr(
    * without an anchor and drift away from a spot the other keeps.
    */
   const place = (at: Pose): void => {
-    hooks.onSelectAnchor?.(at);
+    // Only a placement that was taken gets an anchor. Every tap used to make
+    // one — including the taps the app declined — and the assembly's anchor
+    // became whichever was made last, at wherever the reticle happened to be.
+    // Sixty milliseconds later (the time it takes to make an anchor) the log
+    // said "the platform moved the anchor", after every tap, by however far
+    // the reticle was from the placed spot. Six device sessions read that as
+    // the platform re-estimating the spot on every touch. It was this.
+    if (hooks.onSelectAnchor?.(at) === false) return;
     const hit = lastHit;
     if (!anchors || !hit) return;
     void anchors.addAnchorPointUsingHitTestResultAsync(hit)
-      .then((anchor) => { placedAnchorId = anchor.id; })
+      .then((anchor) => {
+        // One spot is held at a time: the platform tracks every anchor it is
+        // given until it is removed, and nothing ever removed the old ones.
+        if (placedAnchor && placedAnchor !== anchor) placedAnchor.remove?.();
+        placedAnchor = anchor;
+        placedAnchorId = anchor.id;
+      })
       .catch(() => { placedAnchorId = undefined; });
   };
   /**
@@ -675,6 +692,7 @@ export async function prepareImmersiveAr(
       tracking = undefined;
     }
     placedAnchorId = undefined;
+    placedAnchor = undefined;
     lastHit = undefined;
     stopInput?.();
     stopInput = undefined;

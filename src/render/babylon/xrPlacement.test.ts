@@ -343,6 +343,56 @@ describe('holding the spot while the device learns the room', () => {
     f.engine.dispose();
   });
 
+  it('makes no anchor for a tap the app declined, and keeps following its own', async () => {
+    // Six device sessions logged "the platform moved the anchor" ~60 ms after
+    // every tap, by 3-35 cm. It was this: every tap made an anchor, declined or
+    // not, and the newest one became the assembly's.
+    const f = fixture();
+    const onAnchorPose = vi.fn();
+    const onSelectAnchor = vi.fn((): boolean => true);
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, { onAnchorPose, onSelectAnchor });
+    await prepared!.enter();
+    f.settled();
+    f.session.dispatchEvent(new Event('select'));
+    await vi.waitFor(() => expect(f.anchors.addAnchorPointUsingHitTestResultAsync).toHaveBeenCalledTimes(1));
+
+    onSelectAnchor.mockReturnValue(false);           // placement not armed
+    for (let i = 0; i < 5; i++) f.session.dispatchEvent(new Event('select'));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(onSelectAnchor).toHaveBeenCalledTimes(6);
+    expect(f.anchors.addAnchorPointUsingHitTestResultAsync).toHaveBeenCalledTimes(1);
+
+    f.anchors.onAnchorUpdatedObservable.notifyObservers(f.anchor);
+    expect(onAnchorPose).toHaveBeenCalledTimes(1);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+
+  it('holds one spot at a time: a new placement lets go of the old anchor', async () => {
+    const f = fixture();
+    const first = { id: 7, transformationMatrix: Matrix.Translation(1, 0, 2), remove: vi.fn() };
+    const second = { id: 8, transformationMatrix: Matrix.Translation(3, 0, 1), remove: vi.fn() };
+    f.anchors.addAnchorPointUsingHitTestResultAsync
+      .mockResolvedValueOnce(first as never).mockResolvedValueOnce(second as never);
+    const onAnchorPose = vi.fn();
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, { onAnchorPose, onSelectAnchor: () => true });
+    await prepared!.enter();
+    f.settled();
+    f.session.dispatchEvent(new Event('select'));
+    await vi.waitFor(() => expect(f.anchors.addAnchorPointUsingHitTestResultAsync).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 0));
+    f.session.dispatchEvent(new Event('select'));
+    await vi.waitFor(() => expect(first.remove).toHaveBeenCalledTimes(1));
+    expect(second.remove).not.toHaveBeenCalled();
+
+    f.anchors.onAnchorUpdatedObservable.notifyObservers(first as never);
+    expect(onAnchorPose).not.toHaveBeenCalled();
+    f.anchors.onAnchorUpdatedObservable.notifyObservers(second as never);
+    expect(onAnchorPose).toHaveBeenCalledTimes(1);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+
   it('still places when the device grants no anchors', async () => {
     const f = fixture();
     f.baseExperience.featuresManager.enableFeature = vi.fn((name: string) => {

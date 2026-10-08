@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { browserOf, extractImages, summarise } from './read-report.mjs';
+import { browserOf, extractImages, iosHost, summarise } from './read-report.mjs';
 
 // The shape of a real report, with nothing of anyone's in it.
 const report = (over = {}) => ({
@@ -66,5 +66,33 @@ describe('reading a device report', () => {
     const paths = extractImages(report({ captures: [{ image: `data:image/png;base64,${png}` }] }), dir);
     expect(paths).toEqual([join(dir, 'capture-0.png')]);
     expect(readFileSync(paths[0]).subarray(1, 4).toString()).toBe('PNG');
+  });
+
+  describe('on iOS', () => {
+    const SAFARI = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+    const WEBVIEW = 'Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148';
+    const DESKTOP_IPAD_WEBVIEW = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)';
+    const ios = (ua, caps, over = {}) => report({
+      device: { ...report().device, platform: 'iPhone', userAgent: ua }, capabilities: caps, ...over,
+    });
+
+    it('tells Safari from the App Clip\'s web view — an iPad asking for the desktop site included', () => {
+      expect(iosHost(ios(SAFARI, { isIOS: true, isIPad: false }))).toBe('safari');
+      expect(iosHost(ios(WEBVIEW, { isIOS: true, isIPad: true }))).toBe('webview');
+      expect(iosHost(ios(DESKTOP_IPAD_WEBVIEW, { isIOS: true, isIPad: true }))).toBe('webview');
+      expect(iosHost(report())).toBeUndefined();
+      expect(summarise(ios(WEBVIEW, { isIOS: true, isIPad: true })).facts.device)
+        .toBe('iPhone · iPad (iOS 17.5) · iOS web view (the App Clip?)');
+    });
+
+    it('flags an App Clip session that gives no camera image', () => {
+      const r = ios(WEBVIEW, { isIOS: true, isIPad: true }, { render: { ...report().render, frameSource: 'xr-blind' } });
+      expect(summarise(r).findings.map((f) => f.text)).toContainEqual(expect.stringMatching(/App Clip session with no camera image/));
+    });
+
+    it('says what the Safari camera path cannot do', () => {
+      const r = ios(SAFARI, { isIOS: true, isIPad: false }, { ar: { mode: 'camera', placement: 'floor' } });
+      expect(summarise(r).findings.map((f) => f.text)).toContainEqual(expect.stringMatching(/iOS Safari has no WebXR/));
+    });
   });
 });
