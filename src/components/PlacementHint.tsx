@@ -17,8 +17,13 @@ export function surfaceName(heightM: number): string {
  */
 export function PlacementHint(): JSX.Element | null {
   const placement = useStore((s) => s.arPlacement);
-  const quality = useStore((s) => s.anchorQuality);
-  const target = useStore((s) => s.assembly.recognition);
+  // Whole percent: the raw value changes every tracked frame, the text does not.
+  const qualityPct = useStore((s) => Math.round(s.anchorQuality * 100));
+  // A target recognition is switched off for is no target: offering "point it
+  // at the shelf" with auto-recognition off promised a lock that never came.
+  const recognitionTarget = useStore((s) => s.assembly.recognition);
+  const autoRecognize = useStore((s) => s.arSettings.autoRecognize);
+  const target = autoRecognize ? recognitionTarget : undefined;
   const source = useStore((s) => s.arSource);
   const motion = useStore((s) => s.arMotion);
   const tracking = useStore((s) => s.arTracking);
@@ -39,7 +44,7 @@ export function PlacementHint(): JSX.Element | null {
     // too far away to read. Say what is being waited for instead.
     if (tracking && !tracking.ready) {
       return (
-        <div className="placement-hint">
+        <div className="placement-hint" role="status">
           <span className="dot" />
           Finding the floor — move the phone slowly across it
         </div>
@@ -57,7 +62,7 @@ export function PlacementHint(): JSX.Element | null {
     // shelf" there promises something that will not happen; say what will.
     if (target && source === 'webxr' && cameraImage === 'unavailable') {
       return (
-        <div className="placement-hint">
+        <div className="placement-hint" role="status">
           <span className="dot" />
           This AR view gives no camera image — tap to place it by hand
         </div>
@@ -66,7 +71,7 @@ export function PlacementHint(): JSX.Element | null {
 
     if (target && !blind && source === 'webxr' && tracking?.reason !== 'timeout') {
       return (
-        <div className="placement-hint recognizing">
+        <div className="placement-hint recognizing" role="status">
           <div className="hint-row">
             <span className="dot scan" />
             Point it at the {target.label} — hold it steady
@@ -76,9 +81,9 @@ export function PlacementHint(): JSX.Element | null {
       );
     }
 
-    const looking = target ? ' — or point it at the shelf' : '';
+    const looking = target ? ` — or point it at the ${target.label}` : '';
     return (
-      <div className={`placement-hint ${blind ? 'warn' : ''}`}>
+      <div role="status" className={`placement-hint ${blind ? 'warn' : ''}`}>
         <span className={`dot ${blind ? 'warn' : ''}`} />
         {blind
           ? 'No motion sensor — tap to place it straight ahead'
@@ -95,12 +100,12 @@ export function PlacementHint(): JSX.Element | null {
   // operator made by hand is exactly as good as their aim, and showing it as
   // "60%" read like a progress bar that had stalled. Say what to do instead.
   const placed = placement === 'recognized'
-    ? `Locked onto the ${target?.label ?? 'object'} · ${Math.round(quality * 100)}%`
-    : placement === 'marker' ? `Locked onto the marker · ${Math.round(quality * 100)}%`
+    ? `Locked onto the ${recognitionTarget?.label ?? 'object'} · ${qualityPct}%`
+    : placement === 'marker' ? `Locked onto the marker · ${qualityPct}%`
       : placement === 'floor' ? `Placed on the ${surface} — "Move" to reposition`
         : 'Registered manually';
   return (
-    <div className={`placement-hint placed ${blind ? 'warn' : ''}`}>
+    <div role="status" className={`placement-hint placed ${blind ? 'warn' : ''}`}>
       <span className={`dot ${blind ? 'warn' : 'ok'}`} />
       {placed}
       <span className="hint-mode">{blind ? 'no sensor' : source === 'webxr' ? 'WebXR' : 'Camera'}</span>

@@ -4,6 +4,7 @@ import { ASSEMBLIES } from '../data';
 import { useUiConfig } from '../ui/UiConfigContext';
 import { useScrollOverflow } from '../ui/useScrollOverflow';
 import { useStepPreview } from './useStepPreview';
+import { activateOnKey } from '../ui/keys';
 
 /** Left rail: the ordered build steps with live status, and the active card. */
 export function StepGuide(): JSX.Element {
@@ -60,7 +61,8 @@ export function StepGuide(): JSX.Element {
           )}
           <span className="rev">Rev {assembly.revision} · {assembly.parts.length} parts</span>
         </div>
-        <div className="progress-ring" role="progressbar" aria-valuenow={Math.round(sequence.progress * 100)} style={{ ["--p" as string]: Math.round(sequence.progress * 100) }}>
+        <div className="progress-ring" role="progressbar" aria-label="Assembly progress"
+          aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(sequence.progress * 100)} style={{ ["--p" as string]: Math.round(sequence.progress * 100) }}>
           {Math.round(sequence.progress * 100)}%
         </div>
       </header>
@@ -72,6 +74,10 @@ export function StepGuide(): JSX.Element {
               key={s.step.id}
               className={`step-row ${s.status} ${s.step.id === activeStepId ? 'selected' : ''}`}
               onClick={() => setActiveStep(s.step.id)}
+              // Reachable without a pointer, and saying which one is current.
+              tabIndex={0}
+              onKeyDown={(e) => activateOnKey(e, () => setActiveStep(s.step.id))}
+              aria-current={s.step.id === activeStepId ? 'step' : undefined}
             >
               <span className={`bullet ${s.status}`}>{i + 1}</span>
               <span className="step-title">{s.step.title}</span>
@@ -160,7 +166,7 @@ function PresenceList({ partIds }: { partIds: string[] }): JSX.Element | null {
   const shown = partIds.filter((id) => presence[id]);
   if (shown.length === 0) return null;
   return (
-    <ul className="presence" aria-label="What the camera sees">
+    <ul className="presence" aria-label="What the camera sees" aria-live="polite">
       {shown.map((id) => {
         const p = presence[id];
         const name = parts.find((part) => part.id === id)?.name ?? id;

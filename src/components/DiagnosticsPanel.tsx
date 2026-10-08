@@ -1,5 +1,6 @@
 import { useStore } from '../state/store';
 import type { Diagnostic } from '../engine/diagnostics';
+import { activateOnKey } from '../ui/keys';
 
 const ICON: Record<Diagnostic['severity'], string> = { error: '✕', warning: '!', info: 'i' };
 
@@ -44,8 +45,10 @@ export function DiagnosticsPanel(): JSX.Element {
               key={d.id}
               className={`diag ${d.severity} ${d.partIds.includes(selectedPartId ?? '') ? 'selected' : ''}`}
               onClick={() => selectPart(d.partIds[0])}
+              tabIndex={0}
+              onKeyDown={(e) => activateOnKey(e, () => selectPart(d.partIds[0]))}
             >
-              <span className={`sev ${d.severity}`}>{ICON[d.severity]}</span>
+              <span className={`sev ${d.severity}`} role="img" aria-label={d.severity}>{ICON[d.severity]}</span>
               <div className="diag-body">
                 <p className="diag-msg">{d.message}</p>
                 {d.detail && <p className="diag-detail">{d.detail}</p>}

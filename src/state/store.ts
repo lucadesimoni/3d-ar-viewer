@@ -161,6 +161,11 @@ export interface AppState {
    * Undefined outside a session.
    */
   xrCameraImage: XrCameraImage | undefined;
+  /**
+   * The 3D view's renderer is loaded on demand, after the page has painted.
+   * Until it is ready nothing can be placed in AR, so entry waits for it.
+   */
+  sceneStatus: 'loading' | 'ready' | 'failed';
   /** Snap a dropped part onto its mate when it is within capture range. */
   snapEnabled: boolean;
   /** Most recent successful snap, for transient UI feedback. */
@@ -202,6 +207,7 @@ export interface AppState {
   setRecognition(recognition: RecognitionState | undefined): void;
   setPartPresence(presence: Record<string, PartPresence>): void;
   setXrCameraImage(image: XrCameraImage | undefined): void;
+  setSceneStatus(status: 'loading' | 'ready' | 'failed'): void;
   setSnapEnabled(on: boolean): void;
   selectPart(id: string | undefined): void;
   setAnnotating(on: boolean): void;
@@ -303,6 +309,39 @@ function derive(state: {
   return { diagnostics, severityByPart: sev, sequence, placements };
 }
 
+/** Same on everything a reader sees: state and reasons, coverage to the percent. */
+export function samePresence(a: Record<string, PartPresence>, b: Record<string, PartPresence>): boolean {
+  const keys = Object.keys(b);
+  if (Object.keys(a).length !== keys.length) return false;
+  return keys.every((k) => {
+    const x = a[k];
+    const y = b[k];
+    if (!x || !y || x.state !== y.state || x.reasons.length !== y.reasons.length) return false;
+    if (!x.reasons.every((r, i) => r === y.reasons[i])) return false;
+    if ((x.coverage === undefined) !== (y.coverage === undefined)) return false;
+    return x.coverage === undefined || Math.abs(x.coverage - (y.coverage ?? 0)) < 0.01;
+  });
+}
+
+type LoggedAnchor = { pose: Pose | undefined; quality: number; placement: string | undefined };
+let lastLoggedAnchor: LoggedAnchor | undefined;
+
+/**
+ * Whether an anchor update says something the log does not already: a new
+ * placement kind, set vs cleared, a move of 2 cm or more, or quality that
+ * moved by a tenth.
+ */
+export function anchorWorthLogging(
+  last: LoggedAnchor | undefined, pose: Pose | undefined, quality: number, placement: string | undefined,
+): boolean {
+  if (!last || last.placement !== placement || !last.pose !== !pose) return true;
+  if (Math.abs(last.quality - quality) >= 0.1) return true;
+  if (!pose || !last.pose) return false;
+  const [x, y, z] = pose.position;
+  const [a, b, c] = last.pose.position;
+  return Math.hypot(x - a, y - b, z - c) >= 0.02;
+}
+
 export const useStore = create<AppState>((set, get) => {
   const assembly = gearbox;
   const placements = initialPlacements(assembly);
@@ -337,6 +376,7 @@ export const useStore = create<AppState>((set, get) => {
     recognition: undefined,
     partPresence: {},
     xrCameraImage: undefined,
+    sceneStatus: 'loading',
     snapEnabled: true,
     lastSnap: undefined,
     selectedPartId: undefined,
@@ -375,11 +415,18 @@ export const useStore = create<AppState>((set, get) => {
       // The one funnel every real placement goes through. A report of "it
       // drifted" that contains nothing about the placement it drifted from is
       // a report about nothing — the first device log had exactly that shape.
-      logEvent('place', pose ? 'anchor set' : 'anchor cleared', {
-        placement,
-        quality: Number(quality.toFixed(2)),
-        ...(pose ? { at: pose.position.map((v) => Number(v.toFixed(3))) } : {}),
-      });
+      //
+      // But tracking calls this on every frame it holds the object, and a log
+      // entry per frame filled the 500-entry log in seconds and pushed out
+      // everything worth reading. Log the placements that differ.
+      if (anchorWorthLogging(lastLoggedAnchor, pose, quality, placement)) {
+        lastLoggedAnchor = { pose, quality, placement };
+        logEvent('place', pose ? 'anchor set' : 'anchor cleared', {
+          placement,
+          quality: Number(quality.toFixed(2)),
+          ...(pose ? { at: pose.position.map((v) => Number(v.toFixed(3))) } : {}),
+        });
+      }
       set({
         anchor: pose,
         anchorQuality: quality,
@@ -435,10 +482,17 @@ export const useStore = create<AppState>((set, get) => {
       set({ recognition });
     },
     setPartPresence(partPresence) {
+      // A reading lands every few hundred ms and usually says what the last
+      // one did; a fresh object each time re-rendered the guide and re-ran the
+      // scene update for nothing.
+      if (samePresence(get().partPresence, partPresence)) return;
       set({ partPresence });
     },
     setXrCameraImage(xrCameraImage) {
       set({ xrCameraImage });
+    },
+    setSceneStatus(sceneStatus) {
+      set({ sceneStatus });
     },
     setSnapEnabled(on) {
       set({ snapEnabled: on });

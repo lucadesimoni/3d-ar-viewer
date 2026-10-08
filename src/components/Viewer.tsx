@@ -13,7 +13,8 @@ import { useStore } from '../state/store';
  */
 export function Viewer({ transparent = false }: { transparent?: boolean }): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { manager } = useSceneManager(canvasRef, { transparent, grid: !transparent });
+  const { manager, retry } = useSceneManager(canvasRef, { transparent, grid: !transparent });
+  const sceneStatus = useStore((s) => s.sceneStatus);
   const selectPart = useStore((s) => s.selectPart);
   // `transparent` is AR. There the overlay is a reference registered to a real
   // workpiece, and a tap means "put it here" — not "pick this part up". Leaving
@@ -72,5 +73,20 @@ export function Viewer({ transparent = false }: { transparent?: boolean }): JSX.
     };
   }, [manager, selectPart, interactive, canDrag]);
 
-  return <canvas ref={canvasRef} className="viewer-canvas" style={{ touchAction: 'none' }} />;
+  return (
+    <>
+      <canvas ref={canvasRef} className="viewer-canvas" style={{ touchAction: 'none' }} />
+      {/* The renderer arrives after the page has painted; say so rather
+          than showing an empty stage, and say so plainly if it never does. */}
+      {sceneStatus === 'loading' && (
+        <div className="viewer-status" role="status">Loading the 3D view…</div>
+      )}
+      {sceneStatus === 'failed' && (
+        <div className="viewer-status failed" role="alert">
+          <p>The 3D view could not load. Check the connection and try again.</p>
+          <button className="primary" onClick={retry}>Try again</button>
+        </div>
+      )}
+    </>
+  );
 }

@@ -71,6 +71,13 @@ export async function loadPartModel(
   } catch {
     return undefined;
   }
+  // The part may have gone while this downloaded — the assembly swapped, the
+  // scene rebuilt. Adding the model now would parent it to a disposed node
+  // and leave its meshes, materials and textures in the scene for good.
+  if (parent.isDisposed()) {
+    container.dispose();
+    return undefined;
+  }
   container.addAllToScene();
 
   const scale = opts.scale ?? 1;

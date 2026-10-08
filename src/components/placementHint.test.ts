@@ -44,3 +44,22 @@ describe('the placement hint in a WebXR session with a recognition target', () =
     expect(text).toMatch(/tap to place/);
   });
 });
+
+describe('the placement hint on the camera path', () => {
+  beforeEach(() => {
+    useStore.setState({ arSource: 'camera', arMotion: true, arPlacement: 'awaiting' });
+    useStore.getState().setArSettings({ autoRecognize: true });
+  });
+  afterEach(() => useStore.getState().setArSettings({ autoRecognize: true }));
+
+  it('offers recognition by the name of what it recognises', async () => {
+    expect(await hint(undefined)).toContain(`point it at the ${kallax4x2Assembly.recognition!.label}`);
+  });
+
+  it('does not offer it when recognition is switched off', async () => {
+    useStore.getState().setArSettings({ autoRecognize: false });
+    const text = await hint(undefined);
+    expect(text).toMatch(/Tap the .* to place/);
+    expect(text).not.toMatch(/point it at/i);
+  });
+});

@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles/app.css';
 import { trackVisibleHeight } from './ui/visibleHeight';
 import { useStore } from './state/store';
@@ -10,15 +11,32 @@ import { getActiveManager } from './render/babylon/managerRegistry';
 import { installEmbedBridge } from './embed/bridge';
 import { installErrorCapture, logEvent } from './diagnostics/log';
 
+// First, before anything below can throw: an error during start-up is exactly
+// the one a phone hides, and it is no use if capture begins after it.
+installErrorCapture();
+
 // Config for the standalone/iframe build comes from URL params, e.g.
 //   /?ui=minimal&embedded=1&accent=%23ff7a00
 const config = parseUiConfigFromParams(typeof window !== 'undefined' ? window.location.search : '');
 
 // `?assembly=kallax-4x4` opens straight into one sample — the phone is where
 // this gets tested, and typing a URL beats hunting through a picker in AR.
+// An exact id wins over a name that merely contains the text, so a link never
+// depends on the order of the sample list; a link to nothing says so rather
+// than quietly opening something else.
 const wanted = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('assembly');
-const chosen = wanted ? ASSEMBLIES.find((a) => a.id === wanted || a.name.toLowerCase().includes(wanted.toLowerCase())) : undefined;
-if (chosen) useStore.getState().loadAssembly(chosen);
+if (wanted) {
+  const w = wanted.toLowerCase();
+  const chosen = ASSEMBLIES.find((a) => a.id === wanted)
+    ?? ASSEMBLIES.find((a) => a.name.toLowerCase() === w)
+    ?? ASSEMBLIES.find((a) => a.name.toLowerCase().includes(w));
+  if (chosen) {
+    useStore.getState().loadAssembly(chosen);
+  } else {
+    logEvent('ar', 'unknown assembly in link', { wanted });
+    useStore.getState().setArError(`This link asks for “${wanted}”, which is not here — showing ${useStore.getState().assembly.name} instead.`);
+  }
+}
 
 // `?step=<id>` resumes where the operator was.
 //
@@ -31,10 +49,11 @@ const step = new URLSearchParams(typeof window !== 'undefined' ? window.location
 if (step) {
   const assembly = useStore.getState().assembly;
   if (assembly.steps.some((s) => s.id === step)) useStore.getState().setActiveStep(step);
+  else logEvent('ar', 'unknown step in link', { step, assembly: assembly.id });
 }
 
 const root = document.getElementById('root');
-if (root) createRoot(root).render(<StrictMode><App config={config} /></StrictMode>);
+if (root) createRoot(root).render(<StrictMode><ErrorBoundary><App config={config} /></ErrorBoundary></StrictMode>);
 
 // Expose the store and the live scene for demo/e2e driving (read-only handles).
 (window as unknown as { spatialStore?: typeof useStore }).spatialStore = useStore;
@@ -101,5 +120,4 @@ trackVisibleHeight();
 // nobody awaited, a script that failed to load. On a desktop those are one
 // keypress away in a console; on a phone they are invisible, and they are the
 // failures most worth having in the log.
-installErrorCapture();
 logEvent('ar', 'app started', { url: location.href });

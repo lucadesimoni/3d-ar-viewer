@@ -23,6 +23,7 @@ import { resolveUiConfig, type UiConfig } from './ui/config';
 import { useMediaQuery } from './ui/useMediaQuery';
 import { useStore } from './state/store';
 import type { PipelineConfig } from './vision/pipeline';
+import { safeColor } from './ui/safeColor';
 
 type Drawer = 'register' | 'collab' | 'bom' | 'log' | undefined;
 /** What the phone's bottom sheet is showing. */
@@ -50,6 +51,8 @@ function SheetTab({ id, current, onPick, label, icon, count }: {
     <button
       role="tab" aria-selected={active} className={active ? 'active' : ''}
       onClick={() => onPick(active ? null : id)}
+      // "Errors3" is what a screen reader made of the label and its badge.
+      aria-label={count ? `${label}, ${count}` : undefined}
     >
       <span className="sheet-tab-icon" aria-hidden="true">{icon}</span>
       {label}
@@ -70,6 +73,12 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
   const isMobile = useMediaQuery('(max-width: 1024px)');
   const errorCount = useStore((s) => s.diagnostics.filter((d) => d.severity === 'error').length);
   const arError = useStore((s) => s.arError);
+  // AR before the renderer exists has nothing to draw with: hold the button
+  // until it does, and say why rather than letting a tap quietly half-work.
+  const sceneLoading = useStore((s) => s.sceneStatus === 'loading');
+  const arEntryProps = sceneLoading
+    ? { disabled: true, 'aria-busy': true, title: 'Loading the 3D view…' }
+    : {};
   const [sheet, setSheet] = useState<Sheet>('steps');
   const [notesOpen, setNotesOpen] = useState(true);
   const mobileSheet = arActive ? null : sheet;
@@ -93,7 +102,8 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
     isMobile && mobileSheet === null ? 'sheet-collapsed' : '',
   ].filter(Boolean).join(' ');
 
-  const accentStyle = ui.accent ? ({ ['--accent' as string]: ui.accent, ['--accent-2' as string]: ui.accent }) : undefined;
+  const accent = safeColor(ui.accent);
+  const accentStyle = accent ? ({ ['--accent' as string]: accent, ['--accent-2' as string]: accent }) : undefined;
 
   return (
     <UiConfigProvider value={ui}>
@@ -170,7 +180,7 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
               )}
               {/* Minimal/viewer layouts still expose AR entry when the header is hidden. */}
               {!ui.showHeader && !isMobile && !arActive && (
-                <button className="ar-enter floating" onClick={enterAr}>Enter AR</button>
+                <button className="ar-enter floating" onClick={enterAr} {...arEntryProps}>Enter AR</button>
               )}
             </div>
           </main>
@@ -217,7 +227,7 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
                 <SheetTab id="more" current={mobileSheet} onPick={setSheet} label="More" icon="⋯" />
               )}
               {/* Always last, always there: the way into AR on a phone. */}
-              <button className="ar-enter sheet-ar" onClick={enterAr}>
+              <button className="ar-enter sheet-ar" onClick={enterAr} {...arEntryProps}>
                 <span aria-hidden="true">◉</span> Enter AR
               </button>
             </nav>

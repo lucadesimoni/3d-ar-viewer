@@ -318,6 +318,55 @@ const context = await browser.newContext({
   await page.close();
 }
 
+// --- 3b'. An error shown during AR can be read and dismissed. --------------
+// The full-screen AR layer used to paint over the banner, so its ✕ was under
+// the canvas and a tap there placed the model instead of closing the message.
+{
+  const page = await context.newPage();
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  await page.locator('.ar-enter').click();
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => window.spatialStore.getState().setArError('Test: something went wrong'));
+  await page.waitForSelector('.ar-error', { timeout: 5000 }).catch(() => null);
+  const hit = await page.evaluate(() => {
+    const close = document.querySelector('.ar-error button');
+    if (!close) return 'no banner';
+    const r = close.getBoundingClientRect();
+    const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return top === close || close.contains(top) ? 'button' : (top?.className || top?.tagName || 'nothing');
+  });
+  check('in AR an error banner is on top, and its close button takes the tap', hit === 'button', hit);
+  if (hit === 'button') await page.locator('.ar-error button').click();
+  check('and closing it closes it', await page.locator('.ar-error').count() === 0);
+  await page.close();
+}
+
+// --- 3b''. The AR control bar fits the narrowest phones. -------------------
+// Six buttons share the width; with the base button padding "Settings" spilled
+// over its own edges on a 390px phone, and at 320px every label did.
+{
+  const page = await context.newPage();
+  await open(page, `${URL}?assembly=kallax-4x4`);
+  await page.locator('.ar-enter').click();
+  await page.waitForSelector('.ar-bar', { timeout: 10000 }).catch(() => null);
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 700 });
+    await page.waitForTimeout(300);
+    const spill = await page.evaluate(() => [...document.querySelectorAll('.ar-bar .ar-btn')].map((b) => {
+      const r = b.getBoundingClientRect();
+      return { name: b.getAttribute('aria-label') || b.textContent.trim(), over: b.scrollWidth - b.clientWidth,
+        out: r.right > window.innerWidth + 0.5 || r.left < -0.5 };
+    }));
+    const bad = spill.filter((b) => b.over > 1 || b.out);
+    check(`at ${width}px every AR control fits inside its button and on screen`, spill.length >= 5 && bad.length === 0,
+      bad.length ? bad.map((b) => `${b.name} +${b.over}px${b.out ? ' off-screen' : ''}`).join(', ') : `${spill.length} buttons`);
+  }
+  // Pinch-zoom is the operator's to use (WCAG 1.4.4): no capped scale.
+  const meta = await page.evaluate(() => document.querySelector('meta[name="viewport"]')?.content ?? '');
+  check('the page can be zoomed', !/maximum-scale\s*=\s*1(\.0)?\b|user-scalable\s*=\s*(no|0)/.test(meta), meta);
+  await page.close();
+}
+
 // --- 3c. Placement is a mode, not a permanent state. ----------------------
 {
   const page = await context.newPage();

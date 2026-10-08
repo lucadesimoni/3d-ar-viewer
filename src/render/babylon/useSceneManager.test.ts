@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSceneManager } from './useSceneManager';
 import { useStore } from '../../state/store';
 import { gearbox } from '../../data';
+import { logEntries } from '../../diagnostics/log';
 
 const createManager = vi.hoisted(() => vi.fn());
 vi.mock('./SceneManager', () => ({ SceneManager: { create: createManager } }));
@@ -51,5 +52,35 @@ describe('external assembly scene refresh', () => {
     await act(async () => useStore.getState().loadAssembly(revision));
     await act(async () => finish(m));
     expect(m.loadAssembly).toHaveBeenCalledExactlyOnceWith(revision);
+  });
+});
+
+describe('the 3D view says when it is loading, and when it could not load', () => {
+  let retry: () => void = () => undefined;
+  function RetryHarness() {
+    const ref = useRef<HTMLCanvasElement>(null);
+    retry = useSceneManager(ref).retry;
+    return createElement('canvas', { ref });
+  }
+
+  it('is loading until the renderer exists, then ready', async () => {
+    const m = manager();
+    let finish!: (value: typeof m) => void;
+    createManager.mockReturnValue(new Promise<typeof m>((resolve) => { finish = resolve; }));
+    await act(async () => root.render(createElement(Harness)));
+    expect(useStore.getState().sceneStatus).toBe('loading');
+    await act(async () => finish(m));
+    expect(useStore.getState().sceneStatus).toBe('ready');
+  });
+
+  it('a renderer that fails to load is reported, logged, and can be retried', async () => {
+    createManager.mockRejectedValueOnce(new Error('no WebGL'));
+    await act(async () => root.render(createElement(RetryHarness)));
+    expect(useStore.getState().sceneStatus).toBe('failed');
+    expect(logEntries().some((e) => e.kind === 'error' && e.message === '3D view failed to load')).toBe(true);
+
+    createManager.mockResolvedValueOnce(manager());
+    await act(async () => retry());
+    expect(useStore.getState().sceneStatus).toBe('ready');
   });
 });

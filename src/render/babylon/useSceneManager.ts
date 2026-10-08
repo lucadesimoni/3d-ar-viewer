@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SceneManager, SceneRenderState } from './SceneManager';
 import { setActiveManager } from './managerRegistry';
+import { logEvent } from '../../diagnostics/log';
 import type { RecognitionStatus } from '../../vision/verdict';
 import { useStore } from '../../state/store';
 import type { AssemblyDef } from '../../engine/types';
@@ -16,10 +17,16 @@ import type { AssemblyDef } from '../../engine/types';
 export function useSceneManager(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   opts: { transparent?: boolean; grid?: boolean } = {},
-): { manager: SceneManager | undefined } {
+): { manager: SceneManager | undefined; retry: () => void } {
   const [manager, setManager] = useState<SceneManager>();
+  // Bumped by `retry` to run the creation effect again after a failed load.
+  const [attempt, setAttempt] = useState(0);
   const managerRef = useRef<SceneManager | undefined>(undefined);
   const loadedAssembly = useRef<AssemblyDef | undefined>(undefined);
+  // A chunk that failed to load stays failed for the life of the page: the
+  // browser remembers the failed import and never asks the network again. So
+  // a retry after that is a reload; a retry after the engine failed is not.
+  const reloadToRetry = useRef(false);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -35,8 +42,12 @@ export function useSceneManager(
     // of it had to be parsed before React could paint the step list the
     // operator reads first. The canvas fills in a moment later instead.
     const canvas = canvasRef.current;
-    void import('./SceneManager').then(({ SceneManager }) =>
-      SceneManager.create(canvas, assembly, { transparent: opts.transparent })).then((m) => {
+    useStore.getState().setSceneStatus('loading');
+    let imported = false;
+    void import('./SceneManager').then(({ SceneManager }) => {
+      imported = true;
+      return SceneManager.create(canvas, assembly, { transparent: opts.transparent });
+    }).then((m) => {
       if (disposed) { m.dispose(); return; }
       if (opts.grid) m.addGroundGrid();
       m.frameCamera();
@@ -44,11 +55,23 @@ export function useSceneManager(
       managerRef.current = m;
       setActiveManager(m);
       setManager(m);
+      useStore.getState().setSceneStatus('ready');
       const loop = (): void => {
         m.tick();
         raf = requestAnimationFrame(loop);
       };
       raf = requestAnimationFrame(loop);
+    }).catch((error: unknown) => {
+      // The renderer chunk did not arrive (a first visit offline, a deploy
+      // that replaced it) or the device has no WebGL. Without this the canvas
+      // stayed blank for good and nothing said why.
+      if (disposed) return;
+      reloadToRetry.current = !imported;
+      logEvent('error', '3D view failed to load', {
+        error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+        stage: imported ? 'engine' : 'download',
+      });
+      useStore.getState().setSceneStatus('failed');
     });
 
     return () => {
@@ -59,7 +82,7 @@ export function useSceneManager(
       managerRef.current = undefined as SceneManager | undefined;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canvasRef]);
+  }, [canvasRef, attempt]);
 
   // The scene is built once, so AR toggling must be applied to the live manager
   // rather than rebuilt — otherwise the canvas stays opaque over the camera.
@@ -111,5 +134,9 @@ export function useSceneManager(
     return useStore.subscribe(push);
   }, [manager]);
 
-  return { manager };
+  const retry = (): void => {
+    if (reloadToRetry.current) window.location.reload();
+    else setAttempt((n) => n + 1);
+  };
+  return { manager, retry };
 }

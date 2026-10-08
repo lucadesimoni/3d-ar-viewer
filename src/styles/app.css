@@ -184,6 +184,17 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
   position: relative;
 }
 .ar-btn-icon { font-size: 17px; line-height: 1; }
+/* Six buttons share a phone's width: the base button's 14px side padding left
+   "Settings" 20px to sit in on a 390px screen, and it spilled over its edges. */
+.ar-btn { padding: 6px 2px; }
+@media (max-width: 359px) {
+  /* Under 360px the labels cannot fit at all; the icons carry it, and each
+     button keeps its name for assistive tech (font-size, not display). */
+  .ar-bar { gap: 4px; padding: 6px; }
+  .ar-btn { font-size: 0; }
+  .ar-btn .ar-btn-icon { font-size: 19px; }
+  .ar-btn .ar-count { right: 0; }
+}
 .ar-btn.active { background: rgba(34, 211, 238, 0.2); color: var(--accent); }
 .ar-btn.alert { color: var(--error); }
 .ar-btn.danger { color: #ffb4b4; }
@@ -1003,3 +1014,32 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 .app.ar .note-compose, .app.ar .note-hint {
   bottom: calc(env(safe-area-inset-bottom) + 150px);
 }
+
+/* The error boundary's fallback: plain, centred, readable on any screen. */
+.app-failed {
+  min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 24px; text-align: center; color: var(--text); background: var(--bg, #0b0f14);
+}
+.app-failed h2 { margin: 0; font-size: 20px; }
+.app-failed p { margin: 0; max-width: 32ch; color: var(--muted); }
+
+/* The renderer arrives after first paint: say so over the empty stage. */
+.viewer-status {
+  position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 24px; text-align: center; color: var(--muted); font-size: 14px; pointer-events: none;
+}
+.viewer-status.failed { color: var(--text); background: color-mix(in srgb, var(--bg, #0b0f14) 80%, transparent); pointer-events: auto; }
+.viewer-status p { margin: 0; max-width: 32ch; }
+.ar-enter[aria-busy="true"] { cursor: progress; }
+/* In AR the viewport is a fixed full-screen layer; a banner left in the flow
+   was drawn under it, and a tap meant for its ✕ placed the model instead. */
+.app.ar .ar-error { z-index: 7; margin-top: max(8px, env(safe-area-inset-top)); }
+/* Rows that act like buttons show where the keyboard is. */
+.step-row:focus-visible, .diag:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Pinch-zoom is allowed (a capped scale shut out anyone who needs to enlarge
+   text). Below 16px iOS zooms into a field on focus and stays there, so text
+   fields on touch screens are at least that. */
+@media (pointer: coarse) {
+  input:not([type="range"]):not([type="checkbox"]), textarea, select { font-size: max(16px, 1em); }
+}
+.badge.idle { border-style: dashed; }

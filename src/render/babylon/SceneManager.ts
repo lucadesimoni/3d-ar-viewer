@@ -57,6 +57,7 @@ import { readCameraFrame } from './cameraFrame';
 import type { BaseTexture as XrCameraTexture } from '@babylonjs/core/Materials/Textures/baseTexture';
 import { meshHalfExtents } from '../../engine/collision';
 import type { TrackingState } from '../../engine/tracking/settle';
+import { prefersReducedMotion } from '../../ui/motion';
 import {
   DIAGNOSTIC_COLORS,
   applyPose,
@@ -1750,8 +1751,15 @@ export class SceneManager {
 
   /** Re-point the whole scene at a new assembly. */
   loadAssembly(assembly: AssemblyDef): void {
-    for (const v of this.parts.values()) v.root.dispose(false, true);
-    for (const { mesh } of this.background) mesh.dispose();
+    // Each part owns two materials and wears one at a time; disposing the
+    // node only frees the one it is wearing, so the other leaked on every
+    // swap. Background meshes kept all of theirs.
+    for (const v of this.parts.values()) {
+      v.root.dispose(false, true);
+      v.solidMat.dispose();
+      v.overlayMat.dispose();
+    }
+    for (const { mesh } of this.background) mesh.dispose(false, true);
     this.parts.clear();
     this.background = [];
     this.assembly = assembly;
@@ -1823,6 +1831,10 @@ export class SceneManager {
   update(state: SceneRenderState): void {
     this.state = state;
     const animated = state.timeline ? sampleTimeline(state.timeline, state.timelineT ?? 0) : undefined;
+    // Once per update, not once per part: each measures the whole assembly
+    // (every mesh's world matrix), and this runs on every store change and,
+    // while anything pulses, every frame.
+    const outlineScale = this.outlineScale();
 
     for (const part of this.assembly.parts) {
       const visual = this.parts.get(part.id);
@@ -1830,8 +1842,10 @@ export class SceneManager {
       const placement = state.placements.get(part.id);
       const pose = this.resolvePose(part, placement, state, animated?.get(part.id));
       applyPose(visual.root, pose);
-      this.styleVisual(part.id, visual, placement, state);
+      this.styleVisual(part.id, visual, placement, state, outlineScale);
     }
+    this.applyBackgroundVisibility(state.showBackground);
+    this.updateGroundContact();
   }
 
   /** Where a part should be drawn, given animation, explode, and placement. */
@@ -1852,6 +1866,7 @@ export class SceneManager {
     visual: PartVisual,
     placement: PlacementState | undefined,
     state: SceneRenderState,
+    outlineScale: number,
   ): void {
     const status = placement?.status ?? 'ghost';
     const severity = state.severityByPart.get(partId);
@@ -1913,7 +1928,7 @@ export class SceneManager {
       m.renderOutline = wantOutline;
       if (wantOutline) {
         m.outlineColor = Color3.FromHexString(outlineHex);
-        m.outlineWidth = (reco ? 0.008 : this.arMode ? 0.006 : 0.004) * this.outlineScale();
+        m.outlineWidth = (reco ? 0.008 : this.arMode ? 0.006 : 0.004) * outlineScale;
       }
     }
     visual.outline = wantOutline;
@@ -1921,15 +1936,14 @@ export class SceneManager {
     // against real parts in millimetres, so scaling it would falsify the size.
     // Pulse the outline width instead and keep the part exactly 1:1.
     const pulsing = reco !== undefined || severity === 'error';
-    const pulse = pulsing ? pulseScale(performance.now() - this.startMs) : 1;
+    // A steady outline still says "look here"; the pulse is for those who
+    // have not asked their device to keep still.
+    const pulse = pulsing && !prefersReducedMotion() ? pulseScale(performance.now() - this.startMs) : 1;
     if (wantOutline) {
-      const base = (reco ? 0.008 : this.arMode ? 0.006 : 0.004) * this.outlineScale();
+      const base = (reco ? 0.008 : this.arMode ? 0.006 : 0.004) * outlineScale;
       for (const m of outlineTargets) m.outlineWidth = base * pulse;
     }
     visual.root.scaling.setAll(1);
-
-    this.applyBackgroundVisibility(state.showBackground);
-    this.updateGroundContact();
   }
 
   private tintOverlay(visual: PartVisual, hex: string, alpha: number): void {
@@ -1944,9 +1958,17 @@ export class SceneManager {
     mat.alpha = alpha;
   }
 
-  /** Advance time-based effects (pulse, animation scrub) without a store change. */
+  /**
+   * Advance what changes with time alone — the attention pulse — without a
+   * store change.
+   *
+   * Not the timeline: its position is the store's `animationT`, and every
+   * change of it already arrives through `update`. Re-running the update
+   * here for it did every animated frame twice, and in Animate mode, where a
+   * timeline is always present, redid a paused scene sixty times a second.
+   */
   tick(): void {
-    if (this.state && (this.state.timeline || this.hasError() || (this.state.recognitionByPart?.size ?? 0) > 0)) this.update(this.state);
+    if (this.state && (this.hasError() || (this.state.recognitionByPart?.size ?? 0) > 0)) this.update(this.state);
   }
 
   private hasError(): boolean {

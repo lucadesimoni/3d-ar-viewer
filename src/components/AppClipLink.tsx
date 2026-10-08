@@ -13,11 +13,23 @@ export function appClipHref(base: string, target: string): string {
   return `${base}?url=${encodeURIComponent(target)}`;
 }
 
-/** `?appclip=` overrides the host; `?appclip=off` disables the offer entirely. */
+/**
+ * `?appclip=` overrides the host; `?appclip=off` disables the offer entirely.
+ *
+ * The link hands this page's address to whatever host it names, so an override
+ * is only taken when it is an https URL. Anything else — another scheme, a
+ * typo, an address a link was crafted to send operators to over plain http —
+ * falls back to the default rather than being followed.
+ */
 export function appClipBase(search: string): string | undefined {
   const override = new URLSearchParams(search).get('appclip');
   if (override === 'off') return undefined;
-  return override || DEFAULT_APP_CLIP;
+  if (!override) return DEFAULT_APP_CLIP;
+  try {
+    return new URL(override).protocol === 'https:' ? override : DEFAULT_APP_CLIP;
+  } catch {
+    return DEFAULT_APP_CLIP;
+  }
 }
 
 /**

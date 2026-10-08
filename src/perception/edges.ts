@@ -70,7 +70,9 @@ export function edgeField(image: ImageData, workingSize = 240, k = 1): EdgeField
       const i = y * w + x;
       const gx = g[i + 1] - g[i - 1];
       const gy = g[i + w] - g[i - w];
-      const m = Math.hypot(gx, gy);
+      // Not Math.hypot: its overflow guard costs several times a square root,
+      // 43k times a frame, for differences of bytes that cannot overflow.
+      const m = Math.sqrt(gx * gx + gy * gy);
       magnitude[i] = m;
       sum += m;
       n++;

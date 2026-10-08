@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { applyPerfOverrides, classifyTier, profileForTier, type DeviceSignals } from './perf';
 
 const sig = (o: Partial<DeviceSignals>): DeviceSignals => ({
@@ -106,5 +106,26 @@ describe('render resolution (sharpness)', () => {
     // A high-tier device must not be capped below a typical retina ratio.
     expect(profileForTier('high').maxPixelRatio).toBeGreaterThanOrEqual(2);
     expect(profileForTier('mid').maxPixelRatio).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('asking the GPU about itself', () => {
+  it('opens one WebGL context per page, and hands it straight back', async () => {
+    vi.resetModules();
+    const loseContext = vi.fn();
+    const gl = {
+      MAX_TEXTURE_SIZE: 0x0d33,
+      getParameter: () => 4096,
+      getExtension: (name: string) => (name === 'WEBGL_lose_context' ? { loseContext } : null),
+    };
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(gl as never);
+    const fresh = await import('./perf');
+    fresh.readDeviceSignals();
+    fresh.detectGpu();
+    fresh.readDeviceSignals();
+    expect(getContext).toHaveBeenCalledTimes(1);
+    expect(loseContext).toHaveBeenCalledTimes(1);
+    expect(fresh.readDeviceSignals().maxTextureSize).toBe(4096);
+    getContext.mockRestore();
   });
 });

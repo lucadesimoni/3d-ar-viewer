@@ -193,6 +193,27 @@ check('and no label runs off the right edge',
   tags.every((t) => t.labelRight <= t.viewportWidth + 1),
   `widest right edge ${Math.round(Math.max(...tags.map((t) => t.labelRight)))} of ${tags[0]?.viewportWidth}`);
 
+// --- Without a pointer. -----------------------------------------------------
+// The step rows were clickable list items and nothing else: no focus, no key,
+// no way to say which one is current. Tab to a row, press Enter, and the step
+// changes — and the current row says so.
+{
+  const kb = await browser.newPage({ viewport: { width: 1100, height: 800 } });
+  await kb.goto(`${URL_BASE}?assembly=kallax-4x4`, { waitUntil: 'networkidle' });
+  await kb.waitForSelector('.step-row');
+  const rows = kb.locator('.step-row');
+  const target = await kb.evaluate(() => window.spatialStore.getState().assembly.steps[2].id);
+  await rows.nth(2).focus();
+  const focused = await kb.evaluate(() => document.activeElement?.classList.contains('step-row') ?? false);
+  await kb.keyboard.press('Enter');
+  const after = await kb.evaluate(() => window.spatialStore.getState().activeStepId);
+  check('a step row takes keyboard focus, and Enter opens that step', focused && after === target,
+    `focused=${focused}, active=${after}`);
+  const current = await kb.evaluate(() => [...document.querySelectorAll('.step-row[aria-current="step"]')].length);
+  check('and exactly one row is marked as the current step', current === 1, `${current} marked`);
+  await kb.close();
+}
+
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nall step checks passed');
 process.exit(failures.length ? 1 : 0);

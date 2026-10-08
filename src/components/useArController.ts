@@ -184,6 +184,8 @@ export function useArController(
     pipelineRef.current = pipeline;
     void pipeline.init().then((status) => {
       if (alive) setPipelineStatus(status);
+    }).catch((error) => {
+      if (alive) setPipelineStatus({ ...pipeline.status(), errors: { ...pipeline.status().errors, config: String(error) } });
     });
     return () => {
       alive = false;
@@ -221,6 +223,10 @@ export function useArController(
           });
         });
       }
+    }).catch((error) => {
+      if (!alive) return;
+      logEvent('error', 'capability check failed', { error: String(error) });
+      useStore.getState().setArError('Could not check what this device supports for AR. Reload the page to try again.');
     });
     return () => { alive = false; cancelPrepare?.(); };
   }, [setArMode]);
@@ -510,7 +516,11 @@ export function useArController(
       // view. That is a once-a-second job, and every frame in a session costs
       // a multi-megabyte readback — so it runs on the slow interval there.
       const frameIntervalMs = inXr ? perf.recognitionIntervalMs : trackIntervalMs;
-      const anchorDue = objectAnchor.current !== undefined && now - lastTrack >= frameIntervalMs;
+      // And only when something will use the frame. Until the object is
+      // locked the tracker looks at one frame per detection interval and
+      // drops the rest — and each of those was a full video copy first.
+      const anchorDue = objectAnchor.current !== undefined && now - lastTrack >= frameIntervalMs
+        && (objectAnchor.current.wantsFrame(now) || now - lastPresence >= perf.recognitionIntervalMs);
       // No part-recognition model, no part recognition. Nothing is bundled and
       // nothing is fine-tuned on these parts, so unless a deployment supplies
       // VITE_DETECTOR_MODEL_URL there is no detector — and running the frame

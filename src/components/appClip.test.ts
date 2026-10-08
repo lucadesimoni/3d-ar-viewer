@@ -27,4 +27,11 @@ describe('the iOS App Clip link', () => {
     // Sending operators to a third party is a deployment's decision to refuse.
     expect(appClipBase('?appclip=off')).toBeUndefined();
   });
+
+  it('only follows an override that is an https address', () => {
+    // The link carries this page's URL to whatever host it names.
+    for (const bad of ['http://plain.example/clip', 'data:text/html,hi', 'javascript:alert(1)', 'not a url']) {
+      expect(appClipBase(`?appclip=${encodeURIComponent(bad)}`), bad).toBe(appClipBase(''));
+    }
+  });
 });

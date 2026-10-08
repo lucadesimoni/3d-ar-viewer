@@ -17,13 +17,22 @@ import { useUiConfig } from '../ui/UiConfigContext';
  * unrecognised is left to the verdict banner alone.
  */
 
-interface Tag {
+export interface Tag {
   id: number;
   label: string;
   status: keyof typeof STATUS_COLORS;
   score: number;
   x: number;
   y: number;
+}
+
+/** Same tags at the same whole pixel — nothing a reader could see differs. */
+export function sameTags(a: Tag[], b: Tag[]): boolean {
+  return a.length === b.length && a.every((t, i) => {
+    const u = b[i];
+    return t.id === u.id && t.label === u.label && t.status === u.status && t.score === u.score
+      && Math.round(t.x) === Math.round(u.x) && Math.round(t.y) === Math.round(u.y);
+  });
 }
 
 export function RecognitionOverlay(): JSX.Element | null {
@@ -53,7 +62,9 @@ export function RecognitionOverlay(): JSX.Element | null {
           next.push({ id: o.id, label: o.name ?? o.label, status: o.status, score: o.score, x: p.x, y: p.y });
         }
       }
-      setTags(next);
+      // Only when something moved: a fresh array every frame re-rendered the
+      // overlay at 60 Hz while the camera and the parts stood still.
+      setTags((prev) => (sameTags(prev, next) ? prev : next));
       rafRef.current = requestAnimationFrame(onFrame);
     };
     rafRef.current = requestAnimationFrame(onFrame);
@@ -97,7 +108,7 @@ export function VerdictBanner(): JSX.Element | null {
   else text = `Looking for ${expectedNames}…`;
 
   return (
-    <div className="recognition-banner" style={{ borderColor: color, color }}>
+    <div className="recognition-banner" role="status" style={{ borderColor: color, color }}>
       <span className="reco-dot" style={{ background: color }} />
       <span className="reco-text">{text}</span>
     </div>

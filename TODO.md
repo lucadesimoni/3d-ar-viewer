@@ -130,16 +130,14 @@ error · **unverified** = correct as far as it can be tested here · **chore**.
 
 ## Engineering chores
 
-- **chore — the entry bundle is 1.6 MB** (425 kB gzipped). Splitting Babylon out
-  was measured and rejected — it pulls the lazily-loaded shaders into one eager
-  chunk and makes first paint worse. Lazy-loading the whole renderer behind the
-  shell is the version that would actually help. `vite.config.ts`
 - **chore — `autoPlaceActiveStep` and `placeActiveStepFromStandoff` overlap.**
   The first teleports parts to nominal (used by the screenshot script), the
   second brings them in through the snap solver (used by the UI). One of them
   should go. `src/state/store.ts`
-- **chore — no accessibility pass.** Focus rings and roles are in place; nothing
-  has been through a screen reader.
+- **chore — no screen-reader pass.** Step and diagnostic rows work from the
+  keyboard, AR guidance is announced through live regions, HUD icons are
+  hidden from assistive tech and counts are spoken ("Errors, 3"), and the page
+  can be zoomed. None of it has been through VoiceOver or TalkBack yet.
 - **chore — `/healthz` exists only on the bundled server**, not on a static
   host, so uptime monitoring of the Vercel deployment has to hit `/`.
 
