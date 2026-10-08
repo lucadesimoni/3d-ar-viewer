@@ -26,9 +26,11 @@
     "a tap places it and disarms placement",
     "a tap places the assembly on the floor",
     "a tap still places the assembly",
+    "a three-finger tap anywhere opens the log, AR or not",
     "an AR camera is the one rendering",
     "an Android phone is not sent on a detour",
     "an iPhone is offered a route to real AR tracking",
+    "and \"Exit AR\" there leaves AR",
     "and AR can be entered again afterwards",
     "and a deployment can switch the offer off",
     "and a nonsense step is ignored rather than obeyed",
@@ -47,6 +49,7 @@
     "and it is a region, not the whole picture",
     "and it is one button, not a hidden duplicate",
     "and it is reported in words, not left to be inferred",
+    "and it opens the log, with a way out of AR",
     "and it paints, above the sheet, one metre ahead whatever else is wrong",
     "and it reads the same size near and far",
     "and it remembers across closing the sheet",
@@ -86,6 +89,7 @@
     "frames are being drawn to measure against",
     "in AR an error banner is on top, and its close button takes the tap",
     "in a session the render canvas stops painting over the camera",
+    "in an ordinary AR session no rescue button gets in the way",
     "in camera passthrough the page paints both its own surfaces",
     "it stands on the floor, not at eye level",
     "locks onto a moving shelf",
@@ -152,7 +156,8 @@
     "turning left slides the assembly right, not left",
     "what was just placed is in view",
     "with \"ask each time\" off it opens where you left it",
-    "with the camera still live, not handed back"
+    "with the camera still live, not handed back",
+    "with the controls pushed off screen, a way to the log appears at the top"
   ],
   "steps-check": [
     "Cube shelf 4x4 (KALLAX): \"Show me\" animates the step's own parts",

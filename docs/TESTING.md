@@ -163,6 +163,10 @@ device. These need a person and a phone, and there is no honest way around it:
       report from inside the clip: `read-report.mjs` should say "iOS web view";
       its `camera` line answers whether the clip gives the page a camera image
       (`xr-raw`) or not (`xr-blind`, which rules out recognition there).
+      If the AR controls are missing there, the log is still reachable:
+      a "Controls missing — log · exit" button appears at the top; a
+      three-finger tap anywhere opens the log; and the session's log is kept
+      on the device and offered the next time the app opens.
 - [ ] **Sleep** — the screen stays on during a session (wake lock).
 
 Report anything that fails with a screenshot: every fix in this repo's history

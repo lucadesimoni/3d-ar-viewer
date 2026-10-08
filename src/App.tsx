@@ -17,6 +17,7 @@ import { StepAnnotations } from './components/StepAnnotations';
 import { Annotations } from './components/Annotations';
 import { ArHud } from './components/ArHud';
 import { DiagnosticsExport } from './components/DiagnosticsExport';
+import { LogRescue } from './components/LogRescue';
 import { MobileSheet } from './components/MobileSheet';
 import { UiConfigProvider } from './ui/UiConfigContext';
 import { resolveUiConfig, type UiConfig } from './ui/config';
@@ -241,6 +242,8 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
             capabilities={capabilities} pipeline={pipelineStatus}
           />}
 
+        {/* The log, reachable when the controls are not: see LogRescue. */}
+        <LogRescue arActive={arActive} onExitAr={enterAr} capabilities={capabilities} />
       </div>
     </UiConfigProvider>
   );
