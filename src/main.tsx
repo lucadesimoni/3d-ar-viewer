@@ -9,7 +9,7 @@ import { parseUiConfigFromParams } from './ui/config';
 import { ASSEMBLIES } from './data';
 import { getActiveManager } from './render/babylon/managerRegistry';
 import { installEmbedBridge } from './embed/bridge';
-import { installErrorCapture, logEvent } from './diagnostics/log';
+import { installErrorCapture, logEntries, logEvent } from './diagnostics/log';
 
 // First, before anything below can throw: an error during start-up is exactly
 // the one a phone hides, and it is no use if capture begins after it.
@@ -58,6 +58,8 @@ if (root) createRoot(root).render(<StrictMode><ErrorBoundary><App config={config
 // Expose the store and the live scene for demo/e2e driving (read-only handles).
 (window as unknown as { spatialStore?: typeof useStore }).spatialStore = useStore;
 (window as unknown as { spatialScene?: typeof getActiveManager }).spatialScene = getActiveManager;
+// And the session log, so a failing check can say what the app was doing.
+(window as unknown as { spatialLog?: typeof logEntries }).spatialLog = logEntries;
 
 const parentOrigin = new URLSearchParams(window.location.search).get('parentOrigin');
 if (parentOrigin && window.parent !== window) {
