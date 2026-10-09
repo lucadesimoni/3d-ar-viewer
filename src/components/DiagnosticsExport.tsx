@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getActiveManager } from '../render/babylon/managerRegistry';
 import { buildReport, capturedFrames } from '../diagnostics/report';
 import { copyReport, exportReport } from '../diagnostics/export';
@@ -25,6 +25,13 @@ export function DiagnosticsExport({ capabilities, inAr }: {
 }): JSX.Element {
   const [saved, setSaved] = useState<string | undefined>();
   const [text, setText] = useState<string | undefined>();
+  // The answer to a button lands below it, and in the AR sheet — a scroller
+  // under half the screen high — that is below the fold: a device screenshot
+  // showed the first line of it cut off at the sheet's edge. Bring it in.
+  const status = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (saved) status.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [saved]);
 
   return (
     <>
@@ -73,7 +80,7 @@ export function DiagnosticsExport({ capabilities, inAr }: {
           >Attach a camera frame</button>
         )}
       </div>
-      {saved && <p className="ar-set-help" role="status">{saved}</p>}
+      {saved && <p ref={status} className="ar-set-help" role="status">{saved}</p>}
       {/* The last resort, and the reason there is one: a host that will neither
           save a file nor write the clipboard can still show the text. */}
       {text && (
