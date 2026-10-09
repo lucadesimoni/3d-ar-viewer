@@ -168,6 +168,10 @@
     "Modular Equipment Rack (14-bay): and it demonstrates without changing the build",
     "Modular Equipment Rack (14-bay): every on-part label belongs to its step",
     "Modular Equipment Rack (14-bay): steps are labelled at all",
+    "Twin-Spool Turbofan: \"Show me\" animates the step's own parts",
+    "Twin-Spool Turbofan: and it demonstrates without changing the build",
+    "Twin-Spool Turbofan: every on-part label belongs to its step",
+    "Twin-Spool Turbofan: steps are labelled at all",
     "Two-Stage Bench Gearbox: \"Show me\" animates the step's own parts",
     "Two-Stage Bench Gearbox: and it demonstrates without changing the build",
     "Two-Stage Bench Gearbox: every on-part label belongs to its step",
@@ -182,6 +186,12 @@
     "there are tags to measure"
   ],
   "layout-check": [
+    "375x667, equipment-rack: and the step's title is on screen with them",
+    "375x667, equipment-rack: every step action is whole and takes the tap, unscrolled",
+    "375x667, jet-engine: and the step's title is on screen with them",
+    "375x667, jet-engine: every step action is whole and takes the tap, unscrolled",
+    "390x844, jet-engine: and the step's title is on screen with them",
+    "390x844, jet-engine: every step action is whole and takes the tap, unscrolled",
     "and Reset build is still one of them",
     "and step 46 is reachable once actually scrolled there, edge to edge",
     "and the 3D view re-frames to fill it rather than overflowing",

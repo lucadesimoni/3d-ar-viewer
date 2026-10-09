@@ -91,49 +91,54 @@ export function StepGuide(): JSX.Element {
       </div>
 
       {active && (
-        <div className={`active-card-wrap ${hasMore ? 'has-more' : ''}`}>
-          <div className="active-card" ref={cardRef}>
-            {active.step.caution && <p className="caution">⚠ {active.step.caution}</p>}
-            {/* Where you are in the job. On a phone the step list is a strip
-                of numbers, so the card has to say this itself — "Mount base
-                plate" alone does not tell you whether five minutes or an hour
-                is left. */}
-            <span className="active-count">
-              Step {sequence.steps.findIndex((s) => s.step.id === active.step.id) + 1} of {sequence.steps.length}
-            </span>
-            <h3>{active.step.title}</h3>
-            <p className="instruction">{active.step.instruction}</p>
-            {active.step.toolIds && active.step.toolIds.length > 0 && (
-              <p className="tools">
-                Tools:{' '}
-                {active.step.toolIds
-                  .map((id) => assembly.tools?.find((t) => t.id === id)?.name ?? id)
-                  .join(', ')}
-              </p>
-            )}
-            {active.blockedBy.length > 0 && (
-              <p className="blocked">Blocked until earlier steps are complete.</p>
-            )}
-            <PresenceList partIds={active.step.partIds} />
-            <div className="active-actions">
-              <button className="ghost" onClick={preview.play}>▶ Show me</button>
-              <button className="secondary" onClick={placeStep}>⤓ Place</button>
-              {active.status === 'complete' ? (
-                <button className="secondary" onClick={() => reopenStep(active.step.id)}>Re-open</button>
-              ) : (
-                <button
-                  className="primary"
-                  disabled={active.status === 'error' || active.blockedBy.length > 0}
-                  onClick={() => completeStep(active.step.id)}
-                >
-                  Sign off
-                </button>
+        <div className="active-card-wrap">
+          {/* Only the text scrolls. The actions sat inside the scroller, and on
+              a phone the card is short: the buttons scrolled away with the text,
+              came out clipped, and the "More" badge sat on top of them. */}
+          <div className={`active-card-scroll ${hasMore ? 'has-more' : ''}`}>
+            <div className="active-card" ref={cardRef}>
+              {active.step.caution && <p className="caution">⚠ {active.step.caution}</p>}
+              {/* Where you are in the job. On a phone the step list is a strip
+                  of numbers, so the card has to say this itself — "Mount base
+                  plate" alone does not tell you whether five minutes or an hour
+                  is left. */}
+              <span className="active-count">
+                Step {sequence.steps.findIndex((s) => s.step.id === active.step.id) + 1} of {sequence.steps.length}
+              </span>
+              <h3>{active.step.title}</h3>
+              <p className="instruction">{active.step.instruction}</p>
+              {active.step.toolIds && active.step.toolIds.length > 0 && (
+                <p className="tools">
+                  Tools:{' '}
+                  {active.step.toolIds
+                    .map((id) => assembly.tools?.find((t) => t.id === id)?.name ?? id)
+                    .join(', ')}
+                </p>
               )}
+              {active.blockedBy.length > 0 && (
+                <p className="blocked">Blocked until earlier steps are complete.</p>
+              )}
+              <PresenceList partIds={active.step.partIds} />
             </div>
+            {/* Only rendered when the card is actually short of room — a
+                permanent hint on a card that always fits would be noise. */}
+            {hasMore && <span className="scroll-more down" aria-hidden="true">More ↓</span>}
           </div>
-          {/* Only rendered when the card is actually short of room — a
-              permanent hint on a card that always fits would be noise. */}
-          {hasMore && <span className="scroll-more down" aria-hidden="true">More ↓</span>}
+          <div className="active-actions">
+            <button className="ghost" onClick={preview.play}>▶ Show me</button>
+            <button className="secondary" onClick={placeStep}>⤓ Place</button>
+            {active.status === 'complete' ? (
+              <button className="secondary" onClick={() => reopenStep(active.step.id)}>Re-open</button>
+            ) : (
+              <button
+                className="primary"
+                disabled={active.status === 'error' || active.blockedBy.length > 0}
+                onClick={() => completeStep(active.step.id)}
+              >
+                Sign off
+              </button>
+            )}
+          </div>
         </div>
       )}
 

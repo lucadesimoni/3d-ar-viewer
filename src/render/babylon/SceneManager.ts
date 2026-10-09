@@ -150,6 +150,12 @@ interface PartVisual {
   solidMat: Material;
   overlayMat: Material;
   outline: boolean;
+  /**
+   * What an uninstalled part is tinted: its own colour, translucent. A uniform
+   * grey made every unbuilt assembly look alike — a fifty-part engine whose
+   * modules are colour-coded showed none of it until each part was placed.
+   */
+  ghostColor: string;
 }
 
 /**
@@ -1878,7 +1884,10 @@ export class SceneManager {
       const overlayMat = makeOverlayMaterial(this.scene, DIAGNOSTIC_COLORS.ghost, 0.28, `ghost-${part.id}`);
       mesh.material = overlayMat;
       applyPose(root, part.targetPose);
-      const visual: PartVisual = { root, mesh, solidMat, overlayMat, outline: false };
+      const visual: PartVisual = {
+        root, mesh, solidMat, overlayMat, outline: false,
+        ghostColor: part.material?.color ?? DIAGNOSTIC_COLORS.ghost,
+      };
       this.parts.set(part.id, visual);
 
       // Real geometry (glTF/GLB) loads asynchronously; the primitive above holds
@@ -2067,7 +2076,7 @@ export class SceneManager {
         else {
           this.tintOverlay(
             visual,
-            isActive ? DIAGNOSTIC_COLORS.active : DIAGNOSTIC_COLORS.ghost,
+            isActive ? DIAGNOSTIC_COLORS.active : visual.ghostColor,
             this.arMode ? (isActive ? 0.75 : 0.45) : (isActive ? 0.42 : 0.22),
           );
         }
