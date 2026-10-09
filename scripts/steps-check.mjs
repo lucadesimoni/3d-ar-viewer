@@ -20,7 +20,7 @@ const { check, finish } = createChecks();
 const browser = await chromium.launch(launchOptions());
 const page = await browser.newPage({ viewport: { width: 1100, height: 800 }, deviceScaleFactor: 2 });
 
-for (const assemblyId of ['kallax-4x4', 'bench-gearbox', 'equipment-rack']) {
+for (const assemblyId of ['kallax-4x4', 'bench-gearbox', 'jet-engine', 'equipment-rack']) {
   await page.goto(`${URL_BASE}?assembly=${assemblyId}`, { waitUntil: 'networkidle' });
   await page.waitForSelector('canvas.viewer-canvas');
   await page.waitForTimeout(1500);

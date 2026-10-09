@@ -393,6 +393,46 @@ for (const vp of VIEWPORTS) {
   await context.close();
 }
 
+// --- The step actions are never under the text, nor under the badge. -------
+// The buttons used to live inside the scrolling card: on a phone they scrolled
+// away with the text, came out clipped, and the "More" badge sat on top of the
+// middle one. Now only the text scrolls. Checked without scrolling anything, on
+// the shortest common phone and an ordinary one, with the largest sample and
+// the most nested one — and the step's title has to be on screen too.
+for (const [vp, assembly] of [
+  [{ width: 375, height: 667 }, 'equipment-rack'],
+  [{ width: 375, height: 667 }, 'jet-engine'],
+  [{ width: 390, height: 844 }, 'jet-engine'],
+]) {
+  const context = await browser.newContext({ viewport: vp, isMobile: true, hasTouch: true });
+  const page = await context.newPage();
+  await page.goto(`${URL}?assembly=${assembly}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('.active-actions button');
+  await page.waitForTimeout(800);
+  const seen = await page.evaluate(() => {
+    const buttons = [...document.querySelectorAll('.active-actions button')].map((b) => {
+      const r = b.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const points = [[cx, r.top + 2], [cx, r.bottom - 2], [r.left + 2, cy], [r.right - 2, cy]];
+      const ok = points.every(([x, y]) => {
+        if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return false;
+        const hit = document.elementFromPoint(x, y);
+        return hit === b || b.contains(hit);
+      });
+      return { label: b.textContent.trim(), ok };
+    });
+    const title = document.querySelector('.active-card h3')?.getBoundingClientRect();
+    const area = document.querySelector('.active-card')?.getBoundingClientRect();   // the scroller
+    const titleOnScreen = Boolean(title && area && title.top >= area.top - 1 && title.bottom <= area.bottom + 1);
+    return { buttons, titleOnScreen };
+  });
+  check(`${vp.width}x${vp.height}, ${assembly}: every step action is whole and takes the tap, unscrolled`,
+    seen.buttons.length === 3 && seen.buttons.every((b) => b.ok), JSON.stringify(seen.buttons));
+  check(`${vp.width}x${vp.height}, ${assembly}: and the step's title is on screen with them`, seen.titleOnScreen);
+  await context.close();
+}
+
 // --- The step strip's far end, past what one screen at a time can show. ----
 // A 46-step assembly (the equipment rack) only shows the first handful of
 // step circles at once; the rest are a swipe away with nothing on screen

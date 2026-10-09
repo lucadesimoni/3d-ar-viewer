@@ -267,6 +267,10 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
    card itself scrolls inside it. On desktop `.active-card-wrap` is just a
    transparent box the same size as its one child — nothing changes there. */
 .active-card-wrap { position: relative; margin-top: 12px; display: flex; flex-direction: column; min-height: 0; }
+/* The scrolling text, with its own "More" badge and fade; the actions below it
+   keep their full size whatever the text does. */
+.active-card-scroll { position: relative; display: flex; flex-direction: column; min-height: 0; }
+.active-card-wrap > .active-actions { flex: 0 0 auto; }
 .active-card { padding: 12px; border-radius: 11px; background: rgba(34, 211, 238, 0.07); border: 1px solid rgba(34, 211, 238, 0.22); }
 .active-card .caution { color: var(--warn); font-size: 12.5px; margin: 0 0 6px; }
 .active-count { display: block; font-size: 11px; font-weight: 650; letter-spacing: 0.04em;
@@ -517,6 +521,7 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
      and the card scrolls inside it rather than losing the buttons under the
      tab bar. */
   .app.mobile .active-card-wrap { margin-top: 10px; flex: 1 1 auto; min-height: 0; }
+  .app.mobile .active-card-scroll { flex: 1 1 auto; min-height: 0; }
   .app.mobile .active-card {
     flex: 1 1 auto; min-height: 0;
     overflow-y: auto; -webkit-overflow-scrolling: touch;
@@ -541,7 +546,7 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
      content reads as "continues off-screen", not as fighting the badge for
      the same pixels. Only while there is something to fade into — a
      container that already fits gets no treatment at all. */
-  .active-card-wrap.has-more::after {
+  .active-card-scroll.has-more::after {
     content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 30px;
     background: linear-gradient(to bottom, transparent, rgba(6, 9, 13, 0.6) 75%);
     border-radius: 0 0 11px 11px; pointer-events: none;
@@ -1065,3 +1070,14 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 }
 .log-rescue-offer p { margin: 0; }
 .log-rescue-offer textarea { width: 100%; font: 11px/1.4 ui-monospace, monospace; }
+
+/* A short phone held upright (iPhone SE class, 667px): the step panel is
+   under 40% of the screen, and once the actions keep their full size the
+   step text had one line left — "STEP 1 OF 46" and no title. The revision
+   line and the time estimate give the room back to the title. */
+@media (max-width: 1024px) and (max-height: 700px) and (orientation: portrait) {
+  .app.mobile .step-guide .rev,
+  .app.mobile .step-guide .est { display: none; }
+}
+/* In the step card's corner, not its middle: centred, it sat on the title. */
+.app.mobile .active-card-scroll .scroll-more.down { left: auto; right: 8px; transform: none; }

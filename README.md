@@ -613,6 +613,16 @@ guide, or open one directly with `?assembly=kallax-4x4`.
   recognition target. Dimensions are derived from the two published numbers
   (1470 mm across, 330 mm opening ⇒ 30 mm board) rather than guessed, so the
   model and the joints cannot drift apart.
+- **`src/data/jetEngine.ts`** — a **complex** twin-spool turbofan on its
+  transport stand (50 parts, 16-step dependency graph), colour-coded by module:
+  blue fan case, titanium fan blades, teal booster, green compressor, copper
+  combustor, turbines in heat colours, silver nozzle. It exercises what the
+  others cannot: parts nested round a common axis (shafts through spools through
+  casings), rings of identical parts installed as sets (16 balanced fan blades,
+  8 fuel nozzles), radial insertion, and an intake danger zone. Pass-throughs are
+  derived from the real radii, so a genuine clash between concentric parts is
+  still reported — the first draft's spinner reached 29 mm into the LP shaft and
+  the check caught it. Open it with `?assembly=jet-engine`.
 - **`src/data/equipmentRack.ts`** — a **large** 14-bay modular equipment rack
   (108 parts, 46-step dependency graph) that stresses the app at scale: handed
   left/right rail pairs on every bay (swap detection ×14), a rear cable-channel
