@@ -3,6 +3,10 @@ import type { Pose } from '../../engine/types';
 import {
   ANCHOR_POSITION_EPS_M,
   anchorMoved,
+  blendUpright,
+  carryWithAnchor,
+  yawOf,
+  yawQuat,
   angleBetween,
   distanceBetween,
 } from './anchorMotion';
@@ -65,5 +69,37 @@ describe('which anchor corrections are worth applying', () => {
     }
     expect(applications).toBe(6);
     expect(applied.position[0]).toBeCloseTo(0.012, 6);
+  });
+});
+
+describe('carrying an assembly with its anchor', () => {
+  const at = (x: number, y: number, z: number, yaw = 0): Pose => ({ position: [x, y, z], rotation: yawQuat(yaw) });
+  const close = (a: Pose, b: Pose) => {
+    a.position.forEach((v, i) => expect(v).toBeCloseTo(b.position[i], 6));
+    expect(Math.abs(Math.cos((yawOf(a.rotation) - yawOf(b.rotation)) / 2))).toBeCloseTo(1, 6);
+  };
+
+  it('a moved anchor moves the assembly by the same amount', () => {
+    close(carryWithAnchor(at(0.3, 0, 1), at(0, 0, 1), at(0.05, 0.01, 1)), at(0.35, 0.01, 1));
+  });
+
+  it('a turned anchor swings the assembly round it and turns it too', () => {
+    // Assembly 1 m in front (+Z) of the anchor; the anchor turns 90°: +Z goes to +X.
+    close(carryWithAnchor(at(0, 0, 1), at(0, 0, 0), at(0, 0, 0, Math.PI / 2)), at(1, 0, 0, Math.PI / 2));
+  });
+
+  it('keeps it upright when the anchor tilts', () => {
+    const s = Math.sin(0.05);
+    const tilted: Pose = { position: [0, 0, 0], rotation: [s, 0, 0, Math.cos(0.05)] };   // ~6° pitch
+    const out = carryWithAnchor(at(0, 0, 1), at(0, 0, 0), tilted);
+    expect(out.rotation[0]).toBe(0);
+    expect(out.rotation[2]).toBe(0);
+    close(out, at(0, 0, 1));
+  });
+
+  it('eases the short way round', () => {
+    const mid = blendUpright(at(0, 0, 0, 3.0), at(1, 0, 0, -3.0), 0.5);
+    expect(mid.position[0]).toBeCloseTo(0.5, 6);
+    expect(Math.cos(yawOf(mid.rotation))).toBeCloseTo(-1, 3);   // through ±π, not through 0
   });
 });
