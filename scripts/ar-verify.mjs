@@ -64,6 +64,20 @@ const SHELF_STREAM = ({ cols, rows, span, sway = 0 }) => {
  */
 const HELD_LOOKING_DOWN = { alpha: 217, beta: 60, gamma: 4 };
 
+/**
+ * How long a swaying shelf may take to lock.
+ *
+ * Measured, because a guess of 8 s failed on CI. Three detections must agree
+ * within 0.2 m, and the stream's shelf pans at up to 61 px/s. On a fast
+ * machine that never breaks the streak: 2.3 s, sway or not. With the CPU
+ * throttled 4-8x, detections land further apart, the shelf moves past the
+ * agreement window between them, and the streak only completes near a turning
+ * point of the sway, one every 2.8 s. That gave 2.9-7.7 s, against 2.5-3.2 s
+ * for a still shelf on the same throttle. 15 s covers the worst of those plus
+ * two more turning points; a lock that never comes still fails.
+ */
+const MOVING_LOCK_BUDGET_MS = 15_000;
+
 async function open(page, url) {
   await page.goto(url, { waitUntil: 'networkidle' });
   await page.waitForSelector('canvas.viewer-canvas', { timeout: 20000 });
@@ -582,14 +596,25 @@ const context = await browser.newContext({
   const page = await context.newPage();
   await page.addInitScript(SHELF_STREAM, { cols: 4, rows: 4, span: 340, sway: 55 });
   await open(page, `${URL}?assembly=kallax-4x4`);
+  const clickedAt = await page.evaluate(() => performance.now());
   await page.click('.ar-enter');
 
-  let locked = false;
-  for (let i = 0; i < 20 && !locked; i++) {
-    await page.waitForTimeout(400);
-    locked = (await state(page)).placement === 'recognized';
+  // Timed, and reported either way: a bare pass/fail here once left a CI
+  // failure with nothing to go on but its name.
+  const started = Date.now();
+  let last = await state(page);
+  while (last.placement !== 'recognized' && Date.now() - started < MOVING_LOCK_BUDGET_MS) {
+    await page.waitForTimeout(250);
+    last = await state(page);
   }
-  check('locks onto a moving shelf', locked);
+  const locked = last.placement === 'recognized';
+  const story = locked ? '' : await page.evaluate((since) => (window.spatialLog?.() ?? [])
+    .filter((e) => e.t >= since)
+    .map((e) => `+${Math.round(e.t - since)} ${e.kind} ${e.message}`)
+    .slice(-8).join('; '), clickedAt);
+  check('locks onto a moving shelf', locked,
+    `${locked ? 'locked' : `still ${last.placement}`} after ${((Date.now() - started) / 1000).toFixed(1)} s`
+    + (story ? ` — log: ${story}` : ''));
 
   // Record every anchor change for two seconds while the shelf pans. The
   // window is timed with performance.now() rather than trusted to be exactly
