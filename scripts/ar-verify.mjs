@@ -637,22 +637,32 @@ const context = await browser.newContext({
     return { seen, elapsedMs: performance.now() - started };
   });
 
-  // Detection alone runs at the perf profile's interval (0.4-1 s) — at most
-  // ~2.5 updates/s. Frame-by-frame tracking runs well above that; the rate is
-  // checked against the window's own measured elapsed time (never assumed to
-  // be exactly the requested 2000ms) so the same discrimination holds
-  // whether the window ran on a fast machine or a loaded CI runner.
+  // Detection alone updates the anchor at most once per detection interval —
+  // the page's own perf profile's, 400-1000 ms. Frame-by-frame tracking has to
+  // beat twice that. The ceiling is read from the page rather than assumed:
+  // a fixed 4/s was the fastest tier's ceiling, and a CI runner on the slowest
+  // tier (1 detection/s) failed it while tracking at 3/s — a rate detection
+  // could never reach there. Measured on that tier: 10/s on a fast machine,
+  // 5.7-7.9/s with the CPU throttled 4-8x, about 1/s with tracking disabled.
+  // The rate is taken over the window's measured elapsed time, never an
+  // assumed 2000 ms.
+  const intervalMs = await page.evaluate(() => window.spatialScene?.()?.perf.recognitionIntervalMs ?? 400);
   const rate = seen.length / (elapsedMs / 1000);
-  check('the anchor follows the object between detections', rate > 4,
-    `${seen.length} anchor updates in ${(elapsedMs / 1000).toFixed(2)} s (${rate.toFixed(1)}/s)`);
+  const ceiling = 1000 / intervalMs;
+  check('the anchor follows the object between detections', rate > 2 * ceiling,
+    `${seen.length} anchor updates in ${(elapsedMs / 1000).toFixed(2)} s (${rate.toFixed(1)}/s;`
+    + ` detection alone: at most ${ceiling.toFixed(1)}/s)`);
   const xs = seen.map((e) => e[1]);
   const swing = Math.max(...xs) - Math.min(...xs);
   check('and it actually moves with it', swing > 0.15, `${swing.toFixed(2)} m of travel tracked`);
   // Consecutive updates must be small: a tracker that keeps re-detecting from
   // scratch jumps, a tracker that follows glides.
   const jumps = xs.slice(1).map((v, i) => Math.abs(v - xs[i]));
+  // With fewer than two updates there is no step to measure, and the largest
+  // of none (-Infinity) used to pass for a glide.
   const worst = Math.max(...jumps);
-  check('the overlay glides rather than jumping', worst < 0.2, `largest step ${worst.toFixed(3)} m`);
+  check('the overlay glides rather than jumping', jumps.length > 0 && worst < 0.2,
+    jumps.length ? `largest step ${worst.toFixed(3)} m` : `${seen.length} update(s): no step to measure`);
   await page.close();
 }
 
