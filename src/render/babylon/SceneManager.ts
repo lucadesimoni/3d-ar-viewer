@@ -44,7 +44,10 @@ import { createBestEngine, type RenderBackendKind } from './engineFactory';
 import { STATUS_COLORS, type RecognitionStatus } from '../../vision/verdict';
 import { ASSUMED_CAMERA_FOV_DEG } from '../../engine/tracking/markerTracking';
 import { logEvent } from '../../diagnostics/log';
-import { anchorMoved, distanceBetween, samePose } from './anchorMotion';
+import {
+  ANCHOR_EASE_MS, FOLLOW_STEP_MAX_M, FOLLOW_TOTAL_MAX_M,
+  anchorMoved, blendUpright, carryWithAnchor, distanceBetween, samePose, yawOf, yawQuat,
+} from './anchorMotion';
 import { isTap } from '../../engine/tracking/tap';
 import {
   cameraIntrinsics,
@@ -239,6 +242,7 @@ export class SceneManager {
     // keeps drawing while the camera coasts to a stop.
     this.scene.onPointerObservable.add(this.invalidate);
     this.scene.onKeyboardObservable.add(this.invalidate);
+    this.scene.onBeforeRenderObservable.add(this.stepAnchorEase);
     // Any orbit, pinch or wheel is the operator choosing a view; auto-fit stops
     // second-guessing them from that point on.
     this.camera.onViewMatrixChangedObservable.add(() => {
@@ -374,6 +378,10 @@ export class SceneManager {
    * anchor's reports are then about a spot nothing stands on.
    */
   private onPlatformAnchor = false;
+  /** Where following the anchor is taking the assembly, and how far along. */
+  private anchorEase: { from: Pose; to: Pose; startMs: number } | undefined;
+  /** Corrections taken, of those reported. */
+  private anchorFollowed = 0;
   /** The last pose the *app* asked for, so a repeat of it changes nothing. */
   private storeAnchor: Pose | undefined;
   /**
@@ -1319,74 +1327,95 @@ export class SceneManager {
   }
 
   /**
-   * Watch what the platform says about the placed spot, and do nothing about it.
+   * Follow what the platform says about the placed spot — within bounds.
    *
-   * The assembly used to move with it. That is what an anchor is for — the
-   * platform holds a real spot in the room and carries it along as it learns
-   * the room better — and it is why this was built. Device logs then showed
-   * it moving sixty to seventy milliseconds after every single touch of the
-   * screen, by two to forty centimetres, and from the operator's side that was
-   * "every tap repositions it", because it was exactly that.
+   * That is what an anchor is for: the platform holds a real spot in the room
+   * and carries it along as it learns the room better. It was switched off
+   * after device logs showed the spot moving sixty milliseconds after every
+   * single tap, by up to forty centimetres — "every tap repositions it". The
+   * cause turned out to be ours: every tap made a new anchor, declined or not,
+   * and the newest became the one followed (see `place` in xr.ts — fixed).
    *
-   * The cause turned out to be ours, not the platform's: every tap made a new
-   * anchor, declined or not, at wherever the reticle pointed, and the newest
-   * became the one followed (see `place` in xr.ts — fixed). A camera-jump
-   * entry in the log ("camera jumped") now also tells a re-based room apart
-   * from a moved anchor.
-   *
-   * The rule stays the operator's, and it is the simple one: placed is
-   * placed. Only "Move" and a snap onto something recognised may move an
-   * assembly, and both go through `setAnchor`, not through here. With the
-   * phantom anchors gone, what is logged below is the platform's own
-   * corrections — the evidence to decide on whether following should return.
-   *
-   * What is still reported stays reported. The size of every declined
-   * correction goes in the log, so the case this defended against — the whole
-   * reference space being re-based, where standing still means drifting off
-   * the bench — would show up as a large sustained move that the assembly did
-   * not take, and following can come back on that evidence.
+   * With that gone, what the logs showed was the platform refining a fresh
+   * anchor by 4–8 cm in its first seconds — the floor being learned better —
+   * and the operator chose to take those. So a correction is followed, eased
+   * over `ANCHOR_EASE_MS`, when the step is under `FOLLOW_STEP_MAX_M` and the
+   * assembly stays within `FOLLOW_TOTAL_MAX_M` of where it was placed; a
+   * larger step, or a run of small ones that would carry it off its spot, is
+   * declined and logged with the reason. "Move" and a snap onto something
+   * recognised still go through `setAnchor`, and end the following: the
+   * assembly is then no longer standing on this anchor.
    */
   private followAnchor(pose: Pose): void {
     // A device log had "the platform moved the anchor" by 0.97 m, at the
     // floor spot of a tap — twenty seconds after "Bring it in front" had put
     // the assembly somewhere else entirely. Reports about an anchor nothing
     // stands on only mislead whoever reads the file.
-    if (!this.onPlatformAnchor) return;
+    if (!this.onPlatformAnchor || !this.storeAnchor) return;
     if (!this.anchorApplied) { this.anchorApplied = pose; return; }
     this.anchorCorrections++;
     if (!anchorMoved(this.anchorApplied, pose)) return;
-    const correctedBy = distanceBetween(this.anchorApplied.position, pose.position);
-    if (correctedBy >= VISIBLE_CORRECTION_M) {
-      // What was declined, and how big it was. The platform goes on reporting;
-      // the file goes on saying so. If a session ever shows a large, sustained
-      // move that the assembly should have taken — the room being recognised
-      // and the whole space re-based — it will be in here, and following can
-      // come back on that evidence rather than on my reasoning about it.
+    const step = distanceBetween(this.anchorApplied.position, pose.position);
+    // Carried from where it is heading already, so a correction arriving
+    // mid-ease adds to the last one rather than replacing it.
+    const from = this.anchorEase?.to ?? this.displayedAssembly();
+    const target = carryWithAnchor(from, this.anchorApplied, pose);
+    const drift = distanceBetween(target.position, this.storeAnchor.position);
+    const follow = step < FOLLOW_STEP_MAX_M && drift <= FOLLOW_TOTAL_MAX_M;
+    if (follow) {
+      this.anchorEase = { from: this.displayedAssembly(), to: target, startMs: performance.now() };
+      this.anchorFollowed++;
+    }
+    if (step >= VISIBLE_CORRECTION_M) {
       const eye = (this.scene.activeCamera ?? this.camera).position;
       const range = (p: Pose): number => Vector3.Distance(
         eye, new Vector3(p.position[0], p.position[1], p.position[2]),
       );
       logEvent('place', 'the platform moved the anchor', {
-        byM: Number(correctedBy.toFixed(3)),
+        byM: Number(step.toFixed(3)),
         rangeBeforeM: Number(range(this.anchorApplied).toFixed(3)),
         rangeAfterM: Number(range(pose).toFixed(3)),
         at: pose.position.map((v) => Number(v.toFixed(3))),
-        followed: false,
+        followed: follow,
+        // Declined: one step too large to be refinement, or a run of them that
+        // would carry the assembly off the spot it was placed on.
+        ...(follow ? { driftM: Number(drift.toFixed(3)) }
+          : { why: step >= FOLLOW_STEP_MAX_M ? 'step too large' : 'too far from where it was placed' }),
       });
     }
+    // The reference is always the latest report: a jump that was declined is
+    // not taken, but refinements after it are measured from where the anchor
+    // now is.
     this.anchorApplied = pose;
     this.anchorApplications++;
     // Throttled: a report a frame would drown the log it is meant to explain.
     if (this.anchorLoggedAtMs === undefined
       || performance.now() - this.anchorLoggedAtMs > ANCHOR_LOG_INTERVAL_MS) {
       this.anchorLoggedAtMs = performance.now();
-      logEvent('place', 'anchor corrections declined', {
+      logEvent('place', 'anchor corrections', {
         corrections: this.anchorCorrections,
         overThreshold: this.anchorApplications,
+        followed: this.anchorFollowed,
         at: pose.position.map((v) => Number(v.toFixed(3))),
       });
     }
   }
+
+  /** Where the assembly is drawn right now, upright. */
+  private displayedAssembly(): Pose {
+    const p = this.assemblyRoot.position;
+    const q = this.assemblyRoot.rotationQuaternion ?? Quaternion.Identity();
+    return { position: [p.x, p.y, p.z], rotation: yawQuat(yawOf([q.x, q.y, q.z, q.w])) };
+  }
+
+  /** One frame of a followed correction, eased so it reads as settling. */
+  private stepAnchorEase = (): void => {
+    const e = this.anchorEase;
+    if (!e) return;
+    const t = Math.min(1, Math.max(0, (performance.now() - e.startMs) / ANCHOR_EASE_MS));
+    this.applyAnchor(blendUpright(e.from, e.to, t * t * (3 - 2 * t)));
+    if (t >= 1) this.anchorEase = undefined;
+  };
 
   /**
    * Aim-and-tap floor placement for the camera-passthrough fallback.
@@ -1950,6 +1979,7 @@ export class SceneManager {
     // assembly no longer stands on the platform's anchor at all.
     this.anchorApplied = undefined;
     this.onPlatformAnchor = false;
+    this.anchorEase = undefined;
     this.applyAnchor(pose);
   }
 

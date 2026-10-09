@@ -47,3 +47,65 @@ export function samePose(a: Pose | undefined, b: Pose | undefined): boolean {
   return a.position.every((v, i) => v === b.position[i])
     && a.rotation.every((v, i) => v === b.rotation[i]);
 }
+
+/**
+ * How much of what the platform says about the placed spot the assembly takes.
+ *
+ * Followed again, after the "every tap moves it" reports turned out to be the
+ * app making a new anchor on every tap. What remained in the logs was the
+ * platform refining a fresh anchor by 4–8 cm in its first seconds, which is
+ * the floor being learned better and worth taking. But a step that large is
+ * not refinement, and neither is a run of small steps that carries the
+ * assembly off its spot (one log climbed 22 cm in 2–10 cm steps): each step,
+ * and the total from where it was placed, stays under these.
+ */
+export const FOLLOW_STEP_MAX_M = 0.15;
+export const FOLLOW_TOTAL_MAX_M = 0.15;
+/** Taken smoothly over this long, so a correction reads as settling, not a jump. */
+export const ANCHOR_EASE_MS = 300;
+
+/** Heading about the vertical: where +Z ends up, as Babylon's yaw (left-handed, Y up). */
+export function yawOf(q: Pose['rotation']): number {
+  const [x, y, z, w] = q;
+  return Math.atan2(2 * (x * z + w * y), 1 - 2 * (x * x + y * y));
+}
+
+/** A rotation about the vertical alone. */
+export function yawQuat(yaw: number): Pose['rotation'] {
+  return [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)];
+}
+
+/**
+ * Where an assembly standing on an anchor goes when the anchor moves from
+ * `before` to `after`: carried by the same move and turn, and kept upright —
+ * only the anchor's heading is taken, never a tilt, because the assembly
+ * stands on a floor and a refined anchor tilting by a degree is not a reason
+ * to lean a shelf.
+ */
+export function carryWithAnchor(assembly: Pose, before: Pose, after: Pose): Pose {
+  const turn = yawOf(after.rotation) - yawOf(before.rotation);
+  const c = Math.cos(turn);
+  const s = Math.sin(turn);
+  const vx = assembly.position[0] - before.position[0];
+  const vy = assembly.position[1] - before.position[1];
+  const vz = assembly.position[2] - before.position[2];
+  return {
+    position: [
+      after.position[0] + vx * c + vz * s,
+      after.position[1] + vy,
+      after.position[2] - vx * s + vz * c,
+    ],
+    rotation: yawQuat(yawOf(assembly.rotation) + turn),
+  };
+}
+
+/** Partway from one upright pose to another — `k` from 0 to 1 — by the short way round. */
+export function blendUpright(from: Pose, to: Pose, k: number): Pose {
+  const a = yawOf(from.rotation);
+  let d = yawOf(to.rotation) - a;
+  d = Math.atan2(Math.sin(d), Math.cos(d));
+  return {
+    position: [0, 1, 2].map((i) => from.position[i] + (to.position[i] - from.position[i]) * k) as Pose['position'],
+    rotation: yawQuat(a + d * k),
+  };
+}

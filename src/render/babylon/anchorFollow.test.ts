@@ -66,35 +66,72 @@ const settle = (m: SceneManager, frames = 40): void => {
   for (let i = 0; i < frames; i++) m.scene.render();
 };
 
-describe('placed is placed', () => {
-  it('is not moved by anything the platform says about the spot', async () => {
-    // The rule the operator asked for, after five sessions of logs: once it is
-    // positioned it stays exactly where it was put, unless they press "Move" or
-    // it snaps onto something recognised. Those logs showed the spot moving
-    // sixty to seventy milliseconds after every tap — later traced to the app
-    // making a new anchor on every tap (fixed in xr.ts), not to the platform.
-    // The rule stands regardless: whatever the platform reports, it stays.
+describe('following the platform, within bounds', () => {
+  const offset = (m: SceneManager, start: [number, number, number]) => {
+    const [x, y, z] = where(m);
+    return Math.hypot(x - start[0], y - start[1], z - start[2]);
+  };
+  const atMs = (ms: number) => vi.mocked(performance.now).mockReturnValue(ms);
+  const moved = () => logEntries().filter((e) => e.message === 'the platform moved the anchor');
+
+  it('takes a small correction — the floor learned better — smoothly, not at once', async () => {
+    const { manager, hook } = await placed();
+    try {
+      hook.onAnchorPose?.(pose(0, 0, 2));
+      const start = where(manager);
+      atMs(10_000);
+      hook.onAnchorPose?.(pose(0.05, 0, 2));          // 5 cm, the size device logs showed
+      expect(moved().at(-1)?.data).toMatchObject({ followed: true });
+      atMs(10_150); manager.scene.render();
+      expect(offset(manager, start)).toBeCloseTo(0.025, 3);   // halfway, eased
+      atMs(10_400); manager.scene.render();
+      expect(offset(manager, start)).toBeCloseTo(0.05, 4);
+    } finally {
+      manager.dispose();
+    }
+  });
+
+  it('declines a step too large to be refinement, and says why', async () => {
+    const { manager, hook } = await placed();
+    try {
+      hook.onAnchorPose?.(pose(0, 0, 2));
+      const start = where(manager);
+      atMs(10_000);
+      hook.onAnchorPose?.(pose(-1.172, -0.185, 1.979));   // the 1.19 m relocalisation, 9 Sept
+      atMs(11_000); settle(manager);
+      expect(where(manager)).toEqual(start);
+      expect(moved().at(-1)?.data).toMatchObject({ followed: false, why: 'step too large' });
+    } finally {
+      manager.dispose();
+    }
+  });
+
+  it('never carries it more than 15 cm off its spot, step by small step', async () => {
+    // Every jump three sessions reported, ending in the 22 cm climb in 2-10 cm
+    // steps: the large ones declined, the climb taken only as far as 15 cm.
     const { manager, hook } = await placed();
     try {
       const start = where(manager);
       const heading = facing(manager);
-
-      // Every jump three different sessions actually reported.
       const reported: Pose[] = [
         pose(0, 0, 2),
-        pose(-1.172, -0.185, 1.979),        // the 1.19 m relocalisation, 9 Sept
-        pose(0.01, -0.056, 0.804),          // 0.409 m, one tap later
+        pose(-1.172, -0.185, 1.979),
+        pose(0.01, -0.056, 0.804),
         pose(0.394, -0.044, 0.777),
-        ...[0.087, 0.114, 0.138, 0.156, 0.259, 0.305]   // the 22 cm climb
-          .map((y) => pose(0.061, y, 0.806)),
+        ...[0.087, 0.114, 0.138, 0.156, 0.259, 0.305].map((y) => pose(0.061, y, 0.806)),
       ];
+      let t = 10_000;
       for (const report of reported) {
+        atMs(t);
         for (let i = 0; i < 20; i++) hook.onAnchorPose?.(report);
+        t += 1000;
+        atMs(t);
         settle(manager);
       }
-
-      expect(where(manager)).toEqual(start);
-      expect(facing(manager)).toEqual(heading);
+      expect(offset(manager, start)).toBeLessThanOrEqual(0.15 + 1e-6);
+      expect(moved().some((e) => e.data?.why === 'too far from where it was placed')).toBe(true);
+      // Upright and facing the same way: only heading is ever taken, and none was reported.
+      facing(manager).forEach((v, i) => expect(v).toBeCloseTo(heading[i], 6));
     } finally {
       manager.dispose();
     }
