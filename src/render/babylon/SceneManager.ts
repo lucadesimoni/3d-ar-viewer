@@ -40,6 +40,7 @@ import {
   ShadowsOptimization,
 } from '@babylonjs/core/Misc/sceneOptimizer';
 import { detectPerfProfile, type PerfProfile } from '../perf';
+import { FloorEstimate } from '../../engine/floorEstimate';
 import { createBestEngine, type RenderBackendKind } from './engineFactory';
 import { STATUS_COLORS, type RecognitionStatus } from '../../vision/verdict';
 import { ASSUMED_CAMERA_FOV_DEG } from '../../engine/tracking/markerTracking';
@@ -354,6 +355,8 @@ export class SceneManager {
   private xrLoadError: string | undefined;
   /** True from the session's first frame until it ends. */
   private inXrSession = false;
+  /** The floor this session's surface hits have shown; see `FloorEstimate`. */
+  private readonly xrFloor = new FloorEstimate();
   /** What was actually rendered into, sampled in the frame. See `renderStats`. */
   private lastFrameBuffer: [number, number] = [0, 0];
   /** True from the moment a session is requested until it is in or refused. */
@@ -1671,6 +1674,8 @@ export class SceneManager {
         // y = 0 by definition, so this is not the camera path's assumed plane
         // — it is the one number the space guarantees.
         onReticle: (pose) => {
+          const camera = this.scene.activeCamera;
+          if (pose && camera) this.xrFloor.addHit(pose, camera.globalPosition.y);
           if (!this.placementActive) { this.setReticle(undefined); return; }
           this.setReticle(pose ?? this.knownFloorAim());
         },
@@ -1735,6 +1740,9 @@ export class SceneManager {
         onStateChange: (inXr) => {
           this.inXrSession = inXr;
           this.lastXrCamera = undefined;
+          // Each session has its own frame: the floor was at -0.06, +0.26 and
+          // +0.19 m in three sessions of one page load.
+          this.xrFloor.reset();
           logEvent('xr', inXr ? 'in session' : 'session ended', { clock: this.frameClock });
           if (inXr) {
             this.arMode = true;
@@ -1818,6 +1826,11 @@ export class SceneManager {
    * problem, rather than here, means there is exactly one place where a sign
    * can be wrong.
    */
+  /** The floor's height in this WebXR session, once its surfaces have shown it. */
+  xrFloorY(): number | undefined {
+    return this.inXrSession ? this.xrFloor.floorY : undefined;
+  }
+
   cameraToWorld(poseInCamera: Pose): Pose {
     const cam = this.scene.activeCamera;
     if (!cam) return poseInCamera;

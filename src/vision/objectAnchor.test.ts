@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ObjectAnchorTracker } from './objectAnchor';
+import { ObjectAnchorTracker, rowShiftFor, shiftQuad } from './objectAnchor';
 import { renderShelf } from './testing/renderShelf';
-import { kallax } from '../data/kallax';
+import { kallax, kallax4x2Assembly } from '../data/kallax';
+import { detectGridFacade } from './gridRecognition';
+import { edgeField } from '../perception/edges';
+import { alignToMarker } from '../engine/alignment';
 import type { Pose } from '../engine/types';
 
 const W = 640;
@@ -187,3 +190,65 @@ describe('object anchoring', () => {
     expect(obs.confidence).toBeGreaterThan(0.5);
   });
 });
+
+/**
+ * A lattice read one row off the facade. Two device sessions had it, a 4x2
+ * one row high (instrument cases on top made a line a row above the top
+ * board) and a 4x4 one row low, each committed at full confidence. Its
+ * outline gives it away: half of each side edge runs over the wall or the
+ * floor.
+ */
+describe('a lattice read a row off', () => {
+  const target = kallax4x2Assembly.recognition!;
+  const view = { width: 640, height: 640, left: 110, top: 120, span: 400, cols: 4, rows: 2 };
+  const clean = renderShelf(view);
+  const truth = detectGridFacade(clean, { target })!.quad;
+
+  it('moves an outline a row too high down onto the facade', () => {
+    const tooHigh = shiftQuad(truth, target, -1)!;
+    expect(rowShiftFor(edgeField(clean), tooHigh, target)).toBe(1);
+  });
+
+  it('and one a row too low up onto it', () => {
+    const tooLow = shiftQuad(truth, target, 1)!;
+    expect(rowShiftFor(edgeField(clean), tooLow, target)).toBe(-1);
+  });
+
+  it('leaves a right one alone', () => {
+    expect(rowShiftFor(edgeField(clean), truth, target)).toBe(0);
+  });
+
+  it('leaves a right one alone with a case on top the shelf\'s full width', () => {
+    // A row up is then a near-perfect outline too: the case's top and sides.
+    // Only a clear win may move a lock, and this is a tie.
+    const cased = renderShelf({ ...view, clutter: [{ x: 110, y: 20, w: 400, h: 100, value: 30 }] });
+    expect(rowShiftFor(edgeField(cased), truth, target)).toBe(0);
+  });
+
+  it('moves by exactly one row, both ways', () => {
+    const back = shiftQuad(shiftQuad(truth, target, 1)!, target, -1)!;
+    back.forEach((p, i) => {
+      expect(p.x).toBeCloseTo(truth[i].x, 6);
+      expect(p.y).toBeCloseTo(truth[i].y, 6);
+    });
+    const down = shiftQuad(truth, target, 1)!;
+    // Straight on, a row is the outline's own height over the row count —
+    // board centre to board centre, not the facade's outer 200 px.
+    expect(down[0].y - truth[0].y).toBeCloseTo((truth[3].y - truth[0].y) / 2, 3);
+  });
+
+  it('and a lock taken a row away is followed a row away, frame after frame', () => {
+    const t = new ObjectAnchorTracker(target, { detectIntervalMs: 400, fovDeg: 60 });
+    let lock;
+    for (let k = 0; k < 4 && !lock; k++) lock = t.update(clean, k * 500);
+    const asFound = t.update(clean, 2100)!;
+    expect(asFound.mode).toBe('tracked');
+    // As if the lock had been taken one row down from the lattice it follows.
+    (t as unknown as { rowShift: number }).rowShift = 1;
+    const shifted = t.update(clean, 2133)!;
+    expect(shifted.rowShift).toBe(1);
+    const y = (o: { pose: Pose }) => alignToMarker(o.pose, target.poseInAssembly).position[1];
+    expect(y(shifted) - y(asFound)).toBeCloseTo(-target.heightM / target.rows, 2);
+  });
+});
+
