@@ -408,6 +408,8 @@ export async function prepareImmersiveAr(
   /** The anchor the assembly is currently riding, if the device grants them. */
   let placedAnchorId: number | undefined;
   let placedAnchor: { remove?: () => void } | undefined;
+  /** Placements taken this session, so a slow anchor for an earlier one is let go. */
+  let placements = 0;
   const settle = createSettleTracker();
   /** When the running session began, and when it first saw a surface. */
   let sessionAtMs = 0;
@@ -439,17 +441,28 @@ export async function prepareImmersiveAr(
     // the reticle was from the placed spot. Six device sessions read that as
     // the platform re-estimating the spot on every touch. It was this.
     if (hooks.onSelectAnchor?.(at) === false) return;
+    // The old spot stops speaking for the assembly the moment a new one is
+    // taken, not once its replacement exists. A new anchor takes ~60 ms to
+    // make, and in that gap the old one's reports kept coming: a device log
+    // had "the platform moved the anchor" by 1.42 m, 66 ms after a re-tap,
+    // which was the distance between the two spots. Declined there as too
+    // large; a re-tap within 15 cm would have been followed as a correction.
+    // One spot is held at a time: the platform tracks every anchor it is given
+    // until it is removed.
+    placedAnchor?.remove?.();
+    placedAnchor = undefined;
+    placedAnchorId = undefined;
     const hit = lastHit;
     if (!anchors || !hit) return;
+    // And only the latest placement's anchor is kept, whichever arrives first.
+    const placement = ++placements;
     void anchors.addAnchorPointUsingHitTestResultAsync(hit)
       .then((anchor) => {
-        // One spot is held at a time: the platform tracks every anchor it is
-        // given until it is removed, and nothing ever removed the old ones.
-        if (placedAnchor && placedAnchor !== anchor) placedAnchor.remove?.();
+        if (placement !== placements) { anchor.remove?.(); return; }
         placedAnchor = anchor;
         placedAnchorId = anchor.id;
       })
-      .catch(() => { placedAnchorId = undefined; });
+      .catch(() => { if (placement === placements) placedAnchorId = undefined; });
   };
   /**
    * Whether frames are being sampled at all.
