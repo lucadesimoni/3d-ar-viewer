@@ -577,5 +577,152 @@ for (const [vp, assembly] of [
   await context.close();
 }
 
+// --- The phone usability pass. ---------------------------------------------
+// A screenshot tour at 360-430 px wide, and a phone held sideways, found each
+// of these. Every check measures the page, not a picture of it.
+async function phonePage(viewport, assembly = 'jet-engine') {
+  const context = await browser.newContext({ viewport, isMobile: true, hasTouch: true });
+  const page = await context.newPage();
+  await page.goto(`${URL}?assembly=${assembly}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('canvas.viewer-canvas');
+  await page.waitForTimeout(1500);
+  return { context, page };
+}
+const sheetTab = (page, label) => page.locator('.sheet-tabs [role=tab]', { hasText: label });
+
+{
+  // The collapse handle had a grid row of its own: with its two gaps, a
+  // 60 px empty band between the 3D view and the panel, on every tab.
+  for (const vp of [{ width: 390, height: 844 }, { width: 375, height: 667 }]) {
+    const { context, page } = await phonePage(vp);
+    const bands = [];
+    for (const tab of ['Steps', 'Errors', 'View', 'More']) {
+      if (tab !== 'Steps') { await sheetTab(page, tab).click(); await page.waitForTimeout(300); }
+      bands.push(await page.evaluate((tab) => {
+        const view = document.querySelector('.viewport').getBoundingClientRect();
+        const panel = [...document.querySelectorAll('.stage > .panel, .stage > .mobile-sheet')]
+          .map((e) => e.getBoundingClientRect()).find((r) => r.height > 0 && r.top >= view.top);
+        const handle = document.querySelector('.sheet-handle')?.getBoundingClientRect();
+        return {
+          tab, band: panel ? Math.round(panel.top - view.bottom) : null,
+          handleInView: Boolean(handle) && handle.top >= view.top - 1 && handle.bottom <= view.bottom + 1,
+        };
+      }, tab));
+    }
+    check(`${vp.width}x${vp.height}: no empty band between the 3D view and the panel, on any tab`,
+      bands.every((b) => b.band !== null && b.band <= 9),
+      bands.map((b) => `${b.tab} ${b.band} px`).join(', '));
+    check(`${vp.width}x${vp.height}: and the collapse handle sits on the 3D view's bottom edge`,
+      bands.every((b) => b.handleInView), JSON.stringify(bands.filter((b) => !b.handleInView)));
+    await context.close();
+  }
+}
+
+{
+  // An SE-class phone showed the step's title and, under a "More" badge, not
+  // one line of what to do.
+  const { context, page } = await phonePage({ width: 375, height: 667 });
+  const shown = await page.evaluate(() => {
+    const card = document.querySelector('.active-card').getBoundingClientRect();
+    const text = document.querySelector('.active-card .instruction').getBoundingClientRect();
+    return { textBottom: Math.round(text.bottom), cardBottom: Math.round(card.bottom) };
+  });
+  check('375x667: the step\'s instruction is on screen, not under the fold of its card',
+    shown.textBottom <= shown.cardBottom, JSON.stringify(shown));
+
+  // Three actions, one row, edge to edge.
+  const row = await page.evaluate(() => {
+    const wrap = document.querySelector('.active-actions').getBoundingClientRect();
+    const buttons = [...document.querySelectorAll('.active-actions > button')].map((b) => b.getBoundingClientRect());
+    const last = buttons[buttons.length - 1];
+    return { gap: Math.round(wrap.right - last.right), rows: new Set(buttons.map((b) => Math.round(b.top))).size };
+  });
+  check('375x667: the step actions fill their row, on one line',
+    row.gap <= 1 && row.rows === 1, JSON.stringify(row));
+  await context.close();
+}
+
+{
+  // The View sheet stripped its labels below 640 px to fit a bar it is not
+  // in: six bare symbols in a sheet with room to spare.
+  const { context, page } = await phonePage({ width: 360, height: 740 });
+  await sheetTab(page, 'View').click();
+  await page.waitForTimeout(300);
+  const labels = await page.evaluate(() => [...document.querySelectorAll('.mobile-sheet .mode')].map((m) => {
+    const label = m.querySelector('.mode-label');
+    const l = label?.getBoundingClientRect(), b = m.getBoundingClientRect();
+    return {
+      text: label?.textContent ?? '', shown: Boolean(l) && l.width > 0,
+      inside: Boolean(l) && l.left >= b.left - 0.5 && l.right <= b.right + 0.5,
+    };
+  }));
+  check('360 px, View sheet: every mode is named on screen, inside its own button',
+    labels.length >= 6 && labels.every((l) => l.shown && l.inside),
+    labels.map((l) => `${l.text}${l.shown && l.inside ? '' : ' ✗'}`).join(', '));
+  await context.close();
+}
+
+{
+  // A phone held sideways: the card showed "STEP 1 OF 16" and half a title,
+  // and "Show me" and "Sign off" wrapped onto two lines each.
+  const { context, page } = await phonePage({ width: 844, height: 390 });
+  const side = await page.evaluate(() => {
+    const card = document.querySelector('.active-card').getBoundingClientRect();
+    const text = document.querySelector('.active-card .instruction').getBoundingClientRect();
+    const heights = [...document.querySelectorAll('.active-actions > button')].map((b) => Math.round(b.getBoundingClientRect().height));
+    return { textBottom: Math.round(text.bottom), cardBottom: Math.round(card.bottom), heights };
+  });
+  check('844x390: the step\'s instruction is on screen',
+    side.textBottom <= side.cardBottom, JSON.stringify(side));
+  check('844x390: and no action\'s label wraps', side.heights.every((h) => h <= 52), `${side.heights.join(', ')} px tall`);
+  await context.close();
+}
+
+{
+  // The strip follows the active step. Moved on from elsewhere, step 12's chip
+  // sat 110 px past the strip's edge.
+  const { context, page } = await phonePage({ width: 375, height: 667 });
+  await page.evaluate(() => { const s = window.spatialStore.getState(); s.setActiveStep(s.assembly.steps[11].id); });
+  await page.waitForTimeout(800);
+  const strip = await page.evaluate(() => {
+    const l = document.querySelector('.step-list').getBoundingClientRect();
+    const r = document.querySelector('.step-row.selected').getBoundingClientRect();
+    return { list: [Math.round(l.left), Math.round(l.right)], chip: [Math.round(r.left), Math.round(r.right)] };
+  });
+  check('375 px: the step strip follows the active step into view',
+    strip.chip[0] >= strip.list[0] && strip.chip[1] <= strip.list[1], JSON.stringify(strip));
+  check('and says there are earlier steps off its start',
+    await page.locator('.step-list-wrap .scroll-more.left').count() === 1);
+
+  // Step 12 waits on an earlier one. The greyed-out "Sign off" said nothing,
+  // and the reason was at the bottom of a card that scrolls.
+  const reason = page.locator('.active-card-wrap > .blocked');
+  check('a blocked step says why, beside the button it greys out',
+    await reason.isVisible().catch(() => false), (await reason.textContent().catch(() => ''))?.trim());
+  const go = reason.locator('button.link');
+  const target = (await go.textContent().catch(() => ''))?.match(/\d+/)?.[0];
+  await go.click().catch(() => {});
+  await page.waitForTimeout(800);
+  const now = await page.evaluate(() => {
+    const s = window.spatialStore.getState();
+    return s.assembly.steps.findIndex((x) => x.id === s.activeStepId) + 1;
+  });
+  check('and its link goes to the step it is waiting on', Boolean(target) && now === Number(target),
+    `link said ${target}, now on step ${now}`);
+
+  // The view's own bottom-centre label and the handle shared one spot.
+  await page.evaluate(() => { const s = window.spatialStore.getState(); s.setActiveStep(s.assembly.steps[11].id); });
+  await page.waitForTimeout(600);
+  const clash = await page.evaluate(() => {
+    const a = document.querySelector('.step-tag-more')?.getBoundingClientRect();
+    const b = document.querySelector('.sheet-handle')?.getBoundingClientRect();
+    if (!a || !b) return { missing: !a ? 'label' : 'handle' };
+    return { overlap: !(a.bottom <= b.top || b.bottom <= a.top || a.right <= b.left || b.right <= a.left) };
+  });
+  check('and the "+N more" label stays clear of the collapse handle',
+    clash.overlap === false, JSON.stringify(clash));
+  await context.close();
+}
+
 await browser.close();
 finish('all layout checks passed');

@@ -695,6 +695,38 @@ const context = await browser.newContext({
   await tablet.close();
 }
 
+// --- 5b. A phone held sideways: the current step stays on screen. ---------
+// Below 480 px of height the current-step row was dropped to save a row, and
+// with it the only way to see or change the step without opening a panel.
+// Beside the control bar it costs no height at all.
+{
+  const side = await browser.newContext({
+    viewport: { width: 844, height: 390 }, deviceScaleFactor: 2,
+    isMobile: true, hasTouch: true, permissions: ['camera'],
+  });
+  const page = await side.newPage();
+  await open(page, `${URL}?assembly=jet-engine`);
+  await page.click('.ar-enter');
+  await page.waitForTimeout(2500);
+  const hud = await page.evaluate(() => {
+    const box = (sel) => {
+      const r = document.querySelector(sel)?.getBoundingClientRect();
+      return r && r.width > 0 && r.height > 0 ? r : null;
+    };
+    const now = box('.ar-now'), bar = box('.ar-bar');
+    return {
+      now: Boolean(now), bar: Boolean(bar),
+      sameRow: Boolean(now && bar) && now.top < bar.bottom && bar.top < now.bottom,
+      onScreen: Boolean(now && bar) && Math.max(now.bottom, bar.bottom) <= innerHeight + 1
+        && Math.min(now.left, bar.left) >= -1 && Math.max(now.right, bar.right) <= innerWidth + 1,
+    };
+  });
+  check('844x390 in AR: the current step stays on screen, beside the controls',
+    hud.now && hud.sameRow && hud.onScreen, JSON.stringify(hud));
+  await page.close();
+  await side.close();
+}
+
 // --- 3. A frame with no shelf must not anchor to anything. -----------------
 {
   const page = await context.newPage();
