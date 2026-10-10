@@ -9,22 +9,23 @@ import type { RefObject } from 'react';
  * gives no sign of it reads the same way: the content is reachable by touch,
  * but nothing on screen said so.
  *
- * Only the trailing edge (right, or down) is tracked. These containers all
- * start at their leading edge — step 1, the first datum, the top of a list —
- * so "there is more ahead" is the gap that was actually found; "you have
- * scrolled past something" would be a second, larger affordance with no
- * observed need for it yet.
+ * The trailing edge (right, or down) is `hasMore`. The leading edge is
+ * `hasLess`: these containers start at step 1, the first datum, the top of a
+ * list, so for a long time only the trailing edge mattered. Then the phone's
+ * step strip began following the active step, and from step 12 the first
+ * seven were off to the left with nothing saying so.
  */
 export function useScrollOverflow<T extends HTMLElement>(
   axis: 'x' | 'y',
   deps: readonly unknown[],
-): { ref: RefObject<T | null>; hasMore: boolean } {
+): { ref: RefObject<T | null>; hasMore: boolean; hasLess: boolean } {
   const ref = useRef<T | null>(null);
   const [hasMore, setHasMore] = useState(false);
+  const [hasLess, setHasLess] = useState(false);
 
   useEffect(() => {
     const el = ref.current;
-    if (!el) { setHasMore(false); return; }
+    if (!el) { setHasMore(false); setHasLess(false); return; }
     const update = (): void => {
       const remaining = axis === 'x'
         ? el.scrollWidth - el.clientWidth - el.scrollLeft
@@ -32,6 +33,7 @@ export function useScrollOverflow<T extends HTMLElement>(
       // A few pixels of slack: sub-pixel layout rounding must never read as
       // "still more to scroll" once a container has genuinely reached its end.
       setHasMore(remaining > 4);
+      setHasLess((axis === 'x' ? el.scrollLeft : el.scrollTop) > 4);
     };
     update();
     el.addEventListener('scroll', update, { passive: true });
@@ -46,5 +48,5 @@ export function useScrollOverflow<T extends HTMLElement>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [axis, ...deps]);
 
-  return { ref, hasMore };
+  return { ref, hasMore, hasLess };
 }

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useStore } from '../state/store';
 import type { EligibilityReason } from '../perception/eligibility';
 import { ASSEMBLIES } from '../data';
@@ -5,6 +6,8 @@ import { useUiConfig } from '../ui/UiConfigContext';
 import { useScrollOverflow } from '../ui/useScrollOverflow';
 import { useStepPreview } from './useStepPreview';
 import { activateOnKey } from '../ui/keys';
+import { revealOffset } from '../ui/reveal';
+import { prefersReducedMotion } from '../ui/motion';
 
 /** Left rail: the ordered build steps with live status, and the active card. */
 export function StepGuide(): JSX.Element {
@@ -19,6 +22,9 @@ export function StepGuide(): JSX.Element {
   const ui = useUiConfig();
 
   const active = sequence.steps.find((s) => s.step.id === activeStepId);
+  const stepNumber = (id: string): number => sequence.steps.findIndex((s) => s.step.id === id) + 1;
+  const firstBlocking = (ids: string[]): string =>
+    ids.reduce((a, b) => (stepNumber(b) < stepNumber(a) ? b : a));
   const remaining = Math.round(sequence.remainingS / 60);
 
   // The card that most needs to fit is the one a short phone's 38dvh panel
@@ -32,7 +38,28 @@ export function StepGuide(): JSX.Element {
   // The same question, sideways: the step strip starts at step 1, and on a
   // 46-step assembly only the first handful of numbered circles fit. Nothing
   // said the rest were a swipe away rather than simply not there.
-  const { ref: stepListRef, hasMore: moreSteps } = useScrollOverflow<HTMLOListElement>('x', [assembly.id]);
+  const { ref: stepListRef, hasMore: moreSteps, hasLess: earlierSteps } =
+    useScrollOverflow<HTMLOListElement>('x', [assembly.id]);
+
+  // And the strip follows the active step. Advanced from the AR bar, or by
+  // signing off, the active step walked off the strip's right edge: on a
+  // phone, step 12's chip sat 110 px past it, so the strip no longer said
+  // where you were.
+  useEffect(() => {
+    const list = stepListRef.current;
+    const item = list?.querySelector<HTMLElement>('.step-row.selected');
+    if (!list || !item) return;
+    const l = list.getBoundingClientRect();
+    const r = item.getBoundingClientRect();
+    const behavior: ScrollBehavior = prefersReducedMotion() ? 'auto' : 'smooth';
+    if (list.scrollWidth > list.clientWidth + 1) {
+      const left = revealOffset(list.scrollLeft, list.clientWidth, r.left - l.left + list.scrollLeft, r.width);
+      if (left !== undefined) list.scrollTo?.({ left, behavior });
+    } else if (list.scrollHeight > list.clientHeight + 1) {
+      const top = revealOffset(list.scrollTop, list.clientHeight, r.top - l.top + list.scrollTop, r.height);
+      if (top !== undefined) list.scrollTo?.({ top, behavior });
+    }
+  }, [activeStepId, assembly.id, stepListRef]);
 
   return (
     <aside className="panel step-guide">
@@ -67,7 +94,7 @@ export function StepGuide(): JSX.Element {
         </div>
       </header>
 
-      <div className={`step-list-wrap ${moreSteps ? 'has-more' : ''}`}>
+      <div className={`step-list-wrap ${moreSteps ? 'has-more' : ''} ${earlierSteps ? 'has-less' : ''}`}>
         <ol className="step-list" ref={stepListRef}>
           {sequence.steps.map((s, i) => (
             <li
@@ -87,6 +114,7 @@ export function StepGuide(): JSX.Element {
         </ol>
         {/* Desktop shows the full titled list already — nothing to hide from
             here, and the rule below only paints the strip on mobile anyway. */}
+        {earlierSteps && <span className="scroll-more left" aria-hidden="true">‹</span>}
         {moreSteps && <span className="scroll-more right" aria-hidden="true">›</span>}
       </div>
 
@@ -115,15 +143,26 @@ export function StepGuide(): JSX.Element {
                     .join(', ')}
                 </p>
               )}
-              {active.blockedBy.length > 0 && (
-                <p className="blocked">Blocked until earlier steps are complete.</p>
-              )}
               <PresenceList partIds={active.step.partIds} />
             </div>
             {/* Only rendered when the card is actually short of room — a
                 permanent hint on a card that always fits would be noise. */}
             {hasMore && <span className="scroll-more down" aria-hidden="true">More ↓</span>}
           </div>
+          {/* Why "Sign off" is greyed out, next to it and not inside the
+              scrolling card: on a phone the card's last line is under the
+              "More" badge, and the button looked broken. With the way out. */}
+          {active.blockedBy.length > 0 ? (
+            <p className="blocked" role="status">
+              Waiting on step{active.blockedBy.length > 1 ? 's' : ''}{' '}
+              {active.blockedBy.map((id) => stepNumber(id)).sort((a, b) => a - b).join(', ')}.{' '}
+              <button className="link" onClick={() => setActiveStep(firstBlocking(active.blockedBy))}>
+                Go to step {Math.min(...active.blockedBy.map(stepNumber))}
+              </button>
+            </p>
+          ) : active.status === 'error' ? (
+            <p className="blocked" role="status">Clear this step's errors before signing it off.</p>
+          ) : null}
           <div className="active-actions">
             <button className="ghost" onClick={preview.play}>▶ Show me</button>
             <button className="secondary" onClick={placeStep}>⤓ Place</button>
