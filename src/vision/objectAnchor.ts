@@ -8,7 +8,7 @@ import {
   rectPoseFromCorners,
   solveHomography,
 } from '../engine/tracking/markerTracking';
-import { edgeField } from '../perception/edges';
+import { edgeField, type EdgeField } from '../perception/edges';
 import { quadAgreement, type Agreement } from '../perception/agreement';
 import type { GridTargetDef, Pose } from '../engine/types';
 
@@ -89,6 +89,28 @@ const PLAIN_MAX_TILT_DEG = 10;
 /** Directions to try when a facade is too far to the side to be found square-on. */
 const YAW_GUESSES_DEG = [-20, 20, -32, 32];
 
+/**
+ * When the lattice found is one row off the real facade, and how sure the
+ * image has to be before that is acted on.
+ *
+ * A KALLAX with instrument cases on top: the cases' upper edge sits one row
+ * pitch above the top board, the periodicity search counts it as a board, and
+ * a whole, evenly spaced lattice one row too high comes back, three frames in
+ * a row, at full confidence. Its outline gives it away: the bottom edge lies
+ * on the real middle board, but the side edges run half over the wall. Scored
+ * on the device frames of that session, the lattice as found covered 0.70 of
+ * its outline and the one a row lower 1.00, on every side.
+ *
+ * Measured on a real 4x4 too, it is not always that clear. Bags hanging over
+ * the left side and a desk against the right left the correct candidate
+ * scoring below the wrong one (0.67 against 0.81). So the image may only move
+ * a lock on near-perfect evidence, and a floor seen by the platform is the
+ * other judge: see `floorFit`.
+ */
+const ROW_SHIFT_MIN_COVERAGE = 0.9;
+const ROW_SHIFT_MIN_SIDE = 0.75;
+const ROW_SHIFT_MARGIN = 0.15;
+
 export type AnchorMode = 'detected' | 'tracked';
 
 export interface ObjectObservation {
@@ -111,6 +133,12 @@ export interface ObjectObservation {
    * there are device sessions to calibrate it against.
    */
   agreement?: Agreement;
+  /**
+   * Rows the detected lattice was moved by to fit the facade (+1 is one row
+   * down the face), when its own outline said it was misread. 0 or absent:
+   * taken as found.
+   */
+  rowShift?: number;
 }
 
 export interface ObjectAnchorOptions {
@@ -136,6 +164,8 @@ export class ObjectAnchorTracker {
   private lastDetectMs = Number.NEGATIVE_INFINITY;
   private lastAgreementMs = Number.NEGATIVE_INFINITY;
   private locked = false;
+  /** The row shift the current lock was taken with; the tracker follows the lattice as found. */
+  private rowShift = 0;
 
   constructor(
     private readonly target: GridTargetDef,
@@ -152,11 +182,18 @@ export class ObjectAnchorTracker {
     this.tracker.reset();
     this.locked = false;
     this.pending = undefined;
+    this.rowShift = 0;
   }
 
   /** Camera calibration can change while running (the settings slider). */
   private intrinsics(image: ImageData, fovDeg: number | undefined) {
     return estimateIntrinsics(image.width, image.height, fovDeg ?? this.opts.fovDeg ?? 60);
+  }
+
+  /** The lattice's points, renamed to where they sit on a facade `rowShift` rows away. */
+  private shifted(frame: TrackedFrame): TrackedFrame {
+    const dy = this.rowShift * (this.target.heightM / this.target.rows);
+    return { ...frame, model: frame.model.map((p) => ({ x: p.x, y: p.y - dy })) };
   }
 
   /**
@@ -269,7 +306,10 @@ export class ObjectAnchorTracker {
     const K = this.intrinsics(image, fovDeg);
     const interval = this.opts.detectIntervalMs ?? 500;
     if (this.hasLock) {
-      const tracked = this.tracker.track(image);
+      const followed = this.tracker.track(image);
+      // The tracker follows the lattice as it was found; a lock taken a row
+      // away from it reads its points a row away too.
+      const tracked = followed && this.rowShift !== 0 ? this.shifted(followed) : followed;
       if (tracked) {
         const solved = planePoseFromPoints(tracked.model, tracked.image, K);
         if (solved && solved.reprojectionPx < 8) {
@@ -287,6 +327,7 @@ export class ObjectAnchorTracker {
             mode: 'tracked',
             reprojectionPx: solved.reprojectionPx,
             agreement,
+            rowShift: this.rowShift || undefined,
           };
         }
       }
@@ -294,6 +335,7 @@ export class ObjectAnchorTracker {
       this.tracker.reset();
       this.locked = false;
       this.pending = undefined;
+      this.rowShift = 0;
     }
 
     if (nowMs - this.lastDetectMs < interval) return undefined;
@@ -310,7 +352,9 @@ export class ObjectAnchorTracker {
       this.pending = undefined;
       return undefined;
     }
-    const solved = rectPoseFromCorners(quad as Point2[], this.target.widthM, this.target.heightM, K);
+    const rowShift = rowShiftFor(edgeField(image, this.opts.workingSize), quad as Point2[], this.target);
+    const corners = rowShift === 0 ? quad as Point2[] : shiftQuad(quad as Point2[], this.target, rowShift);
+    const solved = corners && rectPoseFromCorners(corners, this.target.widthM, this.target.heightM, K);
     if (!solved || solved.reprojectionPx > 6) return undefined;
 
     // A detection that agrees with the one before it extends the run; one that
@@ -339,11 +383,53 @@ export class ObjectAnchorTracker {
     // Enough frames agree: commit, and hand the detection to the tracker so the
     // next frames are followed rather than searched for.
     this.locked = this.tracker.seed(image, obs, this.target, toImage);
+    this.rowShift = this.locked ? rowShift : 0;
     return {
       pose: solved.pose,
       confidence: Math.max(0, Math.min(1, obs.confidence * (1 - solved.reprojectionPx / 8))),
       mode: 'detected',
       reprojectionPx: solved.reprojectionPx,
+      rowShift: rowShift || undefined,
     };
   }
+}
+
+type RowTarget = Pick<GridTargetDef, 'widthM' | 'heightM' | 'rows'>;
+
+/** The image outline of the facade `rows` rows down (negative: up) from `quad`. */
+export function shiftQuad(quad: Point2[], target: RowTarget, rows: number): Point2[] | undefined {
+  const model = rectModelCorners(target.widthM, target.heightM);
+  const H = solveHomography(model, quad);
+  if (!H) return undefined;
+  const dy = rows * (target.heightM / target.rows);
+  const out = model.map(({ x, y }) => {
+    const w = H[2][0] * x + H[2][1] * (y + dy) + H[2][2];
+    if (!Number.isFinite(w) || Math.abs(w) < 1e-9) return undefined;
+    return {
+      x: (H[0][0] * x + H[0][1] * (y + dy) + H[0][2]) / w,
+      y: (H[1][0] * x + H[1][1] * (y + dy) + H[1][2]) / w,
+    };
+  });
+  return out.some((p) => p === undefined) ? undefined : out as Point2[];
+}
+
+/**
+ * Whether a lattice found at `quad` is a row off the facade, judged by its
+ * outline: 0 unless a row up or down fits near-perfectly where the lattice as
+ * found does not. See `ROW_SHIFT_MIN_COVERAGE` for the evidence and the bar.
+ */
+export function rowShiftFor(field: EdgeField, quad: Point2[], target: RowTarget): number {
+  const asFound = quadAgreement(field, quad).coverage;
+  let best = 0;
+  let bestCoverage = asFound;
+  for (const rows of [-1, 1]) {
+    const candidate = shiftQuad(quad, target, rows);
+    if (!candidate) continue;
+    const a = quadAgreement(field, candidate);
+    const sound = a.coverage >= ROW_SHIFT_MIN_COVERAGE
+      && a.sides.every((side) => side.coverage >= ROW_SHIFT_MIN_SIDE)
+      && a.coverage >= asFound + ROW_SHIFT_MARGIN;
+    if (sound && a.coverage > bestCoverage) { best = rows; bestCoverage = a.coverage; }
+  }
+  return best;
 }

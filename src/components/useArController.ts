@@ -15,6 +15,7 @@ import { edgeField } from '../perception/edges';
 import { readPresence } from '../perception/presence';
 import { foldEvidence, initEvidence, type EvidenceState } from '../perception/evidence';
 import { alignToMarker } from '../engine/alignment';
+import { floorFit } from '../engine/floorEstimate';
 import { useStore, surfaceDrop, type PartPresence } from '../state/store';
 import type { AssemblyDef, GridTargetDef, Pose } from '../engine/types';
 import type { SceneManager } from '../render/babylon/SceneManager';
@@ -1049,7 +1050,13 @@ export function updatePresence(manager: SceneManager | undefined, image: ImageDa
   state.setPartPresence(next);
 }
 
-function applyObjectAnchor(
+/** The floor correction last applied, so the log says when it changes rather than every frame. */
+let lastFloorShift = 0;
+/** And when an off-the-floor pose was last logged: they come in bursts. */
+let lastOffFloorLogMs = Number.NEGATIVE_INFINITY;
+
+/** Exported for tests. */
+export function applyObjectAnchor(
   tracker: ObjectAnchorTracker,
   image: ImageData,
   nowMs: number,
@@ -1069,11 +1076,11 @@ function applyObjectAnchor(
   );
   if (!obs) return false;
 
-  // Reported, not enforced. Whether a lock's implied outline is really in the
-  // image is the measurement that would have caught the KALLAX mis-lock, but
-  // the threshold for acting on it has to come from device sessions rather
-  // than from the single frame it was designed against — so it is logged and
-  // nothing branches on it yet.
+  // Reported, not enforced, as a gate on the lock as a whole: the threshold
+  // for that has to come from device sessions rather than from the frame it
+  // was designed against. The one decision the outline does drive is narrower
+  // and made in the tracker: whether the lattice is a row off, on
+  // near-perfect evidence only (`rowShiftFor`).
   if (obs.agreement) {
     logEvent('place', 'recognition agreement', {
       coverage: Number(obs.agreement.coverage.toFixed(3)),
@@ -1082,12 +1089,56 @@ function applyObjectAnchor(
         ? null : Number(obs.agreement.medianOffsetPx.toFixed(1)),
       sides: obs.agreement.sides.map((s) => Number(s.coverage.toFixed(2))),
       confidence: Number(obs.confidence.toFixed(2)),
+      ...(obs.rowShift ? { rowShift: obs.rowShift } : {}),
     });
+  }
+  // The image's own verdict that the lattice was a row off — at the detection
+  // cadence, so rare enough to log every time.
+  if (obs.mode === 'detected' && obs.rowShift) {
+    logEvent('place', 'recognition read a row off, moved', { rows: obs.rowShift, by: 'outline' });
   }
 
   const world = manager.cameraToWorld(obs.pose);
-  const anchor = alignToMarker(world, target.poseInAssembly);
+  let anchor = alignToMarker(world, target.poseInAssembly);
   const state = useStore.getState();
+  // And the floor's: a floor-standing object's base belongs on the floor.
+  // Two device sessions locked a KALLAX one row high and one row low, and in
+  // both the floor the operator had tapped was exactly one row pitch away
+  // from the base. Only with a floor the platform has actually measured.
+  const floorY = manager.xrFloorY();
+  const fit = floorY !== undefined && (state.assembly.workSurfaceM ?? 0) === 0
+    ? floorFit(anchor.position[1], floorY, target.heightM / target.rows)
+    : { rows: 0 };
+  if (!fit) {
+    // A pose the floor says cannot be: the overlay stays where it was rather
+    // than jumping to it. The same session's bad bursts moved it up to 47 cm.
+    // And a lock that produces one has lost the object: look for it afresh.
+    tracker.reset();
+    if (performance.now() - lastOffFloorLogMs > 5000) {
+      lastOffFloorLogMs = performance.now();
+      logEvent('place', 'recognition off the floor, ignored', {
+        floorY: Number(floorY!.toFixed(3)), baseY: Number(anchor.position[1].toFixed(3)),
+        confidence: Number(obs.confidence.toFixed(2)),
+      });
+    }
+    return false;
+  }
+  const rows = fit.rows;
+  if (rows !== 0) {
+    const [qx, qy, qz, qw] = anchor.rotation;
+    // The assembly's own up, in the world: a row down the face, not just down.
+    const up = [2 * (qx * qy - qw * qz), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz + qw * qx)];
+    const d = rows * (target.heightM / target.rows);
+    anchor = { ...anchor, position: [anchor.position[0] - up[0] * d, anchor.position[1] - up[1] * d, anchor.position[2] - up[2] * d] };
+  }
+  if (rows !== lastFloorShift) {
+    lastFloorShift = rows;
+    if (rows !== 0) {
+      logEvent('place', 'recognition read a row off, moved', {
+        rows, by: 'floor', floorY: Number(floorY!.toFixed(3)), baseY: Number(anchor.position[1].toFixed(3)),
+      });
+    }
+  }
   if (state.arPlacement === 'marker' && state.anchorQuality >= obs.confidence) return false;
   state.setAnchor(anchor, obs.confidence, 'recognized');
   return true;
