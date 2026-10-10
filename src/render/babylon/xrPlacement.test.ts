@@ -393,6 +393,62 @@ describe('holding the spot while the device learns the room', () => {
     f.engine.dispose();
   });
 
+  it('stops following the old spot the moment a new one is taken', async () => {
+    // A device log: "the platform moved the anchor" by 1.42 m, 66 ms after a
+    // re-tap — the old anchor still reporting while the new one was made.
+    const f = fixture();
+    const first = { id: 7, transformationMatrix: Matrix.Translation(1, 0, 2), remove: vi.fn() };
+    let resolveSecond: (a: unknown) => void = () => undefined;
+    const second = { id: 8, transformationMatrix: Matrix.Translation(3, 0, 1), remove: vi.fn() };
+    f.anchors.addAnchorPointUsingHitTestResultAsync
+      .mockResolvedValueOnce(first as never)
+      .mockImplementationOnce(() => new Promise((r) => { resolveSecond = r; }) as never);
+    const onAnchorPose = vi.fn();
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, { onAnchorPose, onSelectAnchor: () => true });
+    await prepared!.enter();
+    f.settled();
+    f.session.dispatchEvent(new Event('select'));
+    await vi.waitFor(() => expect(f.anchors.addAnchorPointUsingHitTestResultAsync).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 0));
+    f.session.dispatchEvent(new Event('select'));
+    // The new anchor is still being made: the old one is already let go.
+    expect(first.remove).toHaveBeenCalledTimes(1);
+    f.anchors.onAnchorUpdatedObservable.notifyObservers(first as never);
+    expect(onAnchorPose, 'the old spot no longer speaks').not.toHaveBeenCalled();
+    resolveSecond(second);
+    await new Promise((r) => setTimeout(r, 0));
+    f.anchors.onAnchorUpdatedObservable.notifyObservers(second as never);
+    expect(onAnchorPose).toHaveBeenCalledTimes(1);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+
+  it('keeps only the latest placement\'s anchor, whichever arrives first', async () => {
+    const f = fixture();
+    let resolveFirst: (a: unknown) => void = () => undefined;
+    const first = { id: 7, transformationMatrix: Matrix.Translation(1, 0, 2), remove: vi.fn() };
+    const second = { id: 8, transformationMatrix: Matrix.Translation(3, 0, 1), remove: vi.fn() };
+    f.anchors.addAnchorPointUsingHitTestResultAsync
+      .mockImplementationOnce(() => new Promise((r) => { resolveFirst = r; }) as never)
+      .mockResolvedValueOnce(second as never);
+    const onAnchorPose = vi.fn();
+    const prepared = await prepareImmersiveAr(f.scene, f.overlay, { onAnchorPose, onSelectAnchor: () => true });
+    await prepared!.enter();
+    f.settled();
+    f.session.dispatchEvent(new Event('select'));
+    f.session.dispatchEvent(new Event('select'));
+    await new Promise((r) => setTimeout(r, 0));
+    resolveFirst(first);                       // the slow, superseded one
+    await new Promise((r) => setTimeout(r, 0));
+    expect(first.remove).toHaveBeenCalledTimes(1);
+    f.anchors.onAnchorUpdatedObservable.notifyObservers(first as never);
+    expect(onAnchorPose).not.toHaveBeenCalled();
+    f.anchors.onAnchorUpdatedObservable.notifyObservers(second as never);
+    expect(onAnchorPose).toHaveBeenCalledTimes(1);
+    prepared!.dispose();
+    f.engine.dispose();
+  });
+
   it('still places when the device grants no anchors', async () => {
     const f = fixture();
     f.baseExperience.featuresManager.enableFeature = vi.fn((name: string) => {

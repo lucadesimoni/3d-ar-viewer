@@ -175,6 +175,31 @@ interface PartVisual {
  */
 const CAMERA_FRAME_TIMEOUT_MS = 1500;
 
+/**
+ * Where on the floor to stand something brought into view: where the view
+ * ray meets the floor, kept between its own size plus half a metre (not on
+ * the operator's feet) and 5 m; looking level or up, straight ahead at the
+ * auto-framed distance.
+ */
+export function floorSpotInView(
+  eye: Vector3, view: Vector3, floorY: number, radiusM: number, framedM: number,
+): Pose {
+  const flat = new Vector3(view.x, 0, view.z);
+  if (flat.lengthSquared() < 1e-6) flat.set(0, 0, 1);
+  flat.normalize();
+  const near = radiusM + 0.5;
+  let along = framedM;
+  if (view.y < -0.05 && eye.y > floorY) {
+    const t = (floorY - eye.y) / view.y;
+    along = Math.hypot(view.x * t, view.z * t);
+  }
+  along = Math.min(5, Math.max(near, along));
+  return {
+    position: [eye.x + flat.x * along, floorY, eye.z + flat.z * along],
+    rotation: [0, 0, 0, 1],
+  };
+}
+
 export class SceneManager {
   readonly engine: AbstractEngine;
   readonly renderBackend: RenderBackendKind;
@@ -731,6 +756,14 @@ export class SceneManager {
     const radius = this.assemblyBounds(true).radius;
     const halfFov = ((this.visibleFovDeg * Math.PI) / 180) / 2;
     const distance = Math.min(5, Math.max(0.5, (radius / Math.tan(halfFov)) * 1.7));
+    // Something that stands on the floor is brought onto the floor. Centred
+    // in the view, a device log had a 3 m jet engine put 1.2 to 3.2 m
+    // *underground* four times running: looking down at the floor, the view
+    // ray at the auto-framed distance (5 m) ends well below it.
+    if (opts.centreInView && (this.inXrSession || this.arMode) && (this.assembly.workSurfaceM ?? 0) === 0) {
+      const floorY = this.xrFloorY() ?? (this.inXrSession ? 0 : cam.position.y - this.surfaceDropM);
+      return this.placementPose(floorSpotInView(cam.position, view, floorY, radius, distance));
+    }
     // Sitting it below the horizon reads as "on a bench" rather than floating at
     // eye level — but when the operator has explicitly asked for it to be
     // brought into view, centred in that view is what they asked for.
