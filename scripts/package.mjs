@@ -9,7 +9,9 @@
  *  - the web app: `dist` as `.zip` and `.tar.gz`, for any static host;
  *  - the server: an npm package holding `dist` and `server/serve.mjs`, with the
  *    `spatial-ar-viewer` command. No dependencies: the app's are compiled into
- *    `dist`, and the server is written to need none;
+ *    `dist`, and the server is written to need none. Private: never published;
+ *  - every one of them with LICENSE.txt and THIRD_PARTY_NOTICES.txt, which the
+ *    build puts into `dist` (`scripts/third-party-notices.mjs`);
  *  - the Mendix widget: an `.mpk` (`vite.widget.config.ts`);
  *  - `SHA256SUMS.txt` over all of them, and `RELEASE_NOTES.md` cut from
  *    `CHANGELOG.md`.
@@ -35,6 +37,8 @@ export function assetNames(version, owner = 'lucadesimoni') {
     webTar: `spatial-ar-web-${version}.tar.gz`,
     npm: `${owner}-spatial-ar-viewer-${version}.tgz`,
     mpk: `anthropic.SpatialArViewer-${version}.mpk`,
+    imageAmd64: `spatial-ar-image-${version}-amd64.tar.gz`,
+    imageArm64: `spatial-ar-image-${version}-arm64.tar.gz`,
     sums: 'SHA256SUMS.txt',
     notes: 'RELEASE_NOTES.md',
   };
@@ -42,8 +46,8 @@ export function assetNames(version, owner = 'lucadesimoni') {
 
 /**
  * The server package's manifest: the root one, less everything it does not
- * need. Scoped to the repository owner, which is what GitHub Packages
- * requires of an npm package it hosts.
+ * need. Private: it is a release asset for licensees, and `npm publish`
+ * refuses a private package, so it cannot reach a registry by accident.
  */
 export function stagedPackageJson(pkg, owner = 'lucadesimoni') {
   return {
@@ -56,7 +60,7 @@ export function stagedPackageJson(pkg, owner = 'lucadesimoni') {
     bin: { 'spatial-ar-viewer': 'server/serve.mjs' },
     files: ['dist', 'server', 'README.md', 'COMPLIANCE.md', 'LICENSE'],
     repository: { type: 'git', url: `git+https://github.com/${owner}/3d-ar-viewer.git` },
-    publishConfig: { registry: 'https://npm.pkg.github.com' },
+    private: true,
   };
 }
 
@@ -76,11 +80,13 @@ export function installNotes(version, owner = 'lucadesimoni') {
     '',
     `- **Web app**: unpack \`${n.webZip}\` (or \`${n.webTar}\`) onto any static host. AR needs HTTPS.`,
     `- **Server**: \`npm install -g ./${n.npm}\`, then \`spatial-ar-viewer\` (port 8080; \`--https\` with a certificate for devices).`,
-    `  Also published as \`@${owner}/spatial-ar-viewer@${version}\` on GitHub Packages.`,
-    `- **Container**: \`docker run -p 8080:8080 ghcr.io/${owner}/3d-ar-viewer:${version}\` (linux/amd64, linux/arm64).`,
+    `- **Container**: \`docker load -i ${n.imageAmd64}\` (or \`${n.imageArm64}\`), then \`docker run -p 8080:8080 spatial-ar:${version}\`.`,
     `- **Mendix widget**: import \`${n.mpk}\` into the app's \`widgets\` folder (Studio Pro: App → Synchronize App Directory).`,
     '',
     `Check downloads against \`${n.sums}\`: \`sha256sum -c ${n.sums}\`.`,
+    '',
+    'Proprietary software of Outthinkx, licensed for evaluation only: see LICENSE.txt in each package.',
+    'Third-party components keep their own licences: THIRD_PARTY_NOTICES.txt.',
     '',
   ].join('\n');
 }
@@ -133,6 +139,9 @@ async function main() {
   if (!skipBuild) run('npm', ['run', 'build'], { env });
   const dist = join(ROOT, 'dist');
   if (!existsSync(join(dist, 'index.html'))) throw new Error('no dist/index.html: build first, or drop --skip-build');
+  for (const f of ['LICENSE.txt', 'THIRD_PARTY_NOTICES.txt']) {
+    if (!existsSync(join(dist, f))) throw new Error(`no dist/${f}: the build writes it (scripts/third-party-notices.mjs)`);
+  }
 
   // 1. The web app, for any static host.
   run('tar', ['-czf', join(OUT, names.webTar), '-C', dist, '.']);
@@ -153,6 +162,11 @@ async function main() {
   writeFileSync(join(widgetStage, 'package.xml'),
     packageXmlFor(readFileSync(join(ROOT, 'src/mendix/package.xml'), 'utf8'), version));
   cpSync(join(ROOT, 'src/mendix/SpatialArViewer.xml'), join(widgetStage, 'SpatialArViewer.xml'));
+  // The licence and the third-party notices go with the widget's own files:
+  // the folder package.xml lists is what Mendix deploys.
+  for (const f of ['LICENSE.txt', 'THIRD_PARTY_NOTICES.txt']) {
+    cpSync(join(dist, f), join(widgetStage, 'anthropic/spatialarviewer', f));
+  }
   run('zip', ['-q', '-r', '-X', join(OUT, names.mpk), 'package.xml', 'SpatialArViewer.xml', 'anthropic'], { cwd: widgetStage });
 
   rmSync(stage, { recursive: true, force: true });

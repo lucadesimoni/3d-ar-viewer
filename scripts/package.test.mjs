@@ -8,11 +8,11 @@ const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 describe('release packaging', () => {
   it('names every asset after the version', () => {
     const n = assetNames('1.2.3', 'someone');
-    expect(Object.values(n).filter((f) => f.includes('1.2.3'))).toHaveLength(4);
+    expect(Object.values(n).filter((f) => f.includes('1.2.3'))).toHaveLength(6);
     expect(n.npm).toBe('someone-spatial-ar-viewer-1.2.3.tgz');   // what `npm pack` names a scoped package
   });
 
-  it('ships the server package with no dependencies, scoped for GitHub Packages', () => {
+  it('ships the server package with no dependencies, and never to a registry', () => {
     const m = stagedPackageJson(pkg, 'someone');
     expect(m.name).toBe('@someone/spatial-ar-viewer');
     expect(m.version).toBe(pkg.version);
@@ -20,7 +20,10 @@ describe('release packaging', () => {
     expect(m.devDependencies).toBeUndefined();
     expect(m.scripts).toBeUndefined();
     expect(m.bin['spatial-ar-viewer']).toBe('server/serve.mjs');
-    expect(m.publishConfig.registry).toBe('https://npm.pkg.github.com');
+    // npm refuses to publish a private package.
+    expect(m.private).toBe(true);
+    expect(m.publishConfig).toBeUndefined();
+    expect(m.license).not.toMatch(/GPL/);
   });
 
   it('puts the release version into the widget\'s package.xml', () => {
@@ -50,8 +53,9 @@ describe('release packaging', () => {
     for (const name of Object.values(assetNames('1.2.3', 'someone')).filter((f) => !f.endsWith('.md'))) {
       expect(notes).toContain(name);
     }
-    expect(notes).toContain('ghcr.io/someone/3d-ar-viewer:1.2.3');
-    expect(notes).toContain('@someone/spatial-ar-viewer@1.2.3');
+    expect(notes).not.toContain('ghcr.io');
+    expect(notes).not.toContain('GitHub Packages');
+    expect(notes).toContain('LICENSE.txt');
   });
 
   it('has notes for the version in package.json', () => {

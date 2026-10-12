@@ -30,8 +30,9 @@ FROM node:22-alpine AS runtime
 ARG VERSION=0.0.0
 ARG BUILD_COMMIT=unknown
 LABEL org.opencontainers.image.title="Spatial Assembly AR" \
+      org.opencontainers.image.vendor="Outthinkx" \
       org.opencontainers.image.description="Guided-assembly AR viewer: the built web app and its zero-dependency server." \
-      org.opencontainers.image.licenses="GPL-3.0-or-later" \
+      org.opencontainers.image.licenses="LicenseRef-Outthinkx-Evaluation" \
       org.opencontainers.image.source="https://github.com/lucadesimoni/3d-ar-viewer" \
       org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$BUILD_COMMIT

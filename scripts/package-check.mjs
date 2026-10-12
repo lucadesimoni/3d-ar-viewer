@@ -80,6 +80,8 @@ async function serve(command, args, env = {}) {
   const need = ['index.html', 'xr-check.html', 'sw.js', 'manifest.webmanifest', 'embed-demo.html'];
   check('the web zip holds the whole app', need.every((f) => zipFiles.includes(f)) && zipFiles.some((f) => /^assets\/index-.*\.js$/.test(f)),
     `${zipFiles.length} files`);
+  check('the web zip carries the licence and the third-party notices',
+    ['LICENSE.txt', 'THIRD_PARTY_NOTICES.txt'].every((f) => zipFiles.includes(f)));
   check('and the tarball holds the same files', JSON.stringify([...zipFiles].sort()) === JSON.stringify([...tarFiles].sort()),
     `${tarFiles.length} files`);
 }
@@ -89,7 +91,13 @@ async function serve(command, args, env = {}) {
   const listing = sh('tar', ['-tzf', join(OUT, names.npm)]).split('\n');
   const manifest = JSON.parse(sh('tar', ['-xzOf', join(OUT, names.npm), 'package/package.json']));
   check('the npm package holds the app and the server',
-    ['package/server/serve.mjs', 'package/dist/index.html', 'package/LICENSE'].every((f) => listing.includes(f)));
+    ['package/server/serve.mjs', 'package/dist/index.html'].every((f) => listing.includes(f)));
+  check('with the licence and the third-party notices',
+    ['package/LICENSE', 'package/dist/LICENSE.txt', 'package/dist/THIRD_PARTY_NOTICES.txt'].every((f) => listing.includes(f)));
+  // Proprietary: the package is a release asset, never for a public registry.
+  check('and is private, under the proprietary licence',
+    manifest.private === true && !manifest.publishConfig && !/GPL/.test(manifest.license ?? ''),
+    `private ${manifest.private}, licence ${manifest.license}`);
   check('and depends on nothing, so installing it fetches nothing',
     !manifest.dependencies && !manifest.devDependencies && manifest.version === version,
     `${manifest.name}@${manifest.version}`);
@@ -138,6 +146,8 @@ const widgetDir = join(scratch, 'mpk');
   const name = id.split('.').pop();
   check('the widget id resolves to the folder package.xml lists',
     Boolean(id) && folder === expected, `${id} → ${expected}, listed ${folder}`);
+  check('the .mpk carries the licence and the third-party notices',
+    ['LICENSE.txt', 'THIRD_PARTY_NOTICES.txt'].every((f) => files.includes(`${expected}/${f}`)));
   check('and both builds are in it', [`${expected}/${name}.js`, `${expected}/${name}.mjs`].every((f) => files.includes(f)));
 }
 

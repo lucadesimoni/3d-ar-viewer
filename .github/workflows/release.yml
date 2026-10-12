@@ -3,10 +3,14 @@ name: Release
 # section) to release every component:
 #
 #   - the web app, as .zip and .tar.gz;
-#   - the server, as an npm package (attached, and on GitHub Packages);
-#   - the container image, on GHCR, for linux/amd64 and linux/arm64;
+#   - the server, as an npm package;
+#   - the container image, for linux/amd64 and linux/arm64, as `docker load`
+#     archives;
 #   - the Mendix widget, as an .mpk;
 #   - SHA256SUMS.txt over the files, and the changelog section as the notes.
+#
+# All of them as files on the GitHub release and nowhere else: the software is
+# proprietary (LICENSE), so nothing goes to a public registry.
 #
 # Run by hand from the Actions tab, it builds and checks all of it and
 # publishes nothing: a dry run. Run by hand on `main` with "publish" ticked, it
@@ -81,14 +85,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
       - name: Names
         id: names
         run: |
           echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
           echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -111,25 +113,36 @@ jobs:
           curl -sf http://localhost:8080/ | grep -q '<div id="root"' || { echo "::error::The image does not serve the app."; exit 1; }
           [ "$(docker exec check id -un)" = node ] || { echo "::error::The image runs as root."; exit 1; }
           docker rm -f check
-      - name: Sign in to GHCR
-        if: env.PUBLISH == 'true'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build for amd64 and arm64${{ env.PUBLISH == 'true' && ', and publish' || '' }}
+      # Both architectures, as files for the release. The app inside is
+      # compiled once, natively (see the Dockerfile), so arm64 runs nothing
+      # under emulation.
+      - name: Save the image for amd64
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: ${{ env.PUBLISH == 'true' }}
-          tags: |
-            ${{ steps.names.outputs.image }}:${{ steps.names.outputs.version }}
-            ${{ steps.names.outputs.image }}:latest
+          platforms: linux/amd64
+          tags: spatial-ar:${{ steps.names.outputs.version }}
+          outputs: type=docker,dest=image/spatial-ar-image-${{ steps.names.outputs.version }}-amd64.tar
           build-args: |
             VERSION=${{ steps.names.outputs.version }}
             BUILD_COMMIT=${{ steps.names.outputs.commit }}
+      - name: Save the image for arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          tags: spatial-ar:${{ steps.names.outputs.version }}
+          outputs: type=docker,dest=image/spatial-ar-image-${{ steps.names.outputs.version }}-arm64.tar
+          build-args: |
+            VERSION=${{ steps.names.outputs.version }}
+            BUILD_COMMIT=${{ steps.names.outputs.commit }}
+      - name: Compress
+        run: gzip -9 image/*.tar && ls -la image
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image
+          path: image
+          retention-days: 14
 
   publish:
     needs: [packages, image]
@@ -137,32 +150,23 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: release
           path: release
-      - uses: actions/setup-node@v4
+      - uses: actions/download-artifact@v4
         with:
-          node-version: '22'
-          registry-url: https://npm.pkg.github.com
-      - name: The server package, on GitHub Packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.packages.outputs.version }}
-        # `./`, not `release/…`: without it npm reads the path as a GitHub
-        # repository shorthand and tries to clone it, which is how the first
-        # release run failed. Skipped when this version is already out, so a
-        # run that failed after this step can be run again.
+          name: image
+          path: release
+      # The image archives joined the other files here, so the checksums
+      # are taken again over all of them.
+      - name: Checksums over every asset
+        working-directory: release
         run: |
-          name="@${GITHUB_REPOSITORY_OWNER,,}/spatial-ar-viewer"
-          if npm view "$name@$VERSION" version > /dev/null 2>&1; then
-            echo "$name@$VERSION is already published."
-          else
-            npm publish ./release/*-spatial-ar-viewer-*.tgz
-          fi
+          sha256sum -- *.zip *.tar.gz *.tgz *.mpk > SHA256SUMS.txt
+          cat SHA256SUMS.txt
       - name: The release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

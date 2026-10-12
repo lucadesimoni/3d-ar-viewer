@@ -7,10 +7,10 @@
     "node": ">=20"
   },
   "description": "Spatial recognition + AR overlay workspace for guided assembly on iPad and iPhone.",
-  "license": "GPL-3.0-or-later",
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "dev": "vite --host",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/third-party-notices.mjs",
     "preview": "vite preview --host",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
