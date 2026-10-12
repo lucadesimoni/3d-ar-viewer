@@ -8,6 +8,7 @@ Sections are written automatically from what was merged (see
 
 ## [0.1.1] — 2026-10-12
 
+- The image compiles the app natively, never under QEMU
 - Automatic releases retry cleanly and check the release commit first
 - Automatic releases on every merge to main
 
