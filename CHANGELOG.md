@@ -8,6 +8,7 @@ Sections are written automatically from what was merged (see
 
 ## [0.1.1] — 2026-10-12
 
+- Automatic releases retry cleanly and check the release commit first
 - Automatic releases on every merge to main
 
 ## [0.1.0] — first release
