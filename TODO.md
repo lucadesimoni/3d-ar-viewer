@@ -114,8 +114,11 @@ error · **unverified** = correct as far as it can be tested here · **chore**.
 - **gap — one assembly, one anchor.** No support for several tracked objects in
   a scene.
 - **gap — English only.** No i18n layer; strings are inline in components.
-- **gap — Mendix widget is prepared, not packaged.** Compiles, excluded from the
-  bundle, no `.mpk`. `src/mendix/`
+- **gap — Mendix widget is packaged, not yet proven in Mendix.** Each release
+  carries an `.mpk`, load-tested in a host page (AMD and ES module, host React,
+  styles scoped). Not yet imported into Studio Pro, no editor preview, and the
+  test host uses React 19 where Mendix ships 18. `src/mendix/`,
+  `docs/RELEASING.md`
 
 ## Known field behaviour worth keeping an eye on
 

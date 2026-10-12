@@ -5,6 +5,7 @@ import { useStore } from '../state/store';
 import { AssemblyImportError, parseAssembly } from '../engine/assemblyImport';
 import { recommendedPipelineConfig } from '../vision/defaultModels';
 import type { PipelineConfig } from '../vision/pipeline';
+import { WIDGET_ROOT_CLASS } from './widgetStyles';
 
 /**
  * Mendix pluggable-widget entry point — COMPATIBILITY SHIM ONLY.
@@ -12,8 +13,9 @@ import type { PipelineConfig } from '../vision/pipeline';
  * This exists so the app is ready to be embedded as a Mendix pluggable widget;
  * it is deliberately NOT a finished widget build. It is structurally typed so it
  * compiles without the Mendix SDK, is not imported by the standalone app, and is
- * excluded from the production bundle. The full widget packaging (SDK types,
- * build tooling, editorConfig/preview, MPK output) is to be done later.
+ * excluded from the app's production bundle. It is packaged on its own, as
+ * an `.mpk`, by `npm run release:package` (see `widget.ts` and
+ * `vite.widget.config.ts`); an editor preview and Mendix SDK types are not.
  *
  * Mendix pluggable widgets are plain React components that receive their
  * configured properties as props. This wrapper adapts the standalone app into
@@ -158,7 +160,8 @@ export function SpatialArViewer(props: SpatialArViewerProps): JSX.Element {
   }, [props.onComplete]);
 
   return (
-    <div className={props.class} style={{ height: '100%', minHeight: 480, ...props.style }}>
+    <div className={[WIDGET_ROOT_CLASS, props.class].filter(Boolean).join(' ')}
+      style={{ height: '100%', minHeight: 480, ...props.style }}>
       {importError && <p role="alert">Assembly could not be loaded: {importError}</p>}
       {recognition.error && <p role="alert">Recognition is disabled: {recognition.error}</p>}
       <App config={buildUiConfig(props)} recognitionConfig={recognition.config} />

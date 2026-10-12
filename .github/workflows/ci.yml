@@ -9,6 +9,9 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '17 4 * * *'
+  # The release workflow runs this whole battery first: nothing is released
+  # that would not merge.
+  workflow_call:
 
 jobs:
   # Fast gate: types, unit tests, production build.
@@ -71,6 +74,23 @@ jobs:
           name: check-results
           path: check-results
           retention-days: 7
+
+  # Every release asset, built and tried the way its user would: the web
+  # archives unpacked, the npm package installed and started, the Mendix widget
+  # loaded into a host page by an AMD loader and as an ES module. On every push,
+  # so packaging cannot rot between releases and surprise the release itself.
+  packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run release:package
+      - run: npm run release:check
 
   # Nightly (and on demand): the same browser checks, pointed at the deployed
   # site instead of a local build. This is what catches a bad deploy, a stale

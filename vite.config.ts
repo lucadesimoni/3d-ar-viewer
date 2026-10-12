@@ -17,6 +17,11 @@ import react from '@vitejs/plugin-react';
  */
 function buildStamp(): { commit: string; at: string } {
   const at = new Date().toISOString();
+  // Set by builds that have no .git to ask: the container image, a release
+  // built from a tarball.
+  if (process.env.BUILD_COMMIT && process.env.BUILD_COMMIT !== 'unknown') {
+    return { commit: process.env.BUILD_COMMIT, at };
+  }
   try {
     const commit = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
     const dirty = execSync('git status --porcelain', { encoding: 'utf8' }).trim().length > 0;
