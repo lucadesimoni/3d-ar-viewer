@@ -21,12 +21,17 @@ will use it, and published only when all of it works.
 3. Merge to `main` the usual way: the full battery green.
 4. Optionally, a dry run: Actions → **Release** → *Run workflow*. It does
    everything below except publish, and keeps the packages as an artifact.
-5. Tag the merge and push the tag:
+5. Release, either way:
+   - push a tag on the merge:
 
-   ```bash
-   git tag vX.Y.Z origin/main
-   git push origin vX.Y.Z
-   ```
+     ```bash
+     git tag vX.Y.Z origin/main
+     git push origin vX.Y.Z
+     ```
+
+   - or Actions → **Release** → *Run workflow* on `main` with **publish**
+     ticked: the workflow tags `vX.Y.Z` itself, on the commit it checked. It
+     refuses a version that is already tagged.
 
 The **Release** workflow then:
 

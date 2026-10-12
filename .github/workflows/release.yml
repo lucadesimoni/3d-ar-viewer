@@ -9,11 +9,18 @@ name: Release
 #   - SHA256SUMS.txt over the files, and the changelog section as the notes.
 #
 # Run by hand from the Actions tab, it builds and checks all of it and
-# publishes nothing: a dry run. See docs/RELEASING.md.
+# publishes nothing: a dry run. Run by hand on `main` with "publish" ticked, it
+# tags `vX.Y.Z` (package.json's version) itself and releases, after the same
+# checks. See docs/RELEASING.md.
 on:
   push:
     tags: ['v*.*.*']
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Tag vX.Y.Z from package.json and publish (main only). Unticked, a dry run.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -23,8 +30,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Publishing happens on a pushed tag and nowhere else.
-  PUBLISH: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+  # Publishing happens on a pushed tag, or a manual run on main that asks to.
+  PUBLISH: ${{ (github.event_name == 'push' && github.ref_type == 'tag') || (github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main') }}
 
 jobs:
   # The whole CI battery, the same one every merge passes.
@@ -49,6 +56,12 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$v" ]; then
             echo "::error::Tag $GITHUB_REF_NAME does not match package.json's version $v."
+            exit 1
+          fi
+          # A manual release makes its own tag: refuse one that already exists.
+          if [ "$PUBLISH" = true ] && [ "$GITHUB_REF_TYPE" != tag ] \
+            && git ls-remote --exit-code --tags origin "refs/tags/v$v" > /dev/null; then
+            echo "::error::v$v is already tagged. Bump package.json's version to release again."
             exit 1
           fi
       - run: npm ci
@@ -120,7 +133,7 @@ jobs:
 
   publish:
     needs: [packages, image]
-    if: github.event_name == 'push' && github.ref_type == 'tag'
+    if: (github.event_name == 'push' && github.ref_type == 'tag') || (github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -144,7 +157,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.packages.outputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --verify-tag \
+          # A pushed tag is released as it is; a manual run tags the commit
+          # it checked.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then where=(--verify-tag); else where=(--target "$GITHUB_SHA"); fi
+          gh release create "v$VERSION" "${where[@]}" \
             --title "Spatial Assembly AR $VERSION" \
             --notes-file release/RELEASE_NOTES.md \
             release/*.zip release/*.tar.gz release/*.tgz release/*.mpk release/SHA256SUMS.txt
