@@ -6,10 +6,18 @@ will use it, and published only when all of it works.
 | Component | Asset | Where |
 | --- | --- | --- |
 | Web app | `spatial-ar-web-X.Y.Z.zip` / `.tar.gz` | the GitHub release |
-| Server (app + `spatial-ar-viewer` command) | `lucadesimoni-spatial-ar-viewer-X.Y.Z.tgz` | the release, and `@lucadesimoni/spatial-ar-viewer` on GitHub Packages |
-| Container image | `ghcr.io/lucadesimoni/3d-ar-viewer:X.Y.Z` and `:latest` | GHCR, linux/amd64 and linux/arm64 |
+| Server (app + `spatial-ar-viewer` command) | `lucadesimoni-spatial-ar-viewer-X.Y.Z.tgz` | the release |
+| Container image | `spatial-ar-image-X.Y.Z-amd64.tar.gz` / `-arm64.tar.gz` (`docker load -i …`) | the release |
 | Mendix widget (preview) | `anthropic.SpatialArViewer-X.Y.Z.mpk` | the release |
 | Checksums | `SHA256SUMS.txt` | the release |
+
+The software is proprietary to Outthinkx and licensed for evaluation only
+(see [LICENSE](../LICENSE)), so nothing goes to a public registry: no npm
+package, no GHCR image. Every package carries `LICENSE.txt` and
+`THIRD_PARTY_NOTICES.txt`, the licences of the open source packages compiled
+into it, written by `scripts/third-party-notices.mjs` on every build. That
+script stops the build if a production dependency's licence does not allow a
+proprietary product (GPL, AGPL, LGPL, SSPL, or none stated).
 
 ## Releases happen by themselves
 
@@ -54,8 +62,8 @@ The **Release** workflow then:
    with no network and started, the widget loaded into a host page by an AMD
    loader and as an ES module, rendered, and kept from styling the host page;
 4. builds the image for the runner and runs it (health check, serves the app,
-   not root), then builds both architectures and pushes them;
-5. publishes the npm package and creates the GitHub release with every asset.
+   not root), then saves both architectures as `docker load` archives;
+5. creates the GitHub release with every asset and their checksums.
 
 Nothing is published before step 5, and step 5 only runs when everything
 before it passed.

@@ -398,15 +398,17 @@ node server/serve.mjs --isolate   # COOP/COEP headers for multi-threaded ONNX WA
 Or as a container:
 
 ```bash
-docker run -p 8080:8080 ghcr.io/lucadesimoni/3d-ar-viewer:latest   # released image
-docker build -t spatial-ar . && docker run -p 8080:8080 spatial-ar # or build it
+docker load -i spatial-ar-image-X.Y.Z-amd64.tar.gz   # from a release
+docker run -p 8080:8080 spatial-ar:X.Y.Z
+docker build -t spatial-ar . && docker run -p 8080:8080 spatial-ar   # or build it
 ```
 
 Each [release](https://github.com/lucadesimoni/3d-ar-viewer/releases) carries
 every component: the web app as `.zip`/`.tar.gz`, the server as an npm package
 (`npm install -g ./lucadesimoni-spatial-ar-viewer-X.Y.Z.tgz`, then
-`spatial-ar-viewer`), the image above, and the Mendix widget as an `.mpk`. How
-releases are cut and checked: [docs/RELEASING.md](./docs/RELEASING.md).
+`spatial-ar-viewer`), the container image for amd64 and arm64 (`docker load`),
+and the Mendix widget as an `.mpk`. None is published to a public registry.
+How releases are cut and checked: [docs/RELEASING.md](./docs/RELEASING.md).
 
 AR on a device needs a secure context — pass `--https --cert cert.pem --key
 key.pem`, or put the server behind a TLS-terminating proxy / tunnel.
@@ -690,4 +692,13 @@ Wi-Fi; the geometry-driven app works without the CDN model bundles.
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](./LICENSE).
+Proprietary. Copyright (c) 2026 Outthinkx. All rights reserved.
+
+You may evaluate the software for 30 days, internally and non-commercially;
+anything else needs a written commercial licence from Outthinkx. The terms
+are in [LICENSE](./LICENSE). The open source components the app includes keep
+their own licences; every distribution carries them in
+`THIRD_PARTY_NOTICES.txt`.
+
+Versions 0.1.0 and 0.1.1 were published under GPL-3.0-or-later, and copies
+of those versions remain under it. The proprietary licence applies from 0.2.0.
