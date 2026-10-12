@@ -33,3 +33,4 @@ pnpm-debug.log*
 
 # Browser check output (check-all.mjs)
 /check-results/
+/release/

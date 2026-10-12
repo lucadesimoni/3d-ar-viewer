@@ -1,0 +1,150 @@
+name: Release
+# Push a tag `vX.Y.Z` (matching package.json's version, with a CHANGELOG.md
+# section) to release every component:
+#
+#   - the web app, as .zip and .tar.gz;
+#   - the server, as an npm package (attached, and on GitHub Packages);
+#   - the container image, on GHCR, for linux/amd64 and linux/arm64;
+#   - the Mendix widget, as an .mpk;
+#   - SHA256SUMS.txt over the files, and the changelog section as the notes.
+#
+# Run by hand from the Actions tab, it builds and checks all of it and
+# publishes nothing: a dry run. See docs/RELEASING.md.
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Publishing happens on a pushed tag and nowhere else.
+  PUBLISH: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+
+jobs:
+  # The whole CI battery, the same one every merge passes.
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  packages:
+    needs: verify
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: The tag is the version
+        id: version
+        run: |
+          v=$(node -p "require('./package.json').version")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$v" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json's version $v."
+            exit 1
+          fi
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Package every component
+        run: BUILD_COMMIT="${GITHUB_SHA::7}" npm run release:package
+      - name: Try every package the way its user would
+        run: npm run release:check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release
+          retention-days: 14
+
+  image:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Names
+        id: names
+        run: |
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      # Built for this runner first and actually run: an image that builds is
+      # not yet an image that serves.
+      - name: Build for this runner
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: spatial-ar:check
+          build-args: |
+            VERSION=${{ steps.names.outputs.version }}
+            BUILD_COMMIT=${{ steps.names.outputs.commit }}
+      - name: Try the image
+        run: |
+          docker run -d --name check -p 8080:8080 spatial-ar:check
+          for i in $(seq 1 30); do curl -sf http://localhost:8080/healthz > /dev/null && break; sleep 1; done
+          curl -sf http://localhost:8080/healthz > /dev/null || { docker logs check; exit 1; }
+          curl -sf http://localhost:8080/ | grep -q '<div id="root"' || { echo "::error::The image does not serve the app."; exit 1; }
+          [ "$(docker exec check id -un)" = node ] || { echo "::error::The image runs as root."; exit 1; }
+          docker rm -f check
+      - name: Sign in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build for amd64 and arm64${{ env.PUBLISH == 'true' && ', and publish' || '' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: |
+            ${{ steps.names.outputs.image }}:${{ steps.names.outputs.version }}
+            ${{ steps.names.outputs.image }}:latest
+          build-args: |
+            VERSION=${{ steps.names.outputs.version }}
+            BUILD_COMMIT=${{ steps.names.outputs.commit }}
+
+  publish:
+    needs: [packages, image]
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: https://npm.pkg.github.com
+      - name: The server package, on GitHub Packages
+        run: npm publish release/*-spatial-ar-viewer-*.tgz
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: The release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.packages.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --title "Spatial Assembly AR $VERSION" \
+            --notes-file release/RELEASE_NOTES.md \
+            release/*.zip release/*.tar.gz release/*.tgz release/*.mpk release/SHA256SUMS.txt

@@ -1,10 +1,13 @@
+# The build stage compiles from source, so `src`, `public` and the configs
+# must reach it; everything here is either rebuilt inside or not needed.
 node_modules
 dist
+release
+check-results
+shots
 .git
 .github
-shots
-scripts
-src
+.claude
 *.md
 !README.md
 .env

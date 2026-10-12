@@ -73,7 +73,7 @@ from breaking one of them:
 | Marker re-registration | Planar homography from a QR of known size |
 | Guidance | Step highlighting, on-part labels, per-step fly-in, exploded view |
 | Co-presence | Protocol, session, annotations — over a loopback transport only |
-| Delivery | PWA, service worker, `vercel.json`, offline app shell |
+| Delivery | PWA, service worker, `vercel.json`, offline app shell; tagged releases of every component (web archive, npm package, GHCR image, Mendix `.mpk`) |
 
 ---
 
@@ -151,8 +151,9 @@ placement story.
   ones properly, instead of the depth-only occluder proxies the samples declare.
 - **Multiple objects in one scene.** Everything assumes one assembly and one
   anchor today.
-- **Mendix packaging.** The widget compiles and is excluded from the bundle;
-  finishing it is packaging work, deliberately deferred.
+- **Mendix in Studio Pro.** The widget ships as an `.mpk` with each release,
+  load-tested in a host page; proving it in a Mendix app (and an editor
+  preview) is what remains.
 - **Localisation.** The interface is English only.
 
 ---

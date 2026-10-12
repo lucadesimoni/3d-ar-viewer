@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<widget id="anthropic.spatialar.SpatialArViewer"
+<widget id="anthropic.spatialarviewer.SpatialArViewer"
         pluginWidget="true" needsEntityContext="true" offlineCapable="true"
         supportedPlatform="Web"
         xmlns="http://www.mendix.com/widget/1.0/"

@@ -97,11 +97,11 @@ video feed can do, no matter how good the tracking underneath it is.
 - **`src/components/`** — the React shell and HUD.
 - **`src/state/`** — a Zustand store that derives diagnostics and the sequence
   view on every change.
-- **`src/mendix/`** — a **Mendix pluggable-widget compatibility shim**
-  (`SpatialArViewer`) plus its `.xml` manifest. This only *prepares*
-  compatibility: it is structurally typed to compile without the Mendix SDK, is
-  not imported by the standalone app, and is left out of the bundle. Full widget
-  packaging (SDK types, build tooling, MPK output) is intended for later.
+- **`src/mendix/`** — a **Mendix pluggable widget** (`SpatialArViewer`) plus
+  its `.xml` manifest. Structurally typed to compile without the Mendix SDK and
+  not part of the app's bundle; packaged on its own as an `.mpk` with every
+  release (a preview: load-tested in a host page, not yet in Studio Pro — see
+  [docs/RELEASING.md](./docs/RELEASING.md)).
 
 ### Everything degrades gracefully
 
@@ -398,9 +398,15 @@ node server/serve.mjs --isolate   # COOP/COEP headers for multi-threaded ONNX WA
 Or as a container:
 
 ```bash
-docker build -t spatial-ar .
-docker run -p 8080:8080 spatial-ar
+docker run -p 8080:8080 ghcr.io/lucadesimoni/3d-ar-viewer:latest   # released image
+docker build -t spatial-ar . && docker run -p 8080:8080 spatial-ar # or build it
 ```
+
+Each [release](https://github.com/lucadesimoni/3d-ar-viewer/releases) carries
+every component: the web app as `.zip`/`.tar.gz`, the server as an npm package
+(`npm install -g ./lucadesimoni-spatial-ar-viewer-X.Y.Z.tgz`, then
+`spatial-ar-viewer`), the image above, and the Mendix widget as an `.mpk`. How
+releases are cut and checked: [docs/RELEASING.md](./docs/RELEASING.md).
 
 AR on a device needs a secure context — pass `--https --cert cert.pem --key
 key.pem`, or put the server behind a TLS-terminating proxy / tunnel.
