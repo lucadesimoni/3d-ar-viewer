@@ -149,9 +149,20 @@ jobs:
           node-version: '22'
           registry-url: https://npm.pkg.github.com
       - name: The server package, on GitHub Packages
-        run: npm publish release/*-spatial-ar-viewer-*.tgz
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.packages.outputs.version }}
+        # `./`, not `release/…`: without it npm reads the path as a GitHub
+        # repository shorthand and tries to clone it, which is how the first
+        # release run failed. Skipped when this version is already out, so a
+        # run that failed after this step can be run again.
+        run: |
+          name="@${GITHUB_REPOSITORY_OWNER,,}/spatial-ar-viewer"
+          if npm view "$name@$VERSION" version > /dev/null 2>&1; then
+            echo "$name@$VERSION is already published."
+          else
+            npm publish ./release/*-spatial-ar-viewer-*.tgz
+          fi
       - name: The release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -159,8 +170,14 @@ jobs:
         run: |
           # A pushed tag is released as it is; a manual run tags the commit
           # it checked.
-          if [ "$GITHUB_REF_TYPE" = tag ]; then where=(--verify-tag); else where=(--target "$GITHUB_SHA"); fi
-          gh release create "v$VERSION" "${where[@]}" \
-            --title "Spatial Assembly AR $VERSION" \
-            --notes-file release/RELEASE_NOTES.md \
-            release/*.zip release/*.tar.gz release/*.tgz release/*.mpk release/SHA256SUMS.txt
+          assets=(release/*.zip release/*.tar.gz release/*.tgz release/*.mpk release/SHA256SUMS.txt)
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            # A rerun: the release is there; make its files these.
+            gh release upload "v$VERSION" "${assets[@]}" --clobber
+          else
+            if [ "$GITHUB_REF_TYPE" = tag ]; then where=(--verify-tag); else where=(--target "$GITHUB_SHA"); fi
+            gh release create "v$VERSION" "${where[@]}" \
+              --title "Spatial Assembly AR $VERSION" \
+              --notes-file release/RELEASE_NOTES.md \
+              "${assets[@]}"
+          fi
