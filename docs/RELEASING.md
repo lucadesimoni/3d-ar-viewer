@@ -20,9 +20,14 @@ release** (`.github/workflows/auto-release.yml`):
    message says `[minor]` or `[major]` (or `BREAKING CHANGE`);
 2. writes the merges since that tag into `CHANGELOG.md` as the new version's
    section, one line per merge (its subject, less `Merge: `);
-3. commits `package.json`, the lockfile and the changelog to `main` as
+3. checks that commit (types and unit tests) and only then commits
+   `package.json`, the lockfile and the changelog to `main` as
    `Release vX.Y.Z`;
 4. starts **Release** on that commit with publish on.
+
+If a release's Release run fails after its commit landed, the next merge's
+run releases the same version again, replacing that commit's changelog
+section rather than repeating it.
 
 It does nothing when CI failed, when `main` has moved on since the commit CI
 checked (the newer push releases both), or when nothing was merged since the
