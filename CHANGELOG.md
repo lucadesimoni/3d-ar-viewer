@@ -6,6 +6,10 @@ Sections are written automatically from what was merged (see
 [docs/RELEASING.md](./docs/RELEASING.md)). Newest first. Versions follow
 [semantic versioning](https://semver.org/).
 
+## [0.2.0] — 2026-10-12
+
+- Proprietary evaluation licence (Outthinkx); releases no longer published to public registries
+
 ## [0.1.1] — 2026-10-12
 
 - The image compiles the app natively, never under QEMU
