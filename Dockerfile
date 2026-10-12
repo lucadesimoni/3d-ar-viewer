@@ -1,7 +1,13 @@
 # syntax=docker/dockerfile:1.7
 # --- Build stage: compile the app ---
 # Node 22, as CI uses: the toolchain (jsdom 30, Vite 8) needs it.
-FROM node:22-alpine AS build
+#
+# On the build machine's own platform, whatever the image's: the output is
+# HTML, JavaScript and CSS, the same on every architecture, and compiling it
+# under QEMU for arm64 is how a release failed: Node crashed in the emulator
+# with an illegal instruction during `npm ci`. Built once, natively, and
+# copied into each platform's runtime stage, which runs nothing at build time.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 # npm can crash mid-download with "Exit handler never called" and still exit
