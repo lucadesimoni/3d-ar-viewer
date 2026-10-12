@@ -11,27 +11,33 @@ will use it, and published only when all of it works.
 | Mendix widget (preview) | `anthropic.SpatialArViewer-X.Y.Z.mpk` | the release |
 | Checksums | `SHA256SUMS.txt` | the release |
 
-## Cutting a release
+## Releases happen by themselves
 
-1. Set the version in `package.json` (plain `X.Y.Z`: Mendix takes nothing
-   else) and run `npm install` so the lockfile agrees.
-2. Add a `## [X.Y.Z]` section to `CHANGELOG.md`. It becomes the release
-   notes as written, with install instructions added; a version without one
-   is refused.
-3. Merge to `main` the usual way: the full battery green.
-4. Optionally, a dry run: Actions → **Release** → *Run workflow*. It does
-   everything below except publish, and keeps the packages as an artifact.
-5. Release, either way:
-   - push a tag on the merge:
+Merge to `main`; that is all. Once CI has passed on the merge, **Auto
+release** (`.github/workflows/auto-release.yml`):
 
-     ```bash
-     git tag vX.Y.Z origin/main
-     git push origin vX.Y.Z
-     ```
+1. takes the latest `vX.Y.Z` tag and bumps it: a **patch**, unless a merge's
+   message says `[minor]` or `[major]` (or `BREAKING CHANGE`);
+2. writes the merges since that tag into `CHANGELOG.md` as the new version's
+   section, one line per merge (its subject, less `Merge: `);
+3. commits `package.json`, the lockfile and the changelog to `main` as
+   `Release vX.Y.Z`;
+4. starts **Release** on that commit with publish on.
 
-   - or Actions → **Release** → *Run workflow* on `main` with **publish**
-     ticked: the workflow tags `vX.Y.Z` itself, on the commit it checked. It
-     refuses a version that is already tagged.
+It does nothing when CI failed, when `main` has moved on since the commit CI
+checked (the newer push releases both), or when nothing was merged since the
+last tag. The nightly CI run never releases.
+
+To shape a release instead: write its notes under a `## [Unreleased]`
+heading at the top of `CHANGELOG.md` before merging — they are released as
+written, in place of the list of merges — or run **Auto release** by hand to
+choose the bump. Releasing by
+hand still works too: push a tag `vX.Y.Z` matching `package.json`, or run
+**Release** on `main` with **publish** ticked.
+
+Merging into `main` after an automatic release: `main` then carries a
+`Release vX.Y.Z` commit the branch does not. Merge `origin/main` into the
+branch first, so what was tested is what lands.
 
 The **Release** workflow then:
 
