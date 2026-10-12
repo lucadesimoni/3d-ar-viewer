@@ -55,6 +55,9 @@ describe('release packaging', () => {
   });
 
   it('has notes for the version in package.json', () => {
-    expect(releaseNotes(readFileSync('CHANGELOG.md', 'utf8'), pkg.version).length).toBeGreaterThan(100);
+    // Any notes will do: an automatic release's are one line per merge, and
+    // the first one of those was 44 characters. (This asked for more than
+    // 100, and stopped that release.) Missing or empty notes throw.
+    expect(releaseNotes(readFileSync('CHANGELOG.md', 'utf8'), pkg.version)).toMatch(/\S/);
   });
 });

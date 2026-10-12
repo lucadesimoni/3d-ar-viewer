@@ -98,9 +98,21 @@ export function dropEmptyUnreleased(changelog) {
   return [...lines.slice(0, at), ...lines.slice(end)].join('\n');
 }
 
-/** `section` placed above the newest existing version, below the preamble. */
+/**
+ * `section` placed above the newest existing version, below the preamble —
+ * or in place of a section for the same version already there: one written
+ * by an attempt at this release that never published (its tag missing), which
+ * a retry must replace rather than repeat.
+ */
 export function insertSection(changelog, section) {
   const lines = changelog.split('\n');
+  const heading = section.split('\n')[0].match(/^## \[([^\]]+)\]/);
+  const same = heading ? lines.findIndex((l) => l.startsWith(`## [${heading[1]}]`)) : -1;
+  if (same >= 0) {
+    let end = lines.findIndex((l, i) => i > same && /^## /.test(l));
+    if (end < 0) end = lines.length;
+    return [...lines.slice(0, same), ...section.trimEnd().split('\n'), '', ...lines.slice(end)].join('\n');
+  }
   const at = lines.findIndex((l) => /^## /.test(l));
   if (at < 0) return `${changelog.trimEnd()}\n\n${section}`;
   return [...lines.slice(0, at), ...section.trimEnd().split('\n'), '', ...lines.slice(at)].join('\n');

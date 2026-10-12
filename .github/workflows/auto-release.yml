@@ -65,10 +65,21 @@ jobs:
         if: steps.current.outputs.go == 'true'
         with:
           node-version: '22'
+          cache: npm
       - name: The next version and its notes
         id: next
         if: steps.current.outputs.go == 'true'
         run: node scripts/next-release.mjs --bump="${{ inputs.bump || 'patch' }}"
+      # The release commit is new code too: its version and its notes are
+      # read by tests. The first automatic release passed CI as a merge and
+      # then failed as a release commit, on a test of its notes. Checked here,
+      # such a commit never reaches main.
+      - name: Check the release commit before it lands
+        if: steps.next.outputs.release == 'true'
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
       - name: Commit it to main
         if: steps.next.outputs.release == 'true'
         env:

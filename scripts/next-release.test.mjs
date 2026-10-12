@@ -54,4 +54,14 @@ describe('the next release', () => {
     expect(out).not.toContain('Unreleased');
     expect(releaseNotes(out, '0.1.1')).toBe('- Fix\n');
   });
+
+  it('replaces the section of an attempt that never published, rather than repeating it', () => {
+    // A release commit landed, its Release run failed, no tag: the retry
+    // computes the same version and must not add a second section for it.
+    const log = '# Changelog\n\n## [0.1.1] — 2026-10-12\n\n- First try.\n\n## [0.1.0] — first\n\n- Old.\n';
+    const out = insertSection(log, changelogSection('0.1.1', '2026-10-13', ['First try.', 'The fix.']));
+    expect(out.match(/## \[0\.1\.1\]/g)).toHaveLength(1);
+    expect(releaseNotes(out, '0.1.1')).toBe('- First try.\n- The fix.\n');
+    expect(releaseNotes(out, '0.1.0')).toBe('- Old.\n');
+  });
 });
