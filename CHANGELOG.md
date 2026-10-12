@@ -2,7 +2,9 @@
 
 Each version's section here is that release's notes: the release workflow
 publishes it as written, and refuses to release a version that has none.
-Newest first. Versions follow [semantic versioning](https://semver.org/).
+Sections are written automatically from what was merged (see
+[docs/RELEASING.md](./docs/RELEASING.md)). Newest first. Versions follow
+[semantic versioning](https://semver.org/).
 
 ## [0.1.0] — first release
 

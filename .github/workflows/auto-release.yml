@@ -1,0 +1,87 @@
+name: Auto release
+# Every change merged to main is released once CI has passed on it, with no
+# one bumping versions or writing notes:
+#
+#   1. the next version is the latest tag, bumped: patch, unless a merge says
+#      [minor] or [major] (or BREAKING CHANGE) in its message;
+#   2. the merges since that tag become its CHANGELOG.md section;
+#   3. package.json, the lockfile and the changelog are committed to main as
+#      "Release vX.Y.Z";
+#   4. the Release workflow is started on that commit with publish on: the
+#      whole battery and every package check again, then the tag, the image,
+#      the npm package and the GitHub release.
+#
+# The release commit is pushed with the workflow's own token, which starts no
+# workflow of its own, so it cannot loop. Run by hand to choose the bump.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: The least bump this release takes
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # A push to main that passed CI, not the nightly run of the same workflow.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      # Only main as CI saw it. If main has moved on since, that newer push has
+      # its own CI run, and its release will include this one's changes.
+      - name: Is this still main?
+        id: current
+        env:
+          CHECKED: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ] && [ "$(git rev-parse HEAD)" != "$CHECKED" ]; then
+            echo "main has moved on from $CHECKED; its own CI run will release it."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.current.outputs.go == 'true'
+        with:
+          node-version: '22'
+      - name: The next version and its notes
+        id: next
+        if: steps.current.outputs.go == 'true'
+        run: node scripts/next-release.mjs --bump="${{ inputs.bump || 'patch' }}"
+      - name: Commit it to main
+        if: steps.next.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release v$VERSION"
+          # Fails, rather than overwrites, if main moved meanwhile: the newer
+          # push's own run releases both.
+          git push origin HEAD:main
+      - name: Publish it
+        if: steps.next.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run release.yml --ref main -f publish=true
