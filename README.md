@@ -701,7 +701,8 @@ Copyright (c) 2026 Outthinkx. Licensed under the
   and health organisations and government institutions.
 - **Commercial use needs a paid licence from Outthinkx**: using it in or for a
   business, selling it, bundling it into a product, or offering it as a
-  service.
+  service. Contact Luca De Simoni, Outthinkx
+  ([github.com/lucadesimoni](https://github.com/lucadesimoni)).
 
 The open source components the app includes keep their own licences; every
 distribution carries them in `THIRD_PARTY_NOTICES.txt`.
