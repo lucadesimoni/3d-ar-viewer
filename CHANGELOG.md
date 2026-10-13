@@ -6,6 +6,10 @@ Sections are written automatically from what was merged (see
 [docs/RELEASING.md](./docs/RELEASING.md)). Newest first. Versions follow
 [semantic versioning](https://semver.org/).
 
+## [0.3.1] — 2026-10-13
+
+- Commercial licence contact in LICENSE and README
+
 ## [0.3.0] — 2026-10-13
 
 - Free for noncommercial use, paid for commercial use (PolyForm Noncommercial 1.0.0)
