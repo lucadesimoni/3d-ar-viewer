@@ -692,13 +692,20 @@ Wi-Fi; the geometry-driven app works without the CDN model bundles.
 
 ## License
 
-Proprietary. Copyright (c) 2026 Outthinkx. All rights reserved.
+Copyright (c) 2026 Outthinkx. Licensed under the
+[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)
+(see [LICENSE](./LICENSE)).
 
-You may evaluate the software for 30 days, internally and non-commercially;
-anything else needs a written commercial licence from Outthinkx. The terms
-are in [LICENSE](./LICENSE). The open source components the app includes keep
-their own licences; every distribution carries them in
-`THIRD_PARTY_NOTICES.txt`.
+- **Free, with no time limit, for noncommercial use**: personal use, hobby
+  projects, study and research, and use by charities, schools, public research
+  and health organisations and government institutions.
+- **Commercial use needs a paid licence from Outthinkx**: using it in or for a
+  business, selling it, bundling it into a product, or offering it as a
+  service.
+
+The open source components the app includes keep their own licences; every
+distribution carries them in `THIRD_PARTY_NOTICES.txt`.
 
 Versions 0.1.0 and 0.1.1 were published under GPL-3.0-or-later, and copies
-of those versions remain under it. The proprietary licence applies from 0.2.0.
+of those versions remain under it. Version 0.2.0, first published under an
+evaluation licence, is also available under these terms.

@@ -3,9 +3,9 @@
  *
  *   node scripts/third-party-notices.mjs [outDir]    # default: dist
  *
- * The app is proprietary (see LICENSE), and is compiled together with open
- * source packages whose licences (MIT, BSD, Apache-2.0, ISC) allow that on one
- * condition: their copyright and licence texts travel with every copy. So
+ * The app is free for noncommercial use and sold to commercial users (see
+ * LICENSE). It is compiled together with open source packages whose licences
+ * (MIT, BSD, Apache-2.0, ISC) allow that on one condition: their copyright and licence texts travel with every copy. So
  * every package in the production dependency tree is listed here with its
  * licence text, and the result goes into `dist` (and so into the web archive,
  * the npm package, the container image and the live site) next to the app's
