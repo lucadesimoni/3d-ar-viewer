@@ -23,7 +23,7 @@ describe('release packaging', () => {
     // npm refuses to publish a private package.
     expect(m.private).toBe(true);
     expect(m.publishConfig).toBeUndefined();
-    expect(m.license).not.toMatch(/GPL/);
+    expect(m.license).toBe('PolyForm-Noncommercial-1.0.0');
   });
 
   it('puts the release version into the widget\'s package.xml', () => {
@@ -56,6 +56,7 @@ describe('release packaging', () => {
     expect(notes).not.toContain('ghcr.io');
     expect(notes).not.toContain('GitHub Packages');
     expect(notes).toContain('LICENSE.txt');
+    expect(notes).toContain('PolyForm Noncommercial');
   });
 
   it('has notes for the version in package.json', () => {

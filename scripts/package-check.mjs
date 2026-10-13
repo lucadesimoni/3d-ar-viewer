@@ -94,9 +94,9 @@ async function serve(command, args, env = {}) {
     ['package/server/serve.mjs', 'package/dist/index.html'].every((f) => listing.includes(f)));
   check('with the licence and the third-party notices',
     ['package/LICENSE', 'package/dist/LICENSE.txt', 'package/dist/THIRD_PARTY_NOTICES.txt'].every((f) => listing.includes(f)));
-  // Proprietary: the package is a release asset, never for a public registry.
-  check('and is private, under the proprietary licence',
-    manifest.private === true && !manifest.publishConfig && !/GPL/.test(manifest.license ?? ''),
+  // A release asset, never for a public registry, under the app's own licence.
+  check('and is private, under PolyForm Noncommercial',
+    manifest.private === true && !manifest.publishConfig && manifest.license === 'PolyForm-Noncommercial-1.0.0',
     `private ${manifest.private}, licence ${manifest.license}`);
   check('and depends on nothing, so installing it fetches nothing',
     !manifest.dependencies && !manifest.devDependencies && manifest.version === version,

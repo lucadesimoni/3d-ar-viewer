@@ -11,8 +11,9 @@ will use it, and published only when all of it works.
 | Mendix widget (preview) | `anthropic.SpatialArViewer-X.Y.Z.mpk` | the release |
 | Checksums | `SHA256SUMS.txt` | the release |
 
-The software is proprietary to Outthinkx and licensed for evaluation only
-(see [LICENSE](../LICENSE)), so nothing goes to a public registry: no npm
+The software is free for noncommercial use and paid for commercial use
+(PolyForm Noncommercial 1.0.0, see [LICENSE](../LICENSE)), so nothing goes
+to a public registry: no npm
 package, no GHCR image. Every package carries `LICENSE.txt` and
 `THIRD_PARTY_NOTICES.txt`, the licences of the open source packages compiled
 into it, written by `scripts/third-party-notices.mjs` on every build. That

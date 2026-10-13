@@ -85,7 +85,7 @@ export function installNotes(version, owner = 'lucadesimoni') {
     '',
     `Check downloads against \`${n.sums}\`: \`sha256sum -c ${n.sums}\`.`,
     '',
-    'Proprietary software of Outthinkx, licensed for evaluation only: see LICENSE.txt in each package.',
+    'Copyright Outthinkx. Free for noncommercial use under the PolyForm Noncommercial License 1.0.0; commercial use needs a paid licence from Outthinkx. See LICENSE.txt in each package.',
     'Third-party components keep their own licences: THIRD_PARTY_NOTICES.txt.',
     '',
   ].join('\n');
