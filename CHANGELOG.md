@@ -6,6 +6,39 @@ Sections are written automatically from what was merged (see
 [docs/RELEASING.md](./docs/RELEASING.md)). Newest first. Versions follow
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### The overlay lines itself up with the real object, for any assembly
+
+- Every second or two in AR, the app matches the edges of the parts already
+  built to the camera picture, and moves the overlay onto the object when the
+  fit is clear. It works from the parts' shapes (boxes, plates, cylinders,
+  tubes, spheres, and loaded 3D models), so it needs no recognition target.
+  It refines the placement you have: a tap, a WebXR anchor, the shelf
+  detector. It can be switched off in AR settings ("Line the overlay up with
+  the real object").
+- It refuses rather than guesses. A fit is used only when most of the model
+  agrees with the picture all round its outline, and no other pose nearby fits
+  nearly as well. Otherwise the overlay stays where it was.
+- Measured on rendered views with known truth (docs/RECOGNITION.md): from a
+  start off by 5 to 20 cm, it settles within a pixel or two on the shelves,
+  the engine and the rack, with up to 2 wrong moves in 96 tries per
+  assembly. The small gearbox is mostly out of its reach and is mostly
+  left alone.
+- **On real frames it has not yet helped.** On six device photos of KALLAX
+  shelves, it refused every time: no pose standing on the floor fits those
+  frames well, which points at the camera's reported pose or field of view
+  rather than at the shelf. Every look is logged ("alignment look",
+  "alignment moved the overlay") with why, so a device session will show it.
+- Every shelf-detector attempt is logged with its outcome and why it failed,
+  and a blank frame no longer produces a phantom shelf.
+
+### Android app
+
+- The page is told when ARCore has to be installed, instead of waiting; this
+  failed the 0.5.0 release on the emulator.
+- A crashed page reloads instead of closing the app.
+
 ## [0.5.0] — 2026-10-14
 
 ### Camera step check with a trained model

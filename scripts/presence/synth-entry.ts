@@ -176,6 +176,31 @@ function throughAnchorError(box: ReturnType<typeof boxOf>, error: { t: Vector3; 
   return { center: [c.x, c.y, c.z] as const, halfExtents: box.halfExtents, rotation: [q.x, q.y, q.z, q.w] as const };
 }
 
+/** The world box round some meshes: its centre, and the radius of the sphere round it. */
+function boundsOf(meshes: Mesh[]): { centre: BVector3; radius: number } {
+  const lo = new BVector3(Infinity, Infinity, Infinity); const hi = lo.scale(-1);
+  for (const m of meshes) {
+    m.computeWorldMatrix(true);
+    const bb = m.getBoundingInfo().boundingBox;
+    lo.minimizeInPlace(bb.minimumWorld); hi.maximizeInPlace(bb.maximumWorld);
+  }
+  return { centre: lo.add(hi).scale(0.5), radius: hi.subtract(lo).length() / 2 };
+}
+
+/** The benchmark's camera: at the chosen place, level, looking at the assembly's centre. */
+function benchCamera(b: BenchView, centre: BVector3, radius: number, aspect: number): FreeCamera {
+  const a = (b.azimuthDeg * Math.PI) / 180; const e = (b.elevationDeg * Math.PI) / 180;
+  // The field of view across the narrower side: the vertical one, or the horizontal one in portrait.
+  const half = Math.atan(Math.tan((b.fovDeg * Math.PI) / 360) * Math.min(1, aspect));
+  const distance = radius / Math.sin(b.fill * half);
+  const flat = Math.cos(e) * distance;
+  const camera = new FreeCamera('cam', centre.add(new BVector3(Math.sin(a) * flat, Math.sin(e) * distance, Math.cos(a) * flat)), scene);
+  camera.fov = (b.fovDeg * Math.PI) / 180;
+  camera.minZ = 0.05;
+  camera.setTarget(centre);
+  return camera;
+}
+
 export interface Sample { rgba: string; present: boolean; partId: string; assembly: string; stage: number; areaFraction: number; distanceM: number }
 
 /** Bytes to base64, in chunks the call stack can take. */
@@ -196,8 +221,39 @@ function kallaxCells(assembly: AssemblyDef) {
   return cells;
 }
 
-export async function render(opts: { seed: number; width: number; height: number }): Promise<Sample[]> {
+/**
+ * A view for the recognition benchmark (`scripts/recognition/bench.mjs`): one
+ * assembly, fully built, standing at the origin unturned, seen from a chosen
+ * place. Everything else (room, light, finish, what the phone does to the
+ * picture) is randomised as for training.
+ */
+export interface BenchView {
+  assemblyId: string;
+  /** Where the camera is: degrees round from straight in front, and degrees above level, from the assembly's centre. */
+  azimuthDeg: number;
+  elevationDeg: number;
+  /** How near: the share of the picture's narrower side the assembly's bounding sphere fills. */
+  fill: number;
+  fovDeg: number;
+  /** Things in the cubes and around the assembly. */
+  clutter: boolean;
+}
+
+/** A benchmark frame and the camera it was taken with. The assembly's true pose is the identity. */
+export interface BenchFrame {
+  rgba: string;
+  width: number;
+  height: number;
+  view: number[];
+  cameraPosition: [number, number, number];
+  fovDeg: number;
+}
+
+export async function render(opts: { seed: number; width: number; height: number }): Promise<Sample[]>;
+export async function render(opts: { seed: number; width: number; height: number; bench: BenchView }): Promise<BenchFrame>;
+export async function render(opts: { seed: number; width: number; height: number; bench?: BenchView }): Promise<Sample[] | BenchFrame> {
   seed = opts.seed;
+  const bench = opts.bench;
   if (!engine) {
     canvas = document.createElement('canvas');
     document.body.appendChild(canvas);
@@ -211,10 +267,11 @@ export async function render(opts: { seed: number; width: number; height: number
 
   // --- The assembly, part-way through its build. ---------------------------
   const kallaxes = ASSEMBLIES.filter((a) => a.id.includes('kallax'));
-  const assembly = chance(0.8) ? pick(kallaxes) : pick(ASSEMBLIES.filter((a) => !a.id.includes('kallax')));
+  const assembly = bench ? ASSEMBLIES.find((a) => a.id === bench.assemblyId)!
+    : chance(0.8) ? pick(kallaxes) : pick(ASSEMBLIES.filter((a) => !a.id.includes('kallax')));
   const steps = assembly.steps;
   // Stage = steps complete; the step after it is partly done.
-  const stage = Math.floor(rand() * (steps.length + 1));
+  const stage = bench ? steps.length : Math.floor(rand() * (steps.length + 1));
   const installed = new Set<string>();
   steps.slice(0, stage).forEach((s) => s.partIds.forEach((p) => installed.add(p)));
   if (stage < steps.length) steps[stage].partIds.forEach((p) => { if (chance(0.5)) installed.add(p); });
@@ -222,7 +279,7 @@ export async function render(opts: { seed: number; width: number; height: number
   unsequenced.forEach((p) => installed.add(p));
 
   const root = new TransformNode('assembly', scene);
-  const yaw = range(-0.25, 0.25);
+  const yaw = bench ? 0 : range(-0.25, 0.25);
   root.rotationQuaternion = BQuaternion.RotationYawPitchRoll(yaw, 0, 0);
   const boardMats = [texturedMaterial('board', boardFinish())];
   if (chance(0.3)) boardMats.push(texturedMaterial('board2', boardFinish()));
@@ -258,7 +315,7 @@ export async function render(opts: { seed: number; width: number; height: number
   const allInstalled = assembly.parts.every((p) => installed.has(p.id));
   // In the cubes, mostly once the shelf is built; something on top or beside it.
   for (const cell of kallaxCells(assembly)) {
-    if (!chance(allInstalled ? 0.65 : 0.2)) continue;
+    if (bench ? !bench.clutter || !chance(0.65) : !chance(allInstalled ? 0.65 : 0.2)) continue;
     const o = cell.o * range(0.75, 0.95);
     const box = CreateBox('clutter', { width: o, height: o * range(0.5, 0.95), depth: o * range(0.5, 0.95) }, scene);
     box.parent = root;
@@ -266,7 +323,7 @@ export async function render(opts: { seed: number; width: number; height: number
     box.material = texturedMaterial('cl', pick(CLUTTER), 128);
     clutter.push(box);
   }
-  for (let i = 0, n = Math.floor(range(0, 6)); i < n; i++) {
+  for (let i = 0, n = bench && !bench.clutter ? 0 : Math.floor(range(bench ? 2 : 0, 6)); i < n; i++) {
     const s = range(0.1, 0.5);
     const m = chance(0.6) ? CreateBox('stuff', { width: s, height: s * range(0.3, 2), depth: s }, scene)
       : CreateCylinder('stuff', { diameter: s * 0.6, height: s * range(0.5, 2) }, scene);
@@ -295,18 +352,20 @@ export async function render(opts: { seed: number; width: number; height: number
   // --- The operator's phone. ----------------------------------------------------
   const extent = assembly.parts.reduce((m, p) => Math.max(m, Math.hypot(...p.targetPose.position)), 0.2);
   const size = Math.max(0.3, extent);
-  const centre = new BVector3(0, size * 0.45, 0);
+  const centre = bench ? boundsOf([...meshes.values()].map((m) => m.mesh)).centre : new BVector3(0, size * 0.45, 0);
   const azimuth = range(-1.1, 1.1) + yaw;
   // Where people stand to check their work: from arm's length to across the room.
   const distance = Math.min(2.6, size * range(1.0, 2.2) + 0.3);
-  const camera = new FreeCamera('cam', new BVector3(
+  const camera = bench ? benchCamera(bench, centre, boundsOf([...meshes.values()].map((m) => m.mesh)).radius, opts.width / opts.height) : new FreeCamera('cam', new BVector3(
     Math.sin(azimuth) * distance, range(0.6, 1.8), Math.cos(azimuth) * distance + 0.05,
   ), scene);
-  camera.fov = (range(55, 75) * Math.PI) / 180;
-  camera.minZ = 0.05;
-  camera.setTarget(centre.add(new BVector3(range(-0.2, 0.2) * size, range(-0.2, 0.2) * size, 0)));
-  // Roll: a phone is not held level.
-  camera.rotation.z += (range(-8, 8) * Math.PI) / 180;
+  if (!bench) {
+    camera.fov = (range(55, 75) * Math.PI) / 180;
+    camera.minZ = 0.05;
+    camera.setTarget(centre.add(new BVector3(range(-0.2, 0.2) * size, range(-0.2, 0.2) * size, 0)));
+    // Roll: a phone is not held level.
+    camera.rotation.z += (range(-8, 8) * Math.PI) / 180;
+  }
   scene.activeCamera = camera;
 
   await scene.whenReadyAsync();
@@ -330,8 +389,16 @@ export async function render(opts: { seed: number; width: number; height: number
   g.drawImage(bitmap, 0, 0);
   const image = g.getImageData(0, 0, out.width, out.height);
 
-  // --- One crop per part the app would ask about. ----------------------------------
   const view = scene.getViewMatrix().asArray();
+  if (bench) {
+    const p = camera.globalPosition;
+    return {
+      rgba: b64(image.data), width: image.width, height: image.height, view: Array.from(view),
+      cameraPosition: [p.x, p.y, p.z], fovDeg: (camera.fov * 180) / Math.PI,
+    };
+  }
+
+  // --- One crop per part the app would ask about. ----------------------------------
   const k = cameraIntrinsics({ frame: image, operatorFovDeg: (camera.fov * 180) / Math.PI });
   // Half the views with a good lock, half with the larger error real locks
   // were measured to have on device frames (several centimetres, a few degrees).

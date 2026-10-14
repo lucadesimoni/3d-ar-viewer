@@ -27,6 +27,7 @@
     "log:check": "node scripts/log-check.mjs",
     "runtime:check": "node scripts/runtime-check.mjs",
     "native:check": "node scripts/native-check.mjs",
+    "recognition:bench": "node scripts/recognition/bench.mjs",
     "check:all": "node scripts/check-all.mjs --serve",
     "release:package": "node scripts/package.mjs",
     "release:check": "node scripts/package-check.mjs"
