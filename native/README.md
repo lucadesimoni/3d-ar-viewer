@@ -113,6 +113,7 @@ In detail, to put it on an iPhone or iPad, one of:
 | The bridge protocol, both shells | Unit tests in CI (Kotlin, Swift) |
 | The web app inside a shell | Browser check against simulated Android and iOS shells |
 | Android app compiles, passes lint, packages | CI |
+| The Android app itself: launch links, the bridge's origin and frame rules, start without ARCore, malformed messages, links to other sites | 8 instrumented tests on an emulator in CI (`app/src/androidTest`) |
 | iOS app compiles for simulator and device | CI |
 | ARCore and ARKit on a real phone | **Not yet.** No phone is available to CI. |
 | The camera-image crop's orientation on a device | **Not yet.** Check that recognition locks in the app. |
