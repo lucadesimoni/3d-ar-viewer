@@ -16,6 +16,7 @@ function fakeManager(frameSource: 'video' | 'xr-raw' | 'xr-blind') {
     cameraPose: () => ({ position: [0, 1, 0], rotation: [0, 0, 0, 1], fovDeg: 72.18 }),
     projectPart: () => ({ x: 0.5, y: 0.5, onScreen: true }),
     roiForPart: () => ({ rect: { x: 1, y: 2, w: 3, h: 4 }, areaFraction: 0.1, distanceM: 1, clipped: false }),
+    outlineForPart: () => [{ x: 1, y: 2 }, { x: 4.04, y: 2 }, { x: 4, y: 6 }],
   } as unknown as SceneManager;
 }
 
@@ -59,6 +60,14 @@ describe('capturing the frame that matters', () => {
     // anything, and that is worth knowing while the phone is still in hand.
     const result = await captureFrame(null, fakeManager('xr-raw'));
     expect(result).toMatchObject({ ok: true, onScreen: 10, parts: 10 });
+  });
+
+  it('records each part\'s outline and whether it was fitted: what turns a frame into training data', async () => {
+    const result = await captureFrame(null, fakeManager('xr-raw'));
+    if (!result.ok) throw new Error(result.reason);
+    const part = result.capture.parts[0];
+    expect(part.outline).toEqual([1, 2, 4, 2, 4, 6]);
+    expect(part.fitted).toBe(false);
   });
 
   it('carries what the readback cost, which is the open question about it', async () => {
