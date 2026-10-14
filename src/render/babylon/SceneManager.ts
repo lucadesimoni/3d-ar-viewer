@@ -57,6 +57,8 @@ import {
   type RawIntrinsics,
 } from '../../perception/intrinsics';
 import { roiForBox, type PartRoi } from '../../perception/roi';
+import { partContour } from '../../perception/contour';
+import { Quaternion as ThreeQuaternion, Vector3 as ThreeVector3 } from 'three';
 import { readCameraFrame } from './cameraFrame';
 import type { BaseTexture as XrCameraTexture } from '@babylonjs/core/Materials/Textures/baseTexture';
 import { meshHalfExtents } from '../../engine/collision';
@@ -1085,6 +1087,18 @@ export class SceneManager {
     const box = this.partBox(partId);
     if (!box) return undefined;
     return roiForBox(box, this.scene.getViewMatrix().asArray(), this.frameIntrinsics(frame), opts);
+  }
+
+  /** A part's expected outline in a camera frame of this size: the convex hull of its box, in pixels. */
+  outlineForPart(partId: string, frame: { width: number; height: number }): { x: number; y: number }[] | undefined {
+    const box = this.partBox(partId);
+    if (!box) return undefined;
+    const contour = partContour({
+      center: new ThreeVector3(...box.center),
+      halfExtents: new ThreeVector3(...box.halfExtents),
+      rotation: new ThreeQuaternion(...box.rotation),
+    }, this.scene.getViewMatrix().asArray(), this.frameIntrinsics(frame));
+    return contour && contour.hull.length >= 3 ? contour.hull : undefined;
   }
 
   /**

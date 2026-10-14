@@ -14,4 +14,6 @@ export const RUNTIME_URLS: RuntimeUrls = {
     wasmUrl: 'https://cdn.jsdelivr.net/npm/draco3dgltf@1.5.7/draco_decoder_gltf_nodejs.js',
     wasmBinaryUrl: 'https://cdn.jsdelivr.net/npm/draco3dgltf@1.5.7/draco_decoder_gltf.wasm',
   },
+  // No presence model: it is not on a CDN, and the widget has nowhere to serve it from.
+  presenceModel: undefined,
 };

@@ -1,5 +1,5 @@
 import { Quaternion, Vector3 } from 'three';
-import { polygonAgreement, type Agreement } from './agreement';
+import { polygonAgreement, type Agreement, type Point2 } from './agreement';
 import { partContour } from './contour';
 import { checkEligibility, type Eligibility, type EligibilityInput } from './eligibility';
 import { roiForBox } from './roi';
@@ -45,6 +45,8 @@ export interface PresenceReading {
   agreement?: Agreement;
   /** Undefined means "no vote" — ineligible, or too ambiguous to call. */
   vote?: { present: boolean };
+  /** Where the outline falls in the image, when the part was eligible: what a model is shown. */
+  hull?: Point2[];
 }
 
 export function readPresence(input: PresenceInput): PresenceReading {
@@ -63,5 +65,5 @@ export function readPresence(input: PresenceInput): PresenceReading {
   const vote = agreement.coverage >= PRESENT_MIN_COVERAGE ? { present: true }
     : agreement.coverage <= ABSENT_MAX_COVERAGE ? { present: false }
       : undefined;
-  return { eligibility, agreement, vote };
+  return { eligibility, agreement, vote, hull: contour.hull };
 }

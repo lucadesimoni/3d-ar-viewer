@@ -209,7 +209,16 @@ function PresenceList({ partIds }: { partIds: string[] }): JSX.Element | null {
   const parts = useStore((s) => s.assembly.parts);
   const shown = partIds.filter((id) => presence[id]);
   if (shown.length === 0) return null;
+  // The step as a whole, once every part of it has been looked at: still a
+  // suggestion, but the one an operator reads first.
+  const seen = partIds.filter((id) => presence[id]?.state === 'present').length;
+  const missing = partIds.filter((id) => presence[id]?.state === 'absent').length;
+  const summary = seen === partIds.length ? { cls: 'presence-step-done', text: 'Camera: every part of this step looks in place' }
+    : missing > 0 ? { cls: 'presence-step-missing', text: `Camera: ${missing} of ${partIds.length} not in place yet` }
+      : undefined;
   return (
+    <>
+    {summary && <p className={`presence-step ${summary.cls}`} role="status">{summary.text}</p>}
     <ul className="presence" aria-label="What the camera sees" aria-live="polite">
       {shown.map((id) => {
         const p = presence[id];
@@ -220,5 +229,6 @@ function PresenceList({ partIds }: { partIds: string[] }): JSX.Element | null {
         return <li key={id} className={`presence-${p.state}`}>{name} — {text}</li>;
       })}
     </ul>
+    </>
   );
 }

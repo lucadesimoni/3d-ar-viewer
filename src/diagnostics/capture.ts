@@ -115,6 +115,8 @@ export async function captureFrame(
       // the image actually attached. A frame that carries its own expectation
       // is a frame someone can check later — or train against.
       const roi = manager.roiForPart(part.id, { width: canvas.width, height: canvas.height });
+      const outline = manager.outlineForPart(part.id, { width: canvas.width, height: canvas.height });
+      const fitted = state.assembly.steps.some((s) => s.partIds.includes(part.id) && state.completedStepIds.has(s.id));
       return {
         id: part.id,
         name: part.name,
@@ -128,6 +130,8 @@ export async function captureFrame(
           ] as [number, number, number, number],
           roiClipped: roi.clipped,
         } : {}),
+        ...(outline ? { outline: outline.flatMap((p) => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10]) } : {}),
+        fitted,
       };
     }),
     ...(note ? { note } : {}),

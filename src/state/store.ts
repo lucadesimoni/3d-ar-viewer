@@ -17,6 +17,8 @@ export interface PartPresence {
   reasons: EligibilityReason[];
   /** Share of the silhouette with a real edge on the latest look, 0..1 — kept for calibration. */
   coverage?: number;
+  /** The trained model's p(present) on the latest look, when it ran. */
+  score?: number;
 }
 import type { AssemblyDef, PlacementState, Pose } from '../engine/types';
 import { gearbox } from '../data';
@@ -309,7 +311,7 @@ function derive(state: {
   return { diagnostics, severityByPart: sev, sequence, placements };
 }
 
-/** Same on everything a reader sees: state and reasons, coverage to the percent. */
+/** Same on everything a reader sees: state and reasons, coverage and model score to the percent. */
 export function samePresence(a: Record<string, PartPresence>, b: Record<string, PartPresence>): boolean {
   const keys = Object.keys(b);
   if (Object.keys(a).length !== keys.length) return false;
@@ -319,6 +321,8 @@ export function samePresence(a: Record<string, PartPresence>, b: Record<string, 
     if (!x || !y || x.state !== y.state || x.reasons.length !== y.reasons.length) return false;
     if (!x.reasons.every((r, i) => r === y.reasons[i])) return false;
     if ((x.coverage === undefined) !== (y.coverage === undefined)) return false;
+    if ((x.score === undefined) !== (y.score === undefined)) return false;
+    if (x.score !== undefined && Math.abs(x.score - (y.score ?? 0)) >= 0.01) return false;
     return x.coverage === undefined || Math.abs(x.coverage - (y.coverage ?? 0)) < 0.01;
   });
 }

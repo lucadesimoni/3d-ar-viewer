@@ -14,6 +14,8 @@ import { watchXrCamera } from './xrCameraWatch';
 import { edgeField } from '../perception/edges';
 import { readPresence } from '../perception/presence';
 import { foldEvidence, initEvidence, type EvidenceState } from '../perception/evidence';
+import { presenceCrop, type PresenceCrop } from '../perception/presenceInput';
+import { combineVotes, modelVote, sharedPresenceModel, type PresenceModel } from '../perception/presenceModel';
 import { alignToMarker } from '../engine/alignment';
 import { floorFit } from '../engine/floorEstimate';
 import { useStore, surfaceDrop, type PartPresence } from '../state/store';
@@ -406,7 +408,10 @@ export function useArController(
     let lastTrack = 0;
     let lastPipeline = 0;
     let lastPresence = 0;
-    const presence: PresenceMemory = { evidence: new Map() };
+    const presence: PresenceMemory = { evidence: new Map(), model: assembly.recognition ? sharedPresenceModel() : undefined };
+    void presence.model?.load().then((ok) => logEvent('place', ok ? 'presence model loaded' : 'presence model unavailable', {
+      ...(ok ? {} : { error: presence.model?.error }),
+    }));
     let busyPipeline: RecognitionPipeline | undefined;
     /** A camera readback in flight — never ask for a second one behind it. */
     let busyFrame = false;
@@ -978,6 +983,12 @@ export interface PresenceMemory {
   anchor?: Pose;
   placement?: string;
   assembly?: AssemblyDef;
+  /** The trained presence model, when this build has one (`perception/presenceModel.ts`). */
+  model?: PresenceModel;
+  /** A model answer is in flight: one at a time. */
+  modelBusy?: boolean;
+  /** Bumped when the evidence is reset, so an answer asked about before is dropped. */
+  epoch?: number;
 }
 
 /**
@@ -1008,6 +1019,8 @@ export function updatePresence(manager: SceneManager | undefined, image: ImageDa
     memo.evidence.clear();
     memo.placement = state.arPlacement;
     memo.assembly = state.assembly;
+    // A model answer still in flight was asked through the old pose.
+    memo.epoch = (memo.epoch ?? 0) + 1;
     if (Object.keys(state.partPresence).length) state.setPartPresence({});
   }
   // Remember where the evidence was gathered, not where tracking has drifted
@@ -1029,20 +1042,68 @@ export function updatePresence(manager: SceneManager | undefined, image: ImageDa
     explodeFactor: state.explodeFactor,
     frameUniform: isUniform(image),
   };
-  const next: Record<string, PartPresence> = {};
+  const looks: PresenceLook[] = [];
   for (const partId of step.partIds) {
     const box = manager.partBox(partId);
     if (!box) continue;
-    const reading = readPresence({ field, box, viewMatrix, k, gates: { ...gates, occluded: manager.partOccluded(partId) } });
+    looks.push({ partId, reading: readPresence({ field, box, viewMatrix, k, gates: { ...gates, occluded: manager.partOccluded(partId) } }) });
+  }
+
+  // The trained model, when it is there, looks at the same outlines; its
+  // answer arrives a few milliseconds later and is folded in then.
+  const model = memo.model?.ready ? memo.model : undefined;
+  const asked = model ? looks.filter((l) => l.reading.hull) : [];
+  if (!model || asked.length === 0) {
+    foldPresence(memo, looks, new Map());
+    return;
+  }
+  if (memo.modelBusy) return; // the next look asks again
+  const crops = asked.map((l) => ({ look: l, crop: presenceCrop(image, l.reading.hull!) }))
+    .filter((c): c is { look: PresenceLook; crop: PresenceCrop } => Boolean(c.crop));
+  memo.modelBusy = true;
+  const epoch = memo.epoch;
+  const stepId = step.id;
+  void model.score(crops.map((c) => c.crop))
+    .then((scores) => new Map(crops.map((c, i) => [c.look.partId, scores[i]])))
+    .catch((error: unknown) => {
+      logEvent('error', 'presence model failed', { error: String(error) });
+      return new Map<string, number>();
+    })
+    .then((scores) => {
+      if (memo.epoch !== epoch || useStore.getState().activeStepId !== stepId) return;
+      foldPresence(memo, looks, scores);
+    })
+    .finally(() => { memo.modelBusy = false; });
+}
+
+interface PresenceLook {
+  partId: string;
+  reading: ReturnType<typeof readPresence>;
+}
+
+/** One look at each part, its edge vote and model score combined, into the evidence and the store. */
+function foldPresence(memo: PresenceMemory, looks: PresenceLook[], scores: Map<string, number>): void {
+  const state = useStore.getState();
+  const thresholds = memo.model?.info?.thresholds;
+  const next: Record<string, PartPresence> = {};
+  for (const { partId, reading } of looks) {
+    const score = scores.get(partId);
+    const vote = score !== undefined && thresholds
+      ? combineVotes(modelVote(score, thresholds), reading.vote)
+      : reading.vote;
     const before = memo.evidence.get(partId) ?? initEvidence();
-    const after = foldEvidence(before, reading.vote);
+    const after = foldEvidence(before, vote);
     memo.evidence.set(partId, after);
-    next[partId] = { state: after.state, reasons: reading.eligibility.reasons, coverage: reading.agreement?.coverage };
+    next[partId] = {
+      state: after.state, reasons: reading.eligibility.reasons, coverage: reading.agreement?.coverage,
+      ...(score !== undefined ? { score } : {}),
+    };
     if (after.state !== before.state) {
       logEvent('place', 'part presence', {
         partId,
         state: after.state,
         coverage: reading.agreement ? Number(reading.agreement.coverage.toFixed(3)) : null,
+        model: score !== undefined ? Number(score.toFixed(3)) : null,
         reasons: reading.eligibility.reasons,
       });
     }

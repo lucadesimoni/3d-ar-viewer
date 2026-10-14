@@ -26,13 +26,16 @@ error · **unverified** = correct as far as it can be tested here · **chore**.
   inviting recognition and asks for a tap instead.
   `src/components/AppClipLink.tsx`
 
-- **gap — no ONNX model ships.** `vision/pipeline` is wired for detection,
-  classification and segmentation; with no `VITE_DETECTOR_MODEL_URL` set it runs
-  geometry-only and stays quiet. Pick a model with a redistributable licence,
-  self-host it, ship its labels. `src/vision/defaultModels.ts`
-  Until then, *part* recognition is off and the UI says so — what still works
-  without any model is **shape** recognition of an assembly's `recognition`
-  target (the KALLAX facade lattice) and hand placement onto a chosen surface.
+- **unverified — the presence model on a real build in progress.** A trained
+  model now checks each step's parts from the camera (`docs/PRESENCE_MODEL.md`),
+  trained on synthetic renders and sanity-checked on a few real frames of
+  finished shelves. It has never seen a real "not fitted yet". Collect device
+  reports with frames from a build (ticked steps record the labels), cut crops
+  with `scripts/presence/crops-from-report.mjs`, retrain.
+- **gap — no part-recognition model ships.** `vision/pipeline` is wired for
+  detection, classification and segmentation of *which* part is in view; with
+  no `VITE_DETECTOR_MODEL_URL` set it stays quiet. `src/vision/defaultModels.ts`.
+  Whether a part is *in place* is answered by the presence model above.
 - **gap — AR Quick Look never appears.** The button requires `quickLookUrl` on
   the assembly and no sample ships a USDZ, so on iOS the escape hatch is dead
   code. Needs the asset pipeline (roadmap 1.4). `src/components/QuickLookButton.tsx`

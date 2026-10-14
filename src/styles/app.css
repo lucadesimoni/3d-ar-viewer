@@ -286,6 +286,9 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
 .presence .presence-absent { color: var(--warn); }
 .presence .presence-absent::before { content: '✗'; }
 .presence .presence-unknown::before { content: '·'; }
+.presence-step { margin: 6px 0 0; font-size: 12.5px; font-weight: 600; }
+.presence-step-done { color: var(--ok); }
+.presence-step-missing { color: var(--warn); }
 .blocked { color: var(--warn); font-size: 12.5px; margin: 8px 0 0; }
 /* A button that reads as a link: inline, in the sentence it finishes. */
 button.link {

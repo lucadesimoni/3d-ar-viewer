@@ -248,6 +248,12 @@ const context = await browser.newContext({
     check('the parts of the step are looked for once the shelf is locked',
       reported.length === presence.parts.length && reported.length > 0,
       reported.map((id) => { const p = presence.presence[id]; return `${id}=${p.state}${p.reasons.length ? `(${p.reasons.join('+')})` : ''}${p.coverage !== undefined ? ` coverage ${p.coverage.toFixed(2)}` : ''}`; }).join(', ') || 'none');
+    // The trained presence model looked at the same parts, through the same
+    // outline: every part that could be judged carries its score.
+    const judged = reported.filter((id) => presence.presence[id].reasons.length === 0);
+    check('and the trained presence model scores every part it could judge',
+      judged.length > 0 && judged.every((id) => typeof presence.presence[id].score === 'number'),
+      judged.map((id) => `${id}=${presence.presence[id].score?.toFixed(2) ?? 'no score'}`).join(', ') || 'none judged');
     check('and none of the drawn parts is reported missing',
       reported.every((id) => presence.presence[id].state !== 'absent'),
       reported.filter((id) => presence.presence[id].state === 'absent').join(', ') || 'none absent');
