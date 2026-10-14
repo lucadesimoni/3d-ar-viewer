@@ -14,6 +14,10 @@ import { watchXrCamera } from './xrCameraWatch';
 import { edgeField } from '../perception/edges';
 import { readPresence } from '../perception/presence';
 import { foldEvidence, initEvidence, type EvidenceState } from '../perception/evidence';
+import { presenceCrop, type PresenceCrop } from '../perception/presenceInput';
+import { nativeBridge, type NativeBridge, type NativePose, type NativeSession } from '../native/bridge';
+import { requestCameraImage } from '../native/frames';
+import { combineVotes, modelVote, sharedPresenceModel, type PresenceModel } from '../perception/presenceModel';
 import { alignToMarker } from '../engine/alignment';
 import { floorFit } from '../engine/floorEstimate';
 import { useStore, surfaceDrop, type PartPresence } from '../state/store';
@@ -48,6 +52,8 @@ import { logEvent } from '../diagnostics/log';
 
 /** Fall back to a floating preview if nothing has been placed by then, ms. */
 const PREVIEW_FALLBACK_MS = 6000;
+/** How long the native shell has to report its first pose before the browser's own AR is tried. */
+const NATIVE_START_TIMEOUT_MS = 6000;
 /** Width the camera frame is sampled at for recognition and tracking. */
 const FRAME_WIDTH = 480;
 /** Margin around a projected region, as a share of its own size. */
@@ -118,6 +124,8 @@ export function useArController(
   const previewTimer = useRef<number | undefined>(undefined);
   const stopPlacement = useRef<(() => void) | undefined>(undefined);
   const xrSession = useRef<{ end: () => Promise<void> } | undefined>(undefined);
+  /** The native shell's AR session (`native/bridge.ts`), while it is ours. */
+  const nativeSession = useRef<{ bridge: NativeBridge; cameraImages: boolean; end: () => void } | undefined>(undefined);
   const rafRef = useRef<number | undefined>(undefined);
   const wakeLock = useRef<WakeLock | undefined>(undefined);
   const cameraSuspended = useRef(false);
@@ -264,6 +272,7 @@ export function useArController(
     safely('placement', () => { stopPlacement.current?.(); stopPlacement.current = undefined; });
     safely('video geometry', () => { videoGeometryCleanup.current?.(); videoGeometryCleanup.current = undefined; });
     safely('xr session', () => { void xrSession.current?.end(); xrSession.current = undefined; });
+    safely('native session', () => { nativeSession.current?.end(); nativeSession.current = undefined; });
     safely('wake lock', () => { void wakeLock.current?.release().catch(() => undefined); wakeLock.current = undefined; });
     safely('marker tracker', () => markerRef.current?.stop());
     safely('camera tracker', () => trackerRef.current?.stop());
@@ -384,7 +393,7 @@ export function useArController(
     manager: SceneManager | undefined,
     video: HTMLVideoElement | undefined,
     assembly: AssemblyDef,
-    source: 'video' | 'xr',
+    source: 'video' | 'xr' | 'native',
   ): void => {
     // Frame loop. Two jobs at two very different rates, driven off one capture:
     // the object anchor runs as fast as the device can take it, because that is
@@ -406,7 +415,10 @@ export function useArController(
     let lastTrack = 0;
     let lastPipeline = 0;
     let lastPresence = 0;
-    const presence: PresenceMemory = { evidence: new Map() };
+    const presence: PresenceMemory = { evidence: new Map(), model: assembly.recognition ? sharedPresenceModel() : undefined };
+    void presence.model?.load().then((ok) => logEvent('place', ok ? 'presence model loaded' : 'presence model unavailable', {
+      ...(ok ? {} : { error: presence.model?.error }),
+    }));
     let busyPipeline: RecognitionPipeline | undefined;
     /** A camera readback in flight — never ask for a second one behind it. */
     let busyFrame = false;
@@ -492,6 +504,7 @@ export function useArController(
     };
 
     const inXr = source === 'xr';
+    const inNative = source === 'native';
 
     const loop = (now: number): void => {
       rafRef.current = requestAnimationFrame(loop);
@@ -501,8 +514,9 @@ export function useArController(
       // frame in it; a session needs neither — it has the platform's pose and
       // its own camera texture. Requiring the tracker in both is what a
       // single shared guard would do, and in a session it is never there.
-      if (inXr ? xrSession.current === undefined
-        : (!trackerRef.current || !video || video.readyState < 2)) return;
+      if (inNative ? nativeSession.current === undefined
+        : inXr ? xrSession.current === undefined
+          : (!trackerRef.current || !video || video.readyState < 2)) return;
       if (restartInterval) {
         restartInterval = false;
         lastTrack = now;
@@ -516,7 +530,8 @@ export function useArController(
       // and recognition only has to re-register when the object comes into
       // view. That is a once-a-second job, and every frame in a session costs
       // a multi-megabyte readback — so it runs on the slow interval there.
-      const frameIntervalMs = inXr ? perf.recognitionIntervalMs : trackIntervalMs;
+      // The native shell's world tracking holds the overlay the way a session's does.
+      const frameIntervalMs = inXr || inNative ? perf.recognitionIntervalMs : trackIntervalMs;
       // And only when something will use the frame. Until the object is
       // locked the tracker looks at one frame per detection interval and
       // drops the rest — and each of those was a full video copy first.
@@ -534,6 +549,21 @@ export function useArController(
       const pipelineDue = canRecognize && busyPipeline !== pipeline
         && now - lastPipeline >= perf.recognitionIntervalMs;
       if (!anchorDue && !pipelineDue) return;
+
+      if (inNative) {
+        // A frame from the shell is a JPEG across the bridge: one at a time.
+        const native = nativeSession.current;
+        if (busyFrame || !native?.cameraImages) return;
+        busyFrame = true;
+        void requestCameraImage(native.bridge, FRAME_WIDTH)
+          .then((got) => {
+            if (!got || nativeSession.current !== native) return;
+            useFrame(got.image, now, frameState, anchorDue, pipeline, pipelineDue);
+          })
+          .catch(() => {})
+          .finally(() => { busyFrame = false; restartInterval = true; });
+        return;
+      }
 
       if (inXr) {
         // A readback is several megabytes off the GPU; queueing a second one
@@ -558,6 +588,76 @@ export function useArController(
     };
     rafRef.current = requestAnimationFrame(loop);
   }, []);
+
+  /**
+   * AR from the native shell: ask it to start, take its first pose as the
+   * sign that tracking is running, then let every pose drive the AR camera.
+   * False, with the shell told to stop, if no pose comes: the caller falls
+   * back to the browser's own paths.
+   */
+  const startNative = useCallback(async (
+    manager: SceneManager, bridge: NativeBridge, current: () => boolean,
+  ): Promise<boolean> => {
+    logEvent('ar', 'native host', { hello: bridge.hello() ?? null });
+    bridge.send({ type: 'start' });
+    const first = await new Promise<NativePose | NativeSession | undefined>((resolve) => {
+      const timer = window.setTimeout(() => { off(); resolve(undefined); }, NATIVE_START_TIMEOUT_MS);
+      const off = bridge.subscribe((m) => {
+        if (m.type === 'pose' || (m.type === 'session' && m.state === 'failed')) {
+          window.clearTimeout(timer); off(); resolve(m);
+        }
+      });
+    });
+    if (!first || first.type === 'session' || !current()) {
+      bridge.send({ type: 'stop' });
+      logEvent('ar', 'native session did not start', {
+        reason: first?.type === 'session' ? first.reason ?? 'failed' : current() ? 'no pose in time' : 'superseded',
+      });
+      if (first?.type === 'session' && current()) {
+        useStore.getState().setArError(`The app's AR could not start: ${first.reason ?? 'unknown reason'}.`);
+      }
+      return false;
+    }
+
+    const follow = (m: NativePose) => {
+      manager.setNativeCameraPose(m.pose, m.fovDeg);
+      if (m.floorY !== undefined) manager.setNativeFloorY(m.floorY);
+    };
+    follow(first);
+    let tracking = first.tracking;
+    const off = bridge.subscribe((m) => {
+      if (m.type === 'pose') {
+        follow(m);
+        if (m.tracking !== tracking) {
+          tracking = m.tracking;
+          logEvent('ar', 'native tracking', { tracking });
+        }
+      } else if (m.type === 'session' && m.state === 'failed') {
+        useStore.getState().setArError(`The app's AR stopped: ${m.reason ?? 'unknown reason'}.`);
+        stop();
+      }
+    });
+    nativeSession.current = {
+      bridge,
+      cameraImages: bridge.hello()?.cameraImages ?? false,
+      end: () => { off(); bridge.send({ type: 'stop' }); manager.setNativeFloorY(undefined); },
+    };
+    logEvent('ar', 'native session running', { platform: bridge.hello()?.platform ?? null, fovDeg: first.fovDeg });
+    useStore.getState().setArSource('native');
+    setArActive(true);
+    manager.setArMode(true);
+    if (armPlacement(manager, 'native')) {
+      stopPlacement.current = manager.startGroundPlacement(
+        surfaceDrop(useStore.getState().arSettings),
+        (pose) => {
+          useStore.getState().setAnchor(pose, 0.8, 'floor');
+          stopPlacement.current = undefined;
+        },
+      );
+    }
+    startVisionLoop(manager, undefined, useStore.getState().assembly, 'native');
+    return true;
+  }, [startVisionLoop, stop]);
 
   const startXr = useCallback(async (
     manager: SceneManager, current: () => boolean,
@@ -676,6 +776,15 @@ export function useArController(
     // phone that could do real six-degree tracking silently gets an overlay
     // that walks along with the operator. The attempt costs a moment and falls
     // through on failure, which the camera path handles anyway.
+    // 0. Inside the Spatial AR app: the platform's own world tracking, ARCore
+    // or ARKit, through the native bridge. Before WebXR, which the shell's
+    // web view does not offer, and before the camera, which the shell owns.
+    const bridge = nativeBridge();
+    if (bridge && manager) {
+      if (await startNative(manager, bridge, current)) return;
+      if (!current()) return;
+    }
+
     const xrDenied = capabilities.permissionsPolicy?.['xr-spatial-tracking'] === 'denied';
     if ((capabilities.immersiveAr || capabilities.webxrSupported) && !xrDenied && manager) {
       if (await startXr(manager, current)) return;
@@ -756,7 +865,7 @@ export function useArController(
     } finally {
       if (generation === sessionGeneration.current) entryPending.current = false;
     }
-  }, [arActive, capabilities, assembly, startVisionLoop, stop, startCamera, videoRef]);
+  }, [arActive, capabilities, assembly, startVisionLoop, stop, startCamera, startNative, videoRef]);
 
   /**
    * Ask for a real AR session again, from this tap.
@@ -918,7 +1027,7 @@ export function useArController(
  *
  * Returns whether placement was armed.
  */
-function armPlacement(manager: SceneManager, source: 'webxr' | 'camera'): boolean {
+function armPlacement(manager: SceneManager, source: 'webxr' | 'camera' | 'native'): boolean {
   const state = useStore.getState();
   const wanted = state.arSettings.placeOnEntry || !state.anchor;
   if (!wanted) {
@@ -978,6 +1087,12 @@ export interface PresenceMemory {
   anchor?: Pose;
   placement?: string;
   assembly?: AssemblyDef;
+  /** The trained presence model, when this build has one (`perception/presenceModel.ts`). */
+  model?: PresenceModel;
+  /** A model answer is in flight: one at a time. */
+  modelBusy?: boolean;
+  /** Bumped when the evidence is reset, so an answer asked about before is dropped. */
+  epoch?: number;
 }
 
 /**
@@ -1008,6 +1123,8 @@ export function updatePresence(manager: SceneManager | undefined, image: ImageDa
     memo.evidence.clear();
     memo.placement = state.arPlacement;
     memo.assembly = state.assembly;
+    // A model answer still in flight was asked through the old pose.
+    memo.epoch = (memo.epoch ?? 0) + 1;
     if (Object.keys(state.partPresence).length) state.setPartPresence({});
   }
   // Remember where the evidence was gathered, not where tracking has drifted
@@ -1029,20 +1146,68 @@ export function updatePresence(manager: SceneManager | undefined, image: ImageDa
     explodeFactor: state.explodeFactor,
     frameUniform: isUniform(image),
   };
-  const next: Record<string, PartPresence> = {};
+  const looks: PresenceLook[] = [];
   for (const partId of step.partIds) {
     const box = manager.partBox(partId);
     if (!box) continue;
-    const reading = readPresence({ field, box, viewMatrix, k, gates: { ...gates, occluded: manager.partOccluded(partId) } });
+    looks.push({ partId, reading: readPresence({ field, box, viewMatrix, k, gates: { ...gates, occluded: manager.partOccluded(partId) } }) });
+  }
+
+  // The trained model, when it is there, looks at the same outlines; its
+  // answer arrives a few milliseconds later and is folded in then.
+  const model = memo.model?.ready ? memo.model : undefined;
+  const asked = model ? looks.filter((l) => l.reading.hull) : [];
+  if (!model || asked.length === 0) {
+    foldPresence(memo, looks, new Map());
+    return;
+  }
+  if (memo.modelBusy) return; // the next look asks again
+  const crops = asked.map((l) => ({ look: l, crop: presenceCrop(image, l.reading.hull!) }))
+    .filter((c): c is { look: PresenceLook; crop: PresenceCrop } => Boolean(c.crop));
+  memo.modelBusy = true;
+  const epoch = memo.epoch;
+  const stepId = step.id;
+  void model.score(crops.map((c) => c.crop))
+    .then((scores) => new Map(crops.map((c, i) => [c.look.partId, scores[i]])))
+    .catch((error: unknown) => {
+      logEvent('error', 'presence model failed', { error: String(error) });
+      return new Map<string, number>();
+    })
+    .then((scores) => {
+      if (memo.epoch !== epoch || useStore.getState().activeStepId !== stepId) return;
+      foldPresence(memo, looks, scores);
+    })
+    .finally(() => { memo.modelBusy = false; });
+}
+
+interface PresenceLook {
+  partId: string;
+  reading: ReturnType<typeof readPresence>;
+}
+
+/** One look at each part, its edge vote and model score combined, into the evidence and the store. */
+function foldPresence(memo: PresenceMemory, looks: PresenceLook[], scores: Map<string, number>): void {
+  const state = useStore.getState();
+  const thresholds = memo.model?.info?.thresholds;
+  const next: Record<string, PartPresence> = {};
+  for (const { partId, reading } of looks) {
+    const score = scores.get(partId);
+    const vote = score !== undefined && thresholds
+      ? combineVotes(modelVote(score, thresholds), reading.vote)
+      : reading.vote;
     const before = memo.evidence.get(partId) ?? initEvidence();
-    const after = foldEvidence(before, reading.vote);
+    const after = foldEvidence(before, vote);
     memo.evidence.set(partId, after);
-    next[partId] = { state: after.state, reasons: reading.eligibility.reasons, coverage: reading.agreement?.coverage };
+    next[partId] = {
+      state: after.state, reasons: reading.eligibility.reasons, coverage: reading.agreement?.coverage,
+      ...(score !== undefined ? { score } : {}),
+    };
     if (after.state !== before.state) {
       logEvent('place', 'part presence', {
         partId,
         state: after.state,
         coverage: reading.agreement ? Number(reading.agreement.coverage.toFixed(3)) : null,
+        model: score !== undefined ? Number(score.toFixed(3)) : null,
         reasons: reading.eligibility.reasons,
       });
     }

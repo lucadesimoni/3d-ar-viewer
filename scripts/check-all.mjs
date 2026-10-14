@@ -27,7 +27,7 @@ import { PREVIEW_URL } from './checks.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 /** The order CI has always used: cheapest to diagnose last. */
-export const SUITES = ['ar-verify', 'steps-check', 'layout-check', 'place-check', 'notes-check', 'log-check', 'runtime-check', 'deploy-check'];
+export const SUITES = ['ar-verify', 'steps-check', 'layout-check', 'place-check', 'notes-check', 'log-check', 'runtime-check', 'native-check', 'deploy-check'];
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(`--${name}`);

@@ -515,6 +515,26 @@ put where it belongs.
 its joint must end at 0 mm from nominal with a recorded snap, and one dropped
 140 mm out must stay out and raise `NOT_ENGAGED`.
 
+## Checking a step from the camera
+
+Once a shelf is recognised and anchored in AR, the app looks at each part of
+the active step in the camera picture and says whether it is in place: per
+part ("seen" / "not seen" / why it cannot check) and for the step ("every part
+looks in place", or "2 of 4 not in place yet"). It is a suggestion; the
+operator still ticks the step.
+
+Two readers vote:
+- an edge check, which asks whether the image has edges where the part's
+  outline should be;
+- a small trained model, which looks at the patch where the part should be,
+  given its expected outline.
+
+A vote counts when they do not contradict each other, and three agreeing
+looks in a row settle a part either way. The model (147 KB, ONNX, runs in the
+browser) was trained on synthetic renders of the assemblies. How it was made,
+how good it is, and how real device frames become training data are in
+[docs/PRESENCE_MODEL.md](./docs/PRESENCE_MODEL.md).
+
 ## What the guidance looks like
 
 The step card tells you what to fit; the 3D view has to tell you *which parts*,

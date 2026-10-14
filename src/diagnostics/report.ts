@@ -94,6 +94,14 @@ export interface Capture {
     roi?: [number, number, number, number];
     /** The region runs off the frame, so absence there proves nothing. */
     roiClipped?: boolean;
+    /**
+     * The part's expected outline, `[x0, y0, x1, y1, …]` in image pixels: what
+     * the presence model is shown, so a frame can be cut into training crops
+     * (`scripts/presence/crops-from-report.mjs`).
+     */
+    outline?: number[];
+    /** Whether the app counted the part as fitted (its step done) when the frame was taken. */
+    fitted?: boolean;
   }[];
   note?: string;
 }

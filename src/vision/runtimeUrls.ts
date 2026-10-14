@@ -15,12 +15,17 @@
 import openCvUrl from '@techstark/opencv-js/dist/opencv.js?url';
 import dracoWrapperUrl from 'draco3dgltf/draco_decoder_gltf_nodejs.js?url';
 import dracoWasmUrl from 'draco3dgltf/draco_decoder_gltf.wasm?url';
+import presenceModelUrl from '../perception/models/presence-v1.onnx?url';
+import presenceModelInfo from '../perception/models/presence-v1.onnx.json';
+import type { PresenceModelInfo } from '../perception/presenceModel';
 
 export interface RuntimeUrls {
   openCv: string;
   /** ONNX Runtime's wasm folder; undefined uses the copy bundled with the app. */
   ortWasmPaths?: string;
   draco: { wasmUrl: string; wasmBinaryUrl: string };
+  /** The trained presence model and its vote thresholds (`docs/PRESENCE_MODEL.md`). */
+  presenceModel?: { url: string; info: PresenceModelInfo };
 }
 
 export const RUNTIME_URLS: RuntimeUrls = {
@@ -29,4 +34,8 @@ export const RUNTIME_URLS: RuntimeUrls = {
   // which the app build already emits as an asset.
   ortWasmPaths: undefined,
   draco: { wasmUrl: dracoWrapperUrl, wasmBinaryUrl: dracoWasmUrl },
+  // 147 KB, loaded only once an assembly with a recognition target is in AR.
+  presenceModel: import.meta.env.VITE_PRESENCE_MODEL === 'off'
+    ? undefined
+    : { url: presenceModelUrl, info: presenceModelInfo },
 };

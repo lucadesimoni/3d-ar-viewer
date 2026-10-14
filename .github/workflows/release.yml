@@ -144,8 +144,13 @@ jobs:
           path: image
           retention-days: 14
 
+  # The Android (ARCore) and iOS (ARKit) shells, built from the same commit.
+  native:
+    needs: verify
+    uses: ./.github/workflows/native.yml
+
   publish:
-    needs: [packages, image]
+    needs: [packages, image, native]
     if: (github.event_name == 'push' && github.ref_type == 'tag') || (github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
@@ -160,12 +165,20 @@ jobs:
         with:
           name: image
           path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-unsigned-ipa
+          path: release
       # The image archives joined the other files here, so the checksums
       # are taken again over all of them.
       - name: Checksums over every asset
         working-directory: release
         run: |
-          sha256sum -- *.zip *.tar.gz *.tgz *.mpk > SHA256SUMS.txt
+          sha256sum -- *.zip *.tar.gz *.tgz *.mpk *.apk *.ipa > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: The release
         env:
@@ -174,7 +187,7 @@ jobs:
         run: |
           # A pushed tag is released as it is; a manual run tags the commit
           # it checked.
-          assets=(release/*.zip release/*.tar.gz release/*.tgz release/*.mpk release/SHA256SUMS.txt)
+          assets=(release/*.zip release/*.tar.gz release/*.tgz release/*.mpk release/*.apk release/*.ipa release/SHA256SUMS.txt)
           if gh release view "v$VERSION" > /dev/null 2>&1; then
             # A rerun: the release is there; make its files these.
             gh release upload "v$VERSION" "${assets[@]}" --clobber

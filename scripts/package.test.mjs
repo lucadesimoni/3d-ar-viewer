@@ -8,7 +8,7 @@ const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 describe('release packaging', () => {
   it('names every asset after the version', () => {
     const n = assetNames('1.2.3', 'someone');
-    expect(Object.values(n).filter((f) => f.includes('1.2.3'))).toHaveLength(6);
+    expect(Object.values(n).filter((f) => f.includes('1.2.3'))).toHaveLength(8);
     expect(n.npm).toBe('someone-spatial-ar-viewer-1.2.3.tgz');   // what `npm pack` names a scoped package
   });
 

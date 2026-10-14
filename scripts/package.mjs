@@ -39,6 +39,9 @@ export function assetNames(version, owner = 'lucadesimoni') {
     mpk: `anthropic.SpatialArViewer-${version}.mpk`,
     imageAmd64: `spatial-ar-image-${version}-amd64.tar.gz`,
     imageArm64: `spatial-ar-image-${version}-arm64.tar.gz`,
+    // Built by .github/workflows/native.yml, attached by the release.
+    androidApk: `spatial-ar-android-${version}.apk`,
+    iosIpa: `spatial-ar-ios-${version}-unsigned.ipa`,
     sums: 'SHA256SUMS.txt',
     notes: 'RELEASE_NOTES.md',
   };
@@ -82,6 +85,8 @@ export function installNotes(version, owner = 'lucadesimoni') {
     `- **Server**: \`npm install -g ./${n.npm}\`, then \`spatial-ar-viewer\` (port 8080; \`--https\` with a certificate for devices).`,
     `- **Container**: \`docker load -i ${n.imageAmd64}\` (or \`${n.imageArm64}\`), then \`docker run -p 8080:8080 spatial-ar:${version}\`.`,
     `- **Mendix widget**: import \`${n.mpk}\` into the app's \`widgets\` folder (Studio Pro: App → Synchronize App Directory).`,
+    `- **Android app** (optional; the web app installs as a PWA without it): open \`${n.androidApk}\` on the phone and allow the install. Adds ARCore tracking and camera frames.`,
+    `- **iOS app** (optional): \`${n.iosIpa}\` is unsigned; sign it with your Apple ID to install. Adds ARKit world tracking, which Safari lacks. See native/README.md.`,
     '',
     `Check downloads against \`${n.sums}\`: \`sha256sum -c ${n.sums}\`.`,
     '',

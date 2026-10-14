@@ -18,9 +18,9 @@ demand (Actions ▸ CI ▸ Run workflow).
 ## Running the lot locally
 
 ```bash
-npm run typecheck && npm test      # 679 unit tests, including the check tooling's own
+npm run typecheck && npm test      # 701 unit tests, including the check tooling's own
 npm run build
-npm run check:all                  # all eight browser suites
+npm run check:all                  # all nine browser suites
 ```
 
 `check:all` serves `dist` with `vite preview` if nothing is serving
@@ -29,13 +29,14 @@ earlier one fails, and prints only failures and a summary:
 
 ```
 suite         passed  failed  time    status
-ar-verify     159     0       325s    ok
-steps-check   24      0       39s     ok
-layout-check  84      0       94s     ok
-place-check   14      0       34s     ok
-notes-check   11      0       20s     ok
-log-check     32      0       13s     ok
-runtime-check 7       0       7s      ok
+ar-verify     160     0       323s    ok
+steps-check   24      0       40s     ok
+layout-check  84      0       87s     ok
+place-check   14      0       30s     ok
+notes-check   11      0       19s     ok
+log-check     32      0       12s     ok
+runtime-check 7       0       6s      ok
+native-check  24      0       30s     ok
 deploy-check  14      0       13s     ok
 ```
 
@@ -59,10 +60,10 @@ Against the deployed site instead of a local build:
 
 ```bash
 PREVIEW_URL=https://your-deployment.example/ npm run check:all -- \
-  --only=ar-verify,steps-check,layout-check,place-check,notes-check,log-check,runtime-check --no-baseline
+  --only=ar-verify,steps-check,layout-check,place-check,notes-check,log-check,runtime-check,native-check --no-baseline
 ```
 
-**On CI** all eight run in one step through the same runner. A failing check,
+**On CI** all nine run in one step through the same runner. A failing check,
 or a suite that crashes, becomes an annotation on the run — readable in the
 UI and through the checks API — and the job summary has the table above with
 the failures listed under it. The logs are kept as the `check-results`
@@ -130,6 +131,17 @@ reported wrong at some point:
   else. It exists because Draco models never decoded (the decoder pointed at
   files that do not exist) and OpenCV froze the page the first time it loaded,
   and neither was noticed while the runtimes came from CDNs this network blocks.
+- **`native:check`** runs the app inside a simulated Android and iOS native
+  shell (`native/`), speaking the bridge protocol (`src/native/bridge.ts`).
+  It requires:
+  - AR on the shell's tracking, never the browser's camera or WebXR;
+  - a see-through page;
+  - an assembly that stays put as the phone walks;
+  - a tap that lands on the measured floor;
+  - camera frames for recognition, one at a time;
+  - malformed messages ignored, and Exit stopping the shell;
+  - outside a shell, the "Open in the app" link only when Android says the
+    app is installed, and an installable PWA.
 - **`log:check`** also requires an uncaught error to be reported to
   `/api/errors` once, without the page's query string, and the privacy notice
   and licence to be linked from the log and readable on a phone.

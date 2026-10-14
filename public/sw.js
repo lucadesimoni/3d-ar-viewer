@@ -19,7 +19,7 @@
  * are left to the network.
  */
 const CACHE = 'spatial-ar-v3';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
+const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
 /** How long a navigation waits for the network before using the cached shell. */
 const NETWORK_TIMEOUT_MS = 3000;
 
@@ -75,7 +75,7 @@ self.addEventListener('message', (e) => {
 
 async function cacheAssets(urls) {
   const cache = await caches.open(CACHE);
-  const wanted = urls.filter((u) => typeof u === 'string' && /^\/assets\/[A-Za-z0-9._-]+\.(?:m?js|css|wasm)$/.test(u));
+  const wanted = urls.filter((u) => typeof u === 'string' && /^\/assets\/[A-Za-z0-9._-]+\.(?:m?js|css|wasm|onnx)$/.test(u));
   await Promise.allSettled([...new Set(wanted)].map(async (url) => {
     if (await cache.match(url)) return;
     const response = await fetch(url);
@@ -100,7 +100,7 @@ self.addEventListener('fetch', (e) => {
 
   // The offline shell is not a cache for a host's private CAD, model weights,
   // or PLM API responses, even when those resources share the viewer's origin.
-  const bundledAsset = /^\/assets\/[^/]+\.(?:m?js|css|wasm|woff2?|svg|png|jpe?g|webp)$/.test(url.pathname);
+  const bundledAsset = /^\/assets\/[^/]+\.(?:m?js|css|wasm|onnx|woff2?|svg|png|jpe?g|webp)$/.test(url.pathname);
   if (bundledAsset) e.respondWith(cacheFirst(req));
   else if (SHELL.includes(url.pathname) || req.mode === 'navigate') e.respondWith(networkFirst(req));
 });

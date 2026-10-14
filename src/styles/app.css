@@ -85,6 +85,10 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
    camera, so anything opaque behind the HUD would hide the real world. */
 .app.ar, .app.ar .stage { background: transparent; }
 .app.ar .viewport-canvas, .app.ar .viewer-canvas { background: transparent; }
+/* The native shell draws the camera behind the web view: nothing of the page may
+   cover it, not the body's colour and not the (unused) passthrough video. */
+html:has(.app.native), html:has(.app.native) body { background: transparent; }
+.app.native .passthrough { display: none; }
 /* Grabbing is set from JS on hover, only over a part the current step allows to
    be moved — the cursor is the only warning before the model moves under the
    pointer, and there was none. */
@@ -286,6 +290,9 @@ code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 5px;
 .presence .presence-absent { color: var(--warn); }
 .presence .presence-absent::before { content: '✗'; }
 .presence .presence-unknown::before { content: '·'; }
+.presence-step { margin: 6px 0 0; font-size: 12.5px; font-weight: 600; }
+.presence-step-done { color: var(--ok); }
+.presence-step-missing { color: var(--warn); }
 .blocked { color: var(--warn); font-size: 12.5px; margin: 8px 0 0; }
 /* A button that reads as a link: inline, in the sentence it finishes. */
 button.link {

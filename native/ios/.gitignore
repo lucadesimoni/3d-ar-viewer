@@ -1,0 +1,5 @@
+SpatialAR.xcodeproj/
+build/
+.build/
+DerivedData/
+*.xcuserstate

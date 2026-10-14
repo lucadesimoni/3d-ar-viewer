@@ -1,0 +1,99 @@
+name: Native apps
+
+# The Android (ARCore) and iOS (ARKit) shells around the web app. On every push
+# that touches them, on any branch, so a change is built before it merges; and
+# called by the release, which attaches the Android APK.
+on:
+  push:
+    paths:
+      - 'native/**'
+      - 'src/native/**'
+      - '.github/workflows/native.yml'
+  pull_request:
+    paths:
+      - 'native/**'
+      - 'src/native/**'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: native/android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      # The protocol's unit tests (the bridge's messages and maths), Android
+      # lint, and the APK, signed with the public test key (see app/build.gradle.kts).
+      - run: ./gradlew --no-daemon :protocol:test :app:lintRelease :app:assembleRelease
+      - name: Lint findings, in the log
+        if: always()
+        run: |
+          f=app/build/reports/lint-results-release.txt
+          if [ -f "$f" ]; then tail -3 "$f"; grep -E "^\S.*: (Warning|Error):" "$f" | head -40 || true; else echo "no lint report"; fi
+      - name: Name the APK
+        run: |
+          version=$(node -p "require('../../package.json').version")
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk "out/spatial-ar-android-${version}.apk"
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: native/android/out/*.apk
+          retention-days: 14
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-reports
+          path: |
+            native/android/app/build/reports
+            native/android/protocol/build/reports
+          retention-days: 7
+
+  ios:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: native/ios
+    steps:
+      - uses: actions/checkout@v4
+      # The bridge's messages and maths, on the Mac: no device or simulator needed.
+      # And fails when no test ran: a test target that silently found nothing is not a pass.
+      - run: |
+          swift test --package-path SpatialProtocol 2>&1 | tee swift-test.log
+          grep -E "Executed [1-9][0-9]* tests?, with 0 failures" swift-test.log
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - name: Build for the simulator (compiles everything; ARKit itself needs a device)
+        run: |
+          version=$(node -p "require('../../package.json').version")
+          xcodebuild -project SpatialAR.xcodeproj -scheme SpatialAR \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build MARKETING_VERSION="$version" CODE_SIGNING_ALLOWED=NO build | tail -25
+      # An unsigned device build. iOS installs only signed apps: sign it with
+      # your Apple ID (Xcode, or a re-signing tool), see native/README.md.
+      - name: Build for devices, unsigned
+        run: |
+          version=$(node -p "require('../../package.json').version")
+          xcodebuild -project SpatialAR.xcodeproj -scheme SpatialAR -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build MARKETING_VERSION="$version" CODE_SIGNING_ALLOWED=NO build | tail -25
+          mkdir -p out/Payload
+          cp -R build/Build/Products/Release-iphoneos/SpatialAR.app out/Payload/
+          (cd out && zip -qry "spatial-ar-ios-${version}-unsigned.ipa" Payload && rm -rf Payload)
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned-ipa
+          path: native/ios/out/*.ipa
+          retention-days: 14

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The web app's icon (public/icon.svg), inside the adaptive icon's safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="512" android:viewportHeight="512">
+    <group android:scaleX="0.62" android:scaleY="0.62" android:pivotX="256" android:pivotY="256">
+        <path android:strokeColor="#22D3EE" android:strokeWidth="18" android:strokeLineJoin="round"
+            android:pathData="M256,96 L400,176 L400,336 L256,416 L112,336 L112,176 Z" />
+        <path android:strokeColor="#22D3EE" android:strokeWidth="14" android:strokeAlpha="0.85"
+            android:pathData="M256,96 L256,256 L400,176 M256,256 L112,176 M256,256 L256,416" />
+        <path android:fillColor="#22D3EE"
+            android:pathData="M282,256 A26,26 0 1,1 230,256 A26,26 0 1,1 282,256 Z" />
+    </group>
+</vector>
