@@ -37,7 +37,9 @@ jobs:
       - run: ./gradlew --no-daemon :protocol:test :app:lintRelease :app:assembleRelease
       - name: Lint findings, in the log
         if: always()
-        run: cat app/build/reports/lint-results-release.txt 2>/dev/null || echo "no lint report"
+        run: |
+          f=app/build/reports/lint-results-release.txt
+          if [ -f "$f" ]; then tail -3 "$f"; grep -E "^\S.*: (Warning|Error):" "$f" | head -40 || true; else echo "no lint report"; fi
       - name: Name the APK
         run: |
           version=$(node -p "require('../../package.json').version")
@@ -66,7 +68,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # The bridge's messages and maths, on the Mac: no device or simulator needed.
-      - run: swift test --package-path SpatialProtocol
+      # And fails when no test ran: a test target that silently found nothing is not a pass.
+      - run: |
+          swift test --package-path SpatialProtocol 2>&1 | tee swift-test.log
+          grep -E "Executed [1-9][0-9]* tests?, with 0 failures" swift-test.log
       - run: brew install xcodegen
       - run: xcodegen generate
       - name: Build for the simulator (compiles everything; ARKit itself needs a device)
