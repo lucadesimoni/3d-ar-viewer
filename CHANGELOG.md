@@ -8,32 +8,9 @@ Sections are written automatically from what was merged (see
 
 ## [0.5.0] — 2026-10-14
 
-### Camera step check with a trained model
-
-- A small model trained on synthetic renders (36k parameters, 147 KB, runs in
-  the browser) checks each part of the active step from the camera. It works
-  together with the existing edge check, and a vote counts only when the two
-  do not contradict. See docs/PRESENCE_MODEL.md for how it was trained and how
-  it scores: 96.9% on held-out renders, and no wrong votes on real KALLAX
-  frames at the shipped thresholds. It is not yet measured on a real build in
-  progress.
-- The step guide says when every part of the step looks in place, or how many
-  are not.
-- Diagnostics captures record each part's outline and fitted state, so device
-  reports become training data (`scripts/presence/crops-from-report.mjs`).
-
-### Native apps (optional) and the PWA
-
-- **Android app** (`spatial-ar-android-X.Y.Z.apk`): ARCore tracking and
-  camera frames, with the same web app inside. Install the APK; the web app
-  offers "Open in the Spatial AR app" when it is installed.
-- **iOS app** (`spatial-ar-ios-X.Y.Z-unsigned.ipa`): ARKit world tracking,
-  which Safari lacks. It is unsigned, so sign it with a free Apple ID (SideStore,
-  Sideloadly, Xcode). See native/README.md.
-- Both are tested by unit tests and CI builds, and the web app is tested
-  against simulated shells. They are **not yet tested on a real phone**.
-- The PWA installs properly on iOS and Android: PNG icons (iOS ignored the
-  SVG), a maskable icon, and a complete manifest.
+- Releases verify their commit, not the live site
+- Android app tested on an emulator in CI; ARCore availability checked before install
+- Camera step check with a trained model; Android and iOS native shells; PWA baseline
 
 ## [0.4.0] — 2026-10-14
 
