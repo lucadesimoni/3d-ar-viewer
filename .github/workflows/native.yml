@@ -35,6 +35,9 @@ jobs:
       # The protocol's unit tests (the bridge's messages and maths), Android
       # lint, and the APK, signed with the public test key (see app/build.gradle.kts).
       - run: ./gradlew --no-daemon :protocol:test :app:lintRelease :app:assembleRelease
+      - name: Lint findings, in the log
+        if: always()
+        run: cat app/build/reports/lint-results-release.txt 2>/dev/null || echo "no lint report"
       - name: Name the APK
         run: |
           version=$(node -p "require('../../package.json').version")
@@ -54,3 +57,38 @@ jobs:
             native/android/app/build/reports
             native/android/protocol/build/reports
           retention-days: 7
+
+  ios:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: native/ios
+    steps:
+      - uses: actions/checkout@v4
+      # The bridge's messages and maths, on the Mac: no device or simulator needed.
+      - run: swift test --package-path SpatialProtocol
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - name: Build for the simulator (compiles everything; ARKit itself needs a device)
+        run: |
+          version=$(node -p "require('../../package.json').version")
+          xcodebuild -project SpatialAR.xcodeproj -scheme SpatialAR \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build MARKETING_VERSION="$version" CODE_SIGNING_ALLOWED=NO build | tail -25
+      # An unsigned device build. iOS installs only signed apps: sign it with
+      # your Apple ID (Xcode, or a re-signing tool), see native/README.md.
+      - name: Build for devices, unsigned
+        run: |
+          version=$(node -p "require('../../package.json').version")
+          xcodebuild -project SpatialAR.xcodeproj -scheme SpatialAR -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build MARKETING_VERSION="$version" CODE_SIGNING_ALLOWED=NO build | tail -25
+          mkdir -p out/Payload
+          cp -R build/Build/Products/Release-iphoneos/SpatialAR.app out/Payload/
+          (cd out && zip -qry "spatial-ar-ios-${version}-unsigned.ipa" Payload && rm -rf Payload)
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned-ipa
+          path: native/ios/out/*.ipa
+          retention-days: 14

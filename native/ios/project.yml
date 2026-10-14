@@ -1,0 +1,54 @@
+# The Xcode project, generated: `xcodegen generate` (brew install xcodegen).
+# A generated project is reviewable as this file instead of a pbxproj.
+name: SpatialAR
+options:
+  bundleIdPrefix: com.outthinkx
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+packages:
+  SpatialProtocol:
+    path: SpatialProtocol
+settings:
+  base:
+    MARKETING_VERSION: "0.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    # Set your own team to sign for a device: Xcode ▸ Signing & Capabilities, or
+    # DEVELOPMENT_TEAM=XXXXXXXXXX on the xcodebuild command line.
+    DEVELOPMENT_TEAM: ""
+targets:
+  SpatialAR:
+    type: application
+    platform: iOS
+    sources:
+      - SpatialAR
+    dependencies:
+      - package: SpatialProtocol
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.outthinkx.spatialar
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: SpatialAR/Info.plist
+    info:
+      path: SpatialAR/Info.plist
+      properties:
+        CFBundleDisplayName: Spatial AR
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        NSCameraUsageDescription: The camera shows the assembly in augmented reality and checks each step's parts. Pictures stay on this device.
+        # spatialar://open?url=<page>: "Open in the Spatial AR app" from the web app.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.outthinkx.spatialar
+            CFBundleURLSchemes: [spatialar]
+        # The site the app opens, and the only origins given the bridge.
+        SpatialHomeURL: https://3d-ar-viewer-ten.vercel.app/
+        SpatialAllowedOrigins: https://3d-ar-viewer-ten.vercel.app
