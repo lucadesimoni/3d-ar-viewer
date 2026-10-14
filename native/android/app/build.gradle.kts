@@ -14,6 +14,8 @@ val (major, minor, patch) = webVersion.split(".").map { it.toInt() }
 // -PspatialHome=https://your.host/ -PspatialOrigins=https://your.host,https://other.host
 val home = (findProperty("spatialHome") as String?) ?: "https://3d-ar-viewer-ten.vercel.app/"
 val origins = (findProperty("spatialOrigins") as String?) ?: "https://3d-ar-viewer-ten.vercel.app"
+/** WebViewAssetLoader's origin: where debug builds serve the instrumented tests' pages. */
+val TEST_ORIGIN = "https://appassets.androidplatform.net"
 
 android {
     namespace = "com.outthinkx.spatialar"
@@ -27,6 +29,8 @@ android {
         versionName = webVersion
         buildConfigField("String", "HOME_URL", "\"$home\"")
         buildConfigField("String", "ALLOWED_ORIGINS", "\"$origins\"")
+        buildConfigField("boolean", "TEST_ASSETS", "false")
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Chrome reads this to tell the web app the app is installed (getInstalledRelatedApps).
         val site = origins.split(",").first()
         resValue(
@@ -51,7 +55,14 @@ android {
     }
 
     buildTypes {
-        getByName("debug") { signingConfig = signingConfigs.getByName("shell") }
+        // Debug builds also serve the instrumented tests' pages from the app's
+        // assets, at a real https origin that is allowed the bridge. Release
+        // builds have neither.
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("shell")
+            buildConfigField("boolean", "TEST_ASSETS", "true")
+            buildConfigField("String", "ALLOWED_ORIGINS", "\"$origins,$TEST_ORIGIN\"")
+        }
         getByName("release") {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("shell")
@@ -76,4 +87,10 @@ dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core-ktx:1.13.1")
+
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    androidTestImplementation("androidx.test.espresso:espresso-intents:3.6.1")
 }

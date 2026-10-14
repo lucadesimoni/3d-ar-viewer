@@ -13,13 +13,16 @@ import android.view.WindowManager
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.google.ar.core.ArCoreApk
@@ -45,7 +48,13 @@ import javax.microedition.khronos.opengles.GL10
  * asked. The bridge is offered only to the app's own site (`ALLOWED_ORIGINS`).
  */
 class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
-    private lateinit var web: WebView
+    /** Internal for the instrumented tests, which read the page through it. */
+    @VisibleForTesting
+    internal lateinit var web: WebView
+    /** Test pages, in debug builds only: served at https://appassets.androidplatform.net/assets/. */
+    private val testAssets: WebViewAssetLoader? = if (BuildConfig.TEST_ASSETS) {
+        WebViewAssetLoader.Builder().addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this)).build()
+    } else null
     private lateinit var surface: GLSurfaceView
     private val background = BackgroundRenderer()
     private val allowed = BuildConfig.ALLOWED_ORIGINS.split(',').map { it.trim() }.filter { it.isNotEmpty() }
@@ -79,6 +88,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
             webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+                    testAssets?.shouldInterceptRequest(request.url)
+
                 // The app's own site stays in the app; any other link opens in the browser.
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val url = request.url.toString()
@@ -148,6 +160,14 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private fun ensureSession(): String? {
         if (session != null) return null
         try {
+            // A phone that cannot run ARCore says so at once, rather than being
+            // sent to the Play Store for something it can never install.
+            val availability = ArCoreApk.getInstance().checkAvailability(this)
+            if (availability.isUnsupported) {
+                val reason = "ARCore is not supported on this device"
+                send(Protocol.session("failed", reason))
+                return reason
+            }
             when (ArCoreApk.getInstance().requestInstall(this, !installRequested)) {
                 ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {
                     installRequested = true

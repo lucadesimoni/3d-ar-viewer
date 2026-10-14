@@ -1,0 +1,16 @@
+<!doctype html>
+<!-- The instrumented tests' stand-in for the web app: the page side of the
+     bridge, recording everything, in debug builds only. -->
+<html><head><meta charset="utf-8"><title>bridge</title></head>
+<body>
+<a id="away" href="https://example.com/">another site</a>
+<iframe id="frame" srcdoc="<script>parent.postMessage({frameSeesHost: typeof window.SpatialNativeHost}, '*')</script>"></iframe>
+<script>
+  window.received = [];
+  window.frameSeesHost = 'not yet';
+  // What the app delivers: a JSON string, as src/native/bridge.ts receives it.
+  window.spatialNative = { receive: (json) => window.received.push(JSON.parse(json)) };
+  window.addEventListener('message', (e) => { if (e.data && 'frameSeesHost' in e.data) window.frameSeesHost = e.data.frameSeesHost; });
+  window.send = (message) => window.SpatialNativeHost.postMessage(typeof message === 'string' ? message : JSON.stringify(message));
+</script>
+</body></html>
