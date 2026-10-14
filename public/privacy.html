@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy notice · Spatial Assembly AR</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #0b0f14; --panel: #111821; --edge: rgba(148, 163, 184, 0.16);
+    --text: #e6edf5; --muted: #93a2b5; --accent: #22d3ee;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 46rem; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 4px; }
+  h2 { font-size: 1.1rem; margin: 2rem 0 0.4rem; }
+  p, li { color: var(--text); }
+  .meta { color: var(--muted); margin: 0 0 1.5rem; }
+  .summary { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 4px 20px; }
+  a { color: var(--accent); }
+  code { font-size: 0.9em; background: var(--panel); border: 1px solid var(--edge); border-radius: 6px; padding: 0 4px; overflow-wrap: anywhere; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+  th, td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  th { color: var(--muted); font-weight: 600; }
+  .table { overflow-x: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Privacy notice</h1>
+  <p class="meta">Spatial Assembly AR · last updated 14 October 2026</p>
+
+  <div class="summary">
+    <p><strong>In short:</strong> no account, no cookies, no tracking and no
+    advertising. The camera picture is processed on your device and never
+    leaves it. When the app hits an error it sends a short technical report,
+    described below, so the fault can be fixed.</p>
+  </div>
+
+  <h2>Who is responsible</h2>
+  <p>Outthinkx, Luca De Simoni, is responsible for this app and this website.
+  Contact: <a href="https://github.com/lucadesimoni">github.com/lucadesimoni</a>.</p>
+  <p>If you use the app on another organisation's server or inside another
+  organisation's website, that organisation runs it and is responsible for
+  it. Its own privacy notice applies.</p>
+
+  <h2>Camera and motion sensors</h2>
+  <p>Augmented reality needs the camera and, on some devices, the motion
+  sensors. The browser asks your permission first. The picture and the sensor
+  readings are processed only in your browser, on your device. They are not
+  uploaded, stored or seen by us. Recognition (OpenCV and ONNX Runtime) runs
+  locally from files served by this website.</p>
+
+  <h2>What is stored on your device</h2>
+  <div class="table"><table>
+    <tr><th>What</th><th>Why</th></tr>
+    <tr><td>Your notes on steps and parts (<code>spatial-ar.annotations.v1</code>)</td><td>So they are still there next time.</td></tr>
+    <tr><td>A summary of the last AR session, without images (<code>spatial-ar:last-ar-report</code>)</td><td>So a fault can still be reported after the app was closed.</td></tr>
+    <tr><td>The app's own files (service worker cache)</td><td>So the app opens quickly and works offline.</td></tr>
+  </table></div>
+  <p>This stays in your browser. You can delete it at any time by clearing
+  this site's data in your browser settings.</p>
+
+  <h2>Diagnostics log</h2>
+  <p>The app keeps a log of what it did in the current session. It leaves your
+  device only if you choose to save or copy it and send it to someone. If you
+  attach camera frames to it, the log contains those pictures, so look at it
+  before you send it.</p>
+
+  <h2>Error reports</h2>
+  <p>When the app hits an error, it sends a short report to this website
+  (<code>/api/errors</code>): at most five per visit, and the same error only
+  once. A report contains:</p>
+  <ul>
+    <li>the error message and where in the app's code it happened;</li>
+    <li>the app version;</li>
+    <li>the page path, without anything after it in the address;</li>
+    <li>your browser's user agent (browser, version, operating system and
+      device model);</li>
+    <li>how long after opening the page it happened.</li>
+  </ul>
+  <p>We do not store your IP address with a report, and a report contains no
+  pictures, nothing you typed and no identifier for you or your device. Reports
+  are used only to find and fix faults, which is our legitimate interest
+  (Art. 6(1)(f) GDPR; Swiss Federal Act on Data Protection). They are kept in
+  the server's logs for at most 30 days.</p>
+
+  <h2>Hosting</h2>
+  <p>This website is hosted by Vercel Inc., USA. To deliver the pages, Vercel
+  processes your IP address and request data, such as the time and the page
+  requested, in its server logs. This can mean a transfer to the USA, covered by
+  Vercel's data processing terms, which include the EU Standard Contractual
+  Clauses. The app itself contacts no other websites. A deployment may load its
+  own 3D models or recognition models from its own servers.</p>
+
+  <h2>Your rights</h2>
+  <p>You may ask for access to, correction or deletion of personal data about
+  you, ask for its processing to be restricted, object to it, and ask for a
+  copy. Contact us at the address above. Error reports hold no identifier, so
+  we can usually not tell which, if any, came from you. You may also complain
+  to a data protection authority. In Switzerland that is the Federal Data
+  Protection and Information Commissioner (FDPIC). In the EU it is the authority
+  where you live or work.</p>
+
+  <h2>Changes</h2>
+  <p>If the app starts handling data differently, this notice changes with it,
+  and the date above changes too.</p>
+
+  <p class="meta"><a href="./">Back to the app</a> · <a href="LICENSE.txt">Licence</a></p>
+</main>
+</body>
+</html>

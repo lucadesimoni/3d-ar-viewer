@@ -13,8 +13,10 @@
  *              deployment points at asset URLs that no longer exist. That is a
  *              blank screen, not a stale screen.
  *
- * Cross-origin requests (the OpenCV / ONNX CDN bundles) are left to the network
- * and degrade to nothing when offline — the geometry-driven app still runs.
+ * OpenCV, ONNX Runtime's wasm and the Draco decoder are fingerprinted /assets/
+ * of this build too (see src/vision/runtimeUrls.ts), so they are cached like
+ * any bundle once loaded. Cross-origin requests (a deployment's own model URLs)
+ * are left to the network.
  */
 const CACHE = 'spatial-ar-v3';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];

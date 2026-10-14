@@ -9,11 +9,14 @@ import { parseUiConfigFromParams } from './ui/config';
 import { ASSEMBLIES } from './data';
 import { getActiveManager } from './render/babylon/managerRegistry';
 import { installEmbedBridge } from './embed/bridge';
+import { installErrorReporting } from './diagnostics/errorReport';
 import { installErrorCapture, logEntries, logEvent } from './diagnostics/log';
 
 // First, before anything below can throw: an error during start-up is exactly
 // the one a phone hides, and it is no use if capture begins after it.
 installErrorCapture();
+// And send them home, from a deployed build: see diagnostics/errorReport.ts.
+if (!import.meta.env.DEV) installErrorReporting(import.meta.env.VITE_ERROR_REPORT_URL || '/api/errors');
 
 // Config for the standalone/iframe build comes from URL params, e.g.
 //   /?ui=minimal&embedded=1&accent=%23ff7a00
@@ -60,6 +63,12 @@ if (root) createRoot(root).render(<StrictMode><ErrorBoundary><App config={config
 (window as unknown as { spatialScene?: typeof getActiveManager }).spatialScene = getActiveManager;
 // And the session log, so a failing check can say what the app was doing.
 (window as unknown as { spatialLog?: typeof logEntries }).spatialLog = logEntries;
+// And the vision runtimes' own loaders, loaded on demand like the app does, so
+// a check can prove they come from this origin and actually run.
+(window as unknown as { spatialRuntimes?: object }).spatialRuntimes = {
+  opencv: () => import('./vision/opencv').then((m) => m.loadOpenCV()),
+  onnx: () => import('./vision/onnx').then((m) => m.loadOrt()),
+};
 
 const parentOrigin = new URLSearchParams(window.location.search).get('parentOrigin');
 if (parentOrigin && window.parent !== window) {

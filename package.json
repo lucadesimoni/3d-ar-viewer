@@ -25,6 +25,7 @@
     "serve": "node server/serve.mjs",
     "notes:check": "node scripts/notes-check.mjs",
     "log:check": "node scripts/log-check.mjs",
+    "runtime:check": "node scripts/runtime-check.mjs",
     "check:all": "node scripts/check-all.mjs --serve",
     "release:package": "node scripts/package.mjs",
     "release:check": "node scripts/package-check.mjs"
@@ -32,6 +33,8 @@
   "dependencies": {
     "@babylonjs/core": "^9.24.0",
     "@babylonjs/loaders": "^9.25.0",
+    "@techstark/opencv-js": "4.10.0-release.1",
+    "draco3dgltf": "1.5.7",
     "onnxruntime-web": "^1.29.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

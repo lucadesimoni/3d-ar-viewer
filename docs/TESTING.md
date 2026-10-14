@@ -8,7 +8,7 @@ cannot.
 | --- | --- | --- | --- |
 | Types | `npm run typecheck` | The whole repo compiles | Everything about behaviour |
 | Unit | `npm test` | Geometry, assembly import, iframe protocol, camera lifecycle, recognition identity and inference lifecycle, snapping, diagnostics, sequencing, vision maths | Real camera optics, device GPU/sensors, and browser layout |
-| Browser | `check:all` — `ar:verify`, `steps:check`, `layout:check`, `place:check`, `notes:check`, `log:check` | AR anchoring and tracking, the HUD on phone/tablet viewports, step guidance, placing and snapping, operator notes, the diagnostics log — against a real Chromium and the real build | Real camera optics, real motion sensors, real WebXR |
+| Browser | `check:all` — `ar:verify`, `steps:check`, `layout:check`, `place:check`, `notes:check`, `log:check`, `runtime:check` | AR anchoring and tracking, the HUD on phone/tablet viewports, step guidance, placing and snapping, operator notes, the diagnostics log and error reports, the self-hosted OpenCV / ONNX Runtime / Draco runtimes — against a real Chromium and the real build | Real camera optics, real motion sensors, real WebXR |
 | Deployment | `deploy:check` | First visit, offline, redeploy with new bundle names, offline again — against a deliberately dumb static host | Whether the actual host sets the headers |
 | Production | the same browser checks with `PREVIEW_URL=https://…` | The site that is actually serving: bad deploy, stale worker, missing header | Same hardware blind spots |
 
@@ -18,9 +18,9 @@ demand (Actions ▸ CI ▸ Run workflow).
 ## Running the lot locally
 
 ```bash
-npm run typecheck && npm test      # 572 unit tests, including the check tooling's own
+npm run typecheck && npm test      # 679 unit tests, including the check tooling's own
 npm run build
-npm run check:all                  # all seven browser suites, 302 checks
+npm run check:all                  # all eight browser suites
 ```
 
 `check:all` serves `dist` with `vite preview` if nothing is serving
@@ -29,13 +29,14 @@ earlier one fails, and prints only failures and a summary:
 
 ```
 suite         passed  failed  time    status
-ar-verify     153     0       343s    ok
-steps-check   20      0       40s     ok
-layout-check  64      0       66s     ok
-place-check   14      0       43s     ok
-notes-check   11      0       23s     ok
-log-check     26      0       13s     ok
-deploy-check  14      0       16s     ok
+ar-verify     159     0       325s    ok
+steps-check   24      0       39s     ok
+layout-check  84      0       94s     ok
+place-check   14      0       34s     ok
+notes-check   11      0       20s     ok
+log-check     32      0       13s     ok
+runtime-check 7       0       7s      ok
+deploy-check  14      0       13s     ok
 ```
 
 Each suite's full output is in `check-results/<suite>.log`, and every result
@@ -58,10 +59,10 @@ Against the deployed site instead of a local build:
 
 ```bash
 PREVIEW_URL=https://your-deployment.example/ npm run check:all -- \
-  --only=ar-verify,steps-check,layout-check,place-check,notes-check,log-check --no-baseline
+  --only=ar-verify,steps-check,layout-check,place-check,notes-check,log-check,runtime-check --no-baseline
 ```
 
-**On CI** all seven run in one step through the same runner. A failing check,
+**On CI** all eight run in one step through the same runner. A failing check,
 or a suite that crashes, becomes an annotation on the run — readable in the
 UI and through the checks API — and the job summary has the table above with
 the failures listed under it. The logs are kept as the `check-results`
@@ -122,6 +123,16 @@ reported wrong at some point:
 - **`place:check`** drags a part with a real pointer and requires it to snap
   from 38 mm out to 0 mm from nominal — and, dropped 140 mm out, to *stay* out
   and raise a diagnostic.
+- **`runtime:check`** loads OpenCV, ONNX Runtime and the Draco decoder through
+  the app's own loaders and makes each do real work: OpenCV builds a matrix,
+  ONNX Runtime runs a model, a Draco-compressed part appears in the scene. Every
+  file must come from the app's origin and nothing may be fetched from anywhere
+  else. It exists because Draco models never decoded (the decoder pointed at
+  files that do not exist) and OpenCV froze the page the first time it loaded,
+  and neither was noticed while the runtimes came from CDNs this network blocks.
+- **`log:check`** also requires an uncaught error to be reported to
+  `/api/errors` once, without the page's query string, and the privacy notice
+  and licence to be linked from the log and readable on a phone.
 - **`deploy:check`** serves the build from a directory it swaps underneath the
   browser, reproducing the blank screen a stale service worker causes after a
   redeploy.

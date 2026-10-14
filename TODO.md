@@ -33,11 +33,6 @@ error · **unverified** = correct as far as it can be tested here · **chore**.
   Until then, *part* recognition is off and the UI says so — what still works
   without any model is **shape** recognition of an assembly's `recognition`
   target (the KALLAX facade lattice) and hand placement onto a chosen surface.
-- **chore — OpenCV.js is loaded from `docs.opencv.org`.** That is a
-  documentation site, not a CDN: no SRI, ~8 MB, and a single point of failure
-  behind a corporate firewall. Self-host it or pin a real CDN with an integrity
-  hash. Everything degrades gracefully when it fails to load, which is why this
-  has not bitten yet. `src/vision/opencv.ts`
 - **gap — AR Quick Look never appears.** The button requires `quickLookUrl` on
   the assembly and no sample ships a USDZ, so on iOS the escape hatch is dead
   code. Needs the asset pipeline (roadmap 1.4). `src/components/QuickLookButton.tsx`

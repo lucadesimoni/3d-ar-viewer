@@ -15,6 +15,7 @@
  */
 import { createServer as createHttp } from 'node:http';
 import { createServer as createHttps } from 'node:https';
+import { acceptErrorReport, MAX_REPORT_BYTES } from './errorReport.mjs';
 import { readFile, stat } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 import { extname, join, normalize, resolve } from 'node:path';
@@ -77,6 +78,30 @@ async function resolveFile(urlPath) {
 
 async function handler(req, res) {
   const urlPath = (req.url ?? '/').split('?')[0];
+
+  // Error reports from the app (see errorReport.mjs): one JSON line on stdout,
+  // where a container's logs are collected.
+  if (urlPath === '/api/errors') {
+    if (req.method !== 'POST') {
+      res.writeHead(405, { Allow: 'POST' });
+      res.end();
+      return;
+    }
+    let body = '';
+    let size = 0;
+    let refused = false;
+    req.setEncoding('utf8');
+    for await (const chunk of req) {
+      size += Buffer.byteLength(chunk);
+      if (size > MAX_REPORT_BYTES) { refused = true; break; }
+      body += chunk;
+    }
+    const result = refused ? { ok: false, status: 413 } : acceptErrorReport(body);
+    if (result.ok) console.log(JSON.stringify(result.record));
+    res.writeHead(result.ok ? 204 : result.status, { 'Cache-Control': 'no-store' });
+    res.end();
+    return;
+  }
 
   // Liveness/readiness probe for orchestrators and load balancers.
   if (urlPath === '/healthz' || urlPath === '/livez') {

@@ -678,14 +678,30 @@ via `--isolate` (COOP/COEP). The Dockerfile has a `HEALTHCHECK`.
 **Offline-capable PWA.** A web app manifest makes it installable (standalone,
 full-screen — good for a tablet kiosk), and a service worker caches the app
 shell (stale-while-revalidate) so it opens and runs offline on flaky shop-floor
-Wi-Fi; the geometry-driven app works without the CDN model bundles.
+Wi-Fi. OpenCV.js, ONNX Runtime's wasm and the Draco decoder are served with
+the app from its own origin (`src/vision/runtimeUrls.ts`): nothing is fetched
+from a third-party host, so the app works behind a firewall that blocks CDNs
+and the service worker caches the runtimes for offline use.
+
+**Error reports.** A deployed build posts each uncaught error, unhandled
+rejection and render crash to `/api/errors` on its own origin
+(`src/diagnostics/errorReport.ts`): the message, the stack, the build, the
+page path and the user agent, at most five per page view, URLs scrubbed of
+their query strings. `server/serve.mjs` writes each one to stdout as a JSON
+line (`"type":"client-error"`), and on Vercel `api/errors.js` writes it to the
+function's log (the project ▸ Logs). Neither keeps the client's IP address.
+Set `VITE_ERROR_REPORT_URL` at build time to send them elsewhere, or to `off`.
+
+**Privacy notice.** `public/privacy.html`, linked beside the build line in the
+Log drawer, says what the app stores and sends. It names Outthinkx as
+responsible and Vercel as host: a licensee running its own deployment must
+publish its own.
 
 **Going to production**
 - Serve over **HTTPS** (required for camera / sensors / WebXR): `--https --cert
   cert.pem --key key.pem`, or a TLS-terminating proxy / tunnel.
-- Self-host the ONNX/OpenCV WASM and set `ort.env.wasm.wasmPaths` /
-  `loadOpenCV(url)` to your origin if you can't reach the CDN, then run with
-  `--isolate` for threaded inference.
+- Run with `--isolate` for threaded ONNX inference (the runtimes are already
+  self-hosted).
 - Supply your trained ONNX model URLs and map the model's class labels to part
   IDs so the on-part discrepancy overlay fires.
 - CI (`.github/workflows/ci.yml`) runs typecheck + tests + build on every push.

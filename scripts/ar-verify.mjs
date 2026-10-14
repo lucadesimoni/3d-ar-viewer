@@ -1797,10 +1797,10 @@ const context = await browser.newContext({
   const controllerRepo = offsite.filter((h) => h.includes('immersive-web'));
   check('preparing AR fetches no controller profiles from GitHub',
     controllerRepo.length === 0, controllerRepo.join(', ') || 'none');
-  // The model CDNs are a deployment's choice and are allowed to be there; a
-  // controller repository is not a choice anyone made.
+  // The runtimes are served with the app now (src/vision/runtimeUrls.ts), and
+  // this build configures no model hosts: nothing else may be contacted.
   check('and the only other hosts are the ones a deployment configured',
-    offsite.every((h) => h.includes('opencv') || h.includes('jsdelivr') || h.includes('cdn')),
+    offsite.length === 0,
     [...new Set(offsite)].join(', ') || 'none');
   await page.close();
 }
