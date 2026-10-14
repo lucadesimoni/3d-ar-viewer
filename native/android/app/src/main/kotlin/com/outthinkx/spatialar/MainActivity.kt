@@ -171,7 +171,13 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             when (ArCoreApk.getInstance().requestInstall(this, !installRequested)) {
                 ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {
                     installRequested = true
-                    return "installing ARCore"   // onResume tries again
+                    // The page is told, so it falls back rather than waiting on
+                    // an install that may never finish (a phone without Play,
+                    // or the operator saying no). Once installed, Enter AR
+                    // again starts the app's session.
+                    val reason = "ARCore (Google Play Services for AR) is being installed; enter AR again once it is"
+                    send(Protocol.session("failed", reason))
+                    return reason
                 }
                 else -> Unit
             }
@@ -206,7 +212,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         super.onResume()
         surface.onResume()
         web.onResume()
-        if (wanted.get() || installRequested) {
+        // Only a session the page still wants: after an install it was told
+        // no, and has stopped listening.
+        if (wanted.get()) {
             if (ensureSession() == null) {
                 try { session?.resume() } catch (e: Exception) { send(Protocol.session("failed", e.javaClass.simpleName)) }
                 wanted.set(true)
