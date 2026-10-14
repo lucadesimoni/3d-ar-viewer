@@ -68,6 +68,7 @@ from breaking one of them:
 | Snapping and fit verification | Done; drag a part, it seats on the joint or reports why not |
 | Diagnostics | Fit, seating, sequence, interference (OBB SAT), keep-out, handed swap, missing part |
 | Markerless object anchoring | Grid facade → metric pose, then frame-by-frame tracking |
+| Lining up with the real object | Any assembly: edge registration refines a placement within ~20–30 px ([docs/RECOGNITION.md](./docs/RECOGNITION.md)) |
 | AR on Android/Quest/visionOS | WebXR `immersive-ar` with hit-test and DOM overlay |
 | AR on iOS Safari | Camera passthrough, gravity-derived floor, aim-and-tap, object tracking |
 | Marker re-registration | Planar homography from a QR of known size |
@@ -138,6 +139,24 @@ Dragging translates; a part that goes in the wrong way round can only be fixed
 by the snap solver's own orientation correction. A two-finger rotate, and a
 snap that reports orientation residual separately from position, complete the
 placement story.
+
+### 6. Measure alignment on a GLB assembly
+Registration reads a loaded model's edges from its triangles
+(`edgesFromTriangles`, `SceneManager.partEdges`), so a GLB assembly is lined
+up like any other. It is unit-tested, but the benchmark
+(`npm run recognition:bench`) has only assemblies built from primitives. Add
+one made of GLB parts, including a rounded or scanned one: those have few
+sharp edges and are expected to be refused more often. Until then there are
+no numbers for GLBs.
+
+### 7. Find any assembly from nothing
+Only the KALLAX is found without help, by its grid of cells. Every other
+assembly is placed by hand (a tap, WebXR, a marker), and registration then
+corrects that placement if it is within its reach. Finding any assembly
+from nothing means searching where it could stand on the floor and which
+way it faces, scoring each candidate on the same edges, and refining the
+best few. Ship it only if the benchmark shows it does not lock onto the wrong
+thing: a wrong lock is worse than asking the operator to tap.
 
 ---
 

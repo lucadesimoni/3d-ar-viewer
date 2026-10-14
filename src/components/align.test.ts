@@ -4,6 +4,7 @@ import { alignAnchor, newAlignMemory } from './useArController';
 import { useStore } from '../state/store';
 import { clearLog, logEntries } from '../diagnostics/log';
 import type { Pose } from '../engine/types';
+import { composePose } from '../engine/math';
 import type { SceneManager } from '../render/babylon/SceneManager';
 import { assemblyOf, camera, H, K, picture, W, type Solid } from '../perception/testScene';
 
@@ -93,6 +94,33 @@ describe('lining the overlay up with the object', () => {
     expect(logged[0].message).toBe('alignment look');
     expect(logged.at(-1)!.data).toMatchObject({ holding: false });
     expect(useStore.getState().anchor!.position[0]).toBeCloseTo(0, 1);
+  });
+
+  it('on the shape detector\'s lock, keeps the move as a correction to it, so the detector can keep following', () => {
+    const lock = off(0.05, -0.04, 4);
+    useStore.getState().setAnchor(lock, 0.7, 'recognized');
+    const memo = newAlignMemory();
+    expect(alignAnchor(manager, frame, 0, memo)).toBe(true);
+    const fitted = useStore.getState().anchor!;
+    expect(useStore.getState().arPlacement).toBe('recognized');
+    // The detector's next lock, corrected, lands where registration put it.
+    const again = composePose(lock, memo.correction!);
+    again.position.forEach((v, i) => expect(v).toBeCloseTo(fitted.position[i], 6));
+    // A tap's placement has no detector under it: the move is the anchor itself.
+    useStore.getState().setAnchor(lock, 0.6, 'floor');
+    const tapped = newAlignMemory();
+    alignAnchor(manager, frame, 0, tapped);
+    expect(tapped.correction).toBeUndefined();
+  });
+
+  it('drops the correction when it lets go of the object', () => {
+    useStore.getState().setAnchor(off(0.05, -0.04, 4), 0.7, 'recognized');
+    const memo = newAlignMemory();
+    alignAnchor(manager, frame, 0, memo);
+    expect(memo.correction).toBeDefined();
+    const wall = picture([], cam);
+    for (const t of [3000, 6000, 9000]) alignAnchor(manager, wall, t, memo);
+    expect(memo.correction).toBeUndefined();
   });
 
   it('only matches the parts already built, once steps are ticked', () => {

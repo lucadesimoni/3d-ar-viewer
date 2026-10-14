@@ -19,7 +19,7 @@
  *    `PREVIEW_URL`, and stops it afterwards.
  */
 import { spawn } from 'node:child_process';
-import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PREVIEW_URL } from './checks.mjs';
@@ -56,6 +56,18 @@ async function reachable(url) {
   }
 }
 
+/** The most recently changed file under these paths (relative to the repo root). */
+function newestSource(paths) {
+  let newest;
+  const visit = (rel) => {
+    const st = statSync(join(ROOT, rel));
+    if (st.isDirectory()) { for (const name of readdirSync(join(ROOT, rel))) visit(join(rel, name)); return; }
+    if (!newest || st.mtimeMs > newest.mtimeMs) newest = { path: rel, mtimeMs: st.mtimeMs };
+  };
+  for (const p of paths) if (existsSync(join(ROOT, p))) visit(p);
+  return newest;
+}
+
 /** Start `vite preview` for a local PREVIEW_URL that nothing is serving yet. */
 async function serveIfNeeded() {
   const needsApp = !option('dir') && suites.some((s) => s !== 'deploy-check');
@@ -67,6 +79,14 @@ async function serveIfNeeded() {
   }
   if (!existsSync(join(ROOT, 'dist/index.html'))) {
     console.error('no build to serve — run `npm run build` first');
+    process.exit(2);
+  }
+  // A build older than the code checks the old code: every suite green, and
+  // none of them looked at the change. That happened, and CI caught it.
+  const built = statSync(join(ROOT, 'dist/index.html')).mtimeMs;
+  const newer = newestSource(['src', 'public', 'index.html']);
+  if (newer && newer.mtimeMs > built) {
+    console.error(`the build is older than ${newer.path} — run \`npm run build\` first, or this checks the old code`);
     process.exit(2);
   }
   const server = spawn('npx', ['vite', 'preview', '--port', url.port || '4173', '--strictPort'], {

@@ -23,6 +23,7 @@ import { nativeBridge, type NativeBridge, type NativePose, type NativeSession } 
 import { requestCameraImage } from '../native/frames';
 import { combineVotes, modelVote, sharedPresenceModel, type PresenceModel } from '../perception/presenceModel';
 import { alignToMarker } from '../engine/alignment';
+import { composePose, invertPose } from '../engine/math';
 import { floorFit } from '../engine/floorEstimate';
 import { useStore, surfaceDrop, type PartPresence } from '../state/store';
 import type { AssemblyDef, GridTargetDef, Pose } from '../engine/types';
@@ -455,10 +456,12 @@ export function useArController(
     ): void => {
       if (anchorDue) {
         lastTrack = now;
-        // While registration holds the object, it alone moves the overlay.
-        if (useStore.getState().arSettings.autoRecognize && !align.holding) {
+        if (useStore.getState().arSettings.autoRecognize) {
           const target = frameState.assembly.recognition;
-          const anchored = target && applyObjectAnchor(objectAnchor.current!, image, now, manager, target);
+          // The detector follows the object; registration's correction, while it holds, keeps it exact.
+          const anchored = target && applyObjectAnchor(
+            objectAnchor.current!, image, now, manager, target, align.holding ? align.correction : undefined,
+          );
           if (anchored) {
             stopPlacement.current?.();
             stopPlacement.current = undefined;
@@ -1229,17 +1232,23 @@ function foldPresence(memo: PresenceMemory, looks: PresenceLook[], scores: Map<s
  */
 export interface AlignMemory {
   lastMs: number;
-  /**
-   * A clear fit was found, and has not been lost since. While it holds, the
-   * shape detector does not move the overlay: registration is the finer of
-   * the two, and two hands on one anchor make it flicker between them.
-   */
+  /** A clear fit was found, and has not been lost since. */
   holding: boolean;
+  /**
+   * Where registration put the assembly relative to the shape detector's
+   * lock, in the assembly's own frame. The detector keeps following the
+   * object between registration's looks, a few times a second; this rides on
+   * top of it, so the overlay stays where registration put it instead of
+   * flicking back to the coarser lock on the detector's next update.
+   */
+  correction?: Pose;
   /** Looks in a row that did not find the object since the last clear fit. */
   misses: number;
   model?: { key: string; model: EdgeModel; parts: number };
   logged?: { key: string; atMs: number };
 }
+
+const IDENTITY_POSE: Pose = { position: [0, 0, 0], rotation: [0, 0, 0, 1] };
 
 export const newAlignMemory = (): AlignMemory => ({ lastMs: Number.NEGATIVE_INFINITY, holding: false, misses: 0 });
 
@@ -1307,7 +1316,10 @@ export function alignAnchor(manager: SceneManager | undefined, image: ImageData,
 
   // Holding: a clear fit, or a look that found the overlay already on the object.
   const onIt = result.accepted || (result.reason === 'no-improvement' && result.after >= MIN_AGREEMENT);
-  if (onIt) { memo.holding = true; memo.misses = 0; } else if (++memo.misses >= ALIGN_MISSES_TO_RELEASE) memo.holding = false;
+  if (onIt) { memo.holding = true; memo.misses = 0; } else if (++memo.misses >= ALIGN_MISSES_TO_RELEASE) {
+    memo.holding = false;
+    memo.correction = undefined;
+  }
 
   const outcome = moved ? 'moved' : onIt ? 'on the object' : result.reason ?? 'unchanged';
   // Logged when something changed (the outcome, or letting go of the object), and now and then regardless.
@@ -1325,6 +1337,10 @@ export function alignAnchor(manager: SceneManager | undefined, image: ImageData,
     });
   }
   if (!moved) return false;
+  // On the detector's lock, the move is kept as a correction to it (`AlignMemory.correction`).
+  memo.correction = state.arPlacement === 'recognized'
+    ? composePose(memo.correction ?? IDENTITY_POSE, composePose(invertPose(start), result.pose))
+    : undefined;
   state.setAnchor(result.pose, Math.max(state.anchorQuality, 0.9), state.arPlacement === 'idle' ? 'manual' : state.arPlacement);
   return true;
 }
@@ -1370,6 +1386,8 @@ export function applyObjectAnchor(
   nowMs: number,
   manager: SceneManager | undefined,
   target: GridTargetDef,
+  /** Registration's correction to the lock, while it holds the object (`AlignMemory.correction`). */
+  correction?: Pose,
 ): boolean {
   if (!manager) return false;
   // The frame's own field of view, not the one on screen. `effectiveFovDeg` is
@@ -1449,6 +1467,7 @@ export function applyObjectAnchor(
     }
   }
   if (state.arPlacement === 'marker' && state.anchorQuality >= obs.confidence) return false;
+  if (correction) anchor = composePose(anchor, correction);
   state.setAnchor(anchor, obs.confidence, 'recognized');
   return true;
 }
