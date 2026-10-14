@@ -97,7 +97,11 @@ jobs:
   # service worker, a missing header — none of which a local `dist` can show.
   # It never runs on a push, so a wobbly deployment cannot block a merge.
   production-smoke:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Only when CI itself runs, nightly or by hand. Called from Release, a
+    # called workflow sees the caller's event (workflow_dispatch) and ran this
+    # too, gating a release on the state of the live site rather than on the
+    # commit being released.
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.workflow == 'CI'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
