@@ -6,6 +6,10 @@ Sections are written automatically from what was merged (see
 [docs/RELEASING.md](./docs/RELEASING.md)). Newest first. Versions follow
 [semantic versioning](https://semver.org/).
 
+## [0.4.0] — 2026-10-14
+
+- Self-hosted vision runtimes, error reports, privacy notice
+
 ## [0.3.1] — 2026-10-13
 
 - Commercial licence contact in LICENSE and README
