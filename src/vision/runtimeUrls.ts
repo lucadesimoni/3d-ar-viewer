@@ -34,7 +34,7 @@ export const RUNTIME_URLS: RuntimeUrls = {
   // which the app build already emits as an asset.
   ortWasmPaths: undefined,
   draco: { wasmUrl: dracoWrapperUrl, wasmBinaryUrl: dracoWasmUrl },
-  // 0.4 MB, loaded only once an assembly with a recognition target is in AR.
+  // 147 KB, loaded only once an assembly with a recognition target is in AR.
   presenceModel: import.meta.env.VITE_PRESENCE_MODEL === 'off'
     ? undefined
     : { url: presenceModelUrl, info: presenceModelInfo },

@@ -530,7 +530,7 @@ Two readers vote:
   given its expected outline.
 
 A vote counts when they do not contradict each other, and three agreeing
-looks in a row settle a part either way. The model (0.4 MB, ONNX, runs in the
+looks in a row settle a part either way. The model (147 KB, ONNX, runs in the
 browser) was trained on synthetic renders of the assemblies. How it was made,
 how good it is, and how real device frames become training data are in
 [docs/PRESENCE_MODEL.md](./docs/PRESENCE_MODEL.md).

@@ -18,7 +18,7 @@ demand (Actions ▸ CI ▸ Run workflow).
 ## Running the lot locally
 
 ```bash
-npm run typecheck && npm test      # 679 unit tests, including the check tooling's own
+npm run typecheck && npm test      # 701 unit tests, including the check tooling's own
 npm run build
 npm run check:all                  # all nine browser suites
 ```
@@ -29,13 +29,14 @@ earlier one fails, and prints only failures and a summary:
 
 ```
 suite         passed  failed  time    status
-ar-verify     159     0       325s    ok
-steps-check   24      0       39s     ok
-layout-check  84      0       94s     ok
-place-check   14      0       34s     ok
-notes-check   11      0       20s     ok
-log-check     32      0       13s     ok
-runtime-check 7       0       7s      ok
+ar-verify     160     0       323s    ok
+steps-check   24      0       40s     ok
+layout-check  84      0       87s     ok
+place-check   14      0       30s     ok
+notes-check   11      0       19s     ok
+log-check     32      0       12s     ok
+runtime-check 7       0       6s      ok
+native-check  24      0       30s     ok
 deploy-check  14      0       13s     ok
 ```
 

@@ -78,7 +78,38 @@ venv/bin/python scripts/presence/train.py data src/perception/models/presence-v1
 
 ## How good it is
 
-RESULTS
+**The model.** A small depthwise-separable CNN, trained from scratch: no
+pretrained weights. It has 36,345 parameters and is 147 KB as ONNX. It was
+trained on 39,259 synthetic crops (14 epochs, CPU) and tested on 3,861
+crops from 800 rendered views it never saw.
+
+**On held-out renders**, every assembly together:
+
+| | |
+|---|---|
+| Accuracy at p = 0.5 | 96.9% (KALLAX 4x2: 98.3%, 4x4: 97.3%) |
+| At the shipped thresholds (present ≥ 0.9, absent ≤ 0.1) | votes on 91.1% of crops |
+| Of its "present" votes | 99.4% right |
+| Of its "absent" votes | 99.0% right |
+
+**On real frames**, the only real data there is: 19 crops from two device
+photos of a finished KALLAX 4x2, cut through the app's own recognition lock.
+15 crops are parts that are there. 4 are the top row of a 4x4 projected onto
+the wall above the 4x2, so nothing is there. None were used for training.
+
+| Thresholds | Votes | Wrong |
+|---|---|---|
+| 0.64 / 0.31, picked on renders for 98% precision | 19 | 3 |
+| **0.9 / 0.1, shipped** | **10** | **0** |
+
+The thresholds were tightened for that reason: at the renders' own choice,
+the model was confidently wrong on 3 of 19 real crops. Abstaining more is
+the safe way to be unsure, because a wrong "not in place" is what an operator
+would act on. Nineteen crops of one shelf in one room is a sanity check, not
+a measurement. The real error rate is unknown until device sessions supply
+more (see below).
+
+`presence-v1.onnx.json` carries all of this beside the model.
 
 ## What it cannot do yet
 

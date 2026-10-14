@@ -5,33 +5,55 @@
     96
   ],
   "parameters": 36345,
-  "epochs": 2,
-  "train_crops": 456,
-  "heldout_crops": 41,
+  "epochs": 14,
+  "train_crops": 39259,
+  "heldout_crops": 3861,
   "thresholds": {
-    "present": 0.8,
-    "absent": 0.2
+    "present": 0.9,
+    "absent": 0.1
   },
   "heldout": {
-    "accuracy_at_0.5": 0.561,
-    "present_vote_precision": 0.0,
-    "absent_vote_precision": 0.0,
-    "share_voting": 0.0,
-    "present_recall": 0.0,
-    "absent_recall": 0.0
+    "accuracy_at_0.5": 0.9689,
+    "present_vote_precision": 0.98,
+    "absent_vote_precision": 0.9806,
+    "share_voting": 0.9759,
+    "present_recall": 0.9435,
+    "absent_recall": 0.9674
   },
   "by_assembly": {
+    "bench-gearbox": {
+      "crops": 65,
+      "accuracy_at_0.5": 0.8308
+    },
     "equipment-rack": {
-      "crops": 10,
-      "accuracy_at_0.5": 0.5
+      "crops": 874,
+      "accuracy_at_0.5": 0.9657
+    },
+    "jet-engine": {
+      "crops": 327,
+      "accuracy_at_0.5": 0.9388
     },
     "kallax-4x2": {
-      "crops": 23,
-      "accuracy_at_0.5": 0.6087
+      "crops": 1100,
+      "accuracy_at_0.5": 0.9827
     },
     "kallax-4x4": {
-      "crops": 8,
-      "accuracy_at_0.5": 0.5
+      "crops": 1495,
+      "accuracy_at_0.5": 0.9732
     }
+  },
+  "thresholds_trained": {
+    "present": 0.64,
+    "absent": 0.31
+  },
+  "thresholds_chosen": "Stricter than the 98%-precision pair train.py picks on renders (0.64/0.31): that pair made 3 confident wrong votes on 19 real crops. At 0.9/0.1 the model votes on 91.1% of held-out renders at 99.4% (present) and 99.0% (absent) precision, and made no wrong vote on the real crops (10 votes).",
+  "real_frames": {
+    "crops": 19,
+    "present": 15,
+    "note": "Two device frames of a finished KALLAX 4x2 (recognition-anchored); absent crops are 4x4 rows projected onto the wall above it. Not used for training; the frames are not in the repository.",
+    "votes_at_chosen_thresholds": 10,
+    "wrong_votes_at_chosen_thresholds": 0,
+    "votes_at_trained_thresholds": 19,
+    "wrong_votes_at_trained_thresholds": 3
   }
 }

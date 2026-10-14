@@ -80,7 +80,22 @@ iOS installs only apps signed by an Apple account. CI builds two things:
   run ARKit;
 - `spatial-ar-ios-X.Y.Z-unsigned.ipa` for devices.
 
-To put it on an iPhone or iPad, one of:
+**Without paying anything**, best first:
+
+1. **No native app at all:** in Safari, the web app's "Open with real AR
+   tracking" opens it in Needle's App Clip. That gives ARKit tracking with
+   nothing to install. It is a third-party service, and not yet verified on a
+   device.
+2. **SideStore** (free). A computer is needed once to set it up; after that
+   it re-signs the unsigned `.ipa` on the phone every 7 days, with no
+   computer.
+3. **Sideloadly** (Windows or Mac) or **Xcode** (Mac) with a free Apple ID.
+   The app runs for 7 days, then is re-signed from the computer. A free Apple
+   ID can have 3 such apps.
+
+The only automatic route, TestFlight, needs the paid Apple Developer Program.
+
+In detail, to put it on an iPhone or iPad, one of:
 
 - **Xcode on a Mac.** Run `brew install xcodegen`, then
   `cd native/ios && xcodegen generate && open SpatialAR.xcodeproj`. Choose your
