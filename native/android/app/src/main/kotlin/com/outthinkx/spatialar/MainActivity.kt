@@ -10,6 +10,7 @@ import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.WindowManager
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -96,6 +97,21 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                     val url = request.url.toString()
                     if (Protocol.isAllowed(url, allowed)) return false
                     startActivity(Intent(Intent.ACTION_VIEW, request.url))
+                    return true
+                }
+
+                // The page's renderer died: out of memory, or a crash in it. Left
+                // unhandled, Android takes the whole app down with it. Instead the
+                // page starts again; twice in a row, and the app says so and closes.
+                override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastPageLossMs < PAGE_LOSS_WINDOW_MS) {
+                        Toast.makeText(this@MainActivity, R.string.page_crashed, Toast.LENGTH_LONG).show()
+                        finish()
+                    } else {
+                        lastPageLossMs = now
+                        recreate()
+                    }
                     return true
                 }
             }
@@ -302,5 +318,8 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     private companion object {
         const val CAMERA_REQUEST = 1
+        const val PAGE_LOSS_WINDOW_MS = 30_000L
+        /** When the page's renderer last died, across the activity being recreated for it. */
+        var lastPageLossMs = Long.MIN_VALUE / 2
     }
 }
