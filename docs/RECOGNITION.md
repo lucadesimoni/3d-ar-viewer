@@ -95,7 +95,24 @@ Each view also gets random rooms, light, finishes, and phone noise, blur and
 JPEG. From each view, registration starts from 8 poses 5, 10 and 20 cm and
 up to 15° off the truth.
 
-BENCH_TABLE
+Results from one seed per view (24 views × 8 starts = 96 trials per row):
+
+| Assembly | Clutter | Accepted | Good of accepted | False | Median px, start → after | Median cm after | ms |
+|---|---|---|---|---|---|---|---|
+| Gearbox | no | 7% | 43% | 3 | 41.3 → 1.3 | 0.7 | 78 |
+| Gearbox | yes | 4% | 0% | 1 | 41.3 → 3.5 | 3.3 | 70 |
+| KALLAX 4x2 | no | 72% | 77% | 1 | 7.8 → 0.5 | 1.7 | 112 |
+| KALLAX 4x2 | yes | 75% | 67% | 2 | 7.8 → 0.7 | 1.7 | 113 |
+| KALLAX 4x4 | no | 82% | 85% | 0 | 5.8 → 0.4 | 1.6 | 152 |
+| KALLAX 4x4 | yes | 58% | 54% | 1 | 5.8 → 0.8 | 2.5 | 133 |
+| Jet engine | no | 85% | 76% | 2 | 6.0 → 0.3 | 1.3 | 48 |
+| Jet engine | yes | 85% | 67% | 1 | 6.0 → 0.4 | 1.7 | 48 |
+| Equipment rack | no | 53% | 41% | 0 | 5.5 → 1.1 | 2.4 | 42 |
+| Equipment rack | yes | 61% | 39% | 0 | 5.5 → 1.0 | 3.5 | 35 |
+
+"Accepted but not good" is mostly within a few pixels but more than 1.5° or
+5 cm out: the depth problem below. The rack's thin rails make it the worst
+case for that.
 
 *Good* means the model's edges within 3 px of the truth, under 1.5° and
 within 5 cm. Along the line of sight a few centimetres barely change the
@@ -116,7 +133,12 @@ What this says:
 
 ### The shelf detector on the same views
 
-GRID_TABLE
+| | KALLAX 4x2 | KALLAX 4x4 |
+|---|---|---|
+| Locked | 15 of 24 views | 13 of 24 |
+| Lock within 5 cm and 1.5° | 2 of 15 | 2 of 13 |
+| Median lock error | 7.3 cm, 3.6° (4.7 px) | 19.8 cm, 9.5° (9.1 px) |
+| Registration from the lock: accepted / good / false | 7 / 3 / 1 | 2 / 1 / 0 |
 
 On rendered views the shelf detector is the weak link. It locks on about half
 the views, and its locks are typically 7 to 20 cm and several degrees out:

@@ -22,9 +22,9 @@ Sections are written automatically from what was merged (see
   nearly as well. Otherwise the overlay stays where it was.
 - Measured on rendered views with known truth (docs/RECOGNITION.md): from a
   start off by 5 to 20 cm, it settles within a pixel or two on the shelves,
-  the engine and the rack, with up to 2 wrong moves in 96 tries per
-  assembly. The small gearbox is mostly out of its reach and is mostly
-  left alone.
+  the engine and the rack, with at most 2 visibly wrong moves in 96 tries per
+  assembly and setting. The small gearbox is mostly out of its reach (3 wrong
+  moves in 96) and is mostly left alone.
 - **On real frames it has not yet helped.** On six device photos of KALLAX
   shelves, it refused every time: no pose standing on the floor fits those
   frames well, which points at the camera's reported pose or field of view
