@@ -5,7 +5,7 @@ import { MarkerTracker, estimateIntrinsics } from '../engine/tracking/markerTrac
 import { RecognitionPipeline, type PipelineConfig, type PipelineStatus } from '../vision/pipeline';
 import { envModelConfig } from '../vision/defaultModels';
 import { classifyRecognition, type LabelInfo } from '../vision/verdict';
-import { ObjectAnchorTracker } from '../vision/objectAnchor';
+import { ObjectAnchorTracker, type DetectAttempt } from '../vision/objectAnchor';
 import { detectPerfProfile } from '../render/perf';
 import { getActiveManager, withActiveManager } from '../render/babylon/managerRegistry';
 import { measureSharpness, toImageData } from '../vision/opencv';
@@ -1215,6 +1215,35 @@ function foldPresence(memo: PresenceMemory, looks: PresenceLook[], scores: Map<s
   state.setPartPresence(next);
 }
 
+/** The last recognition attempt logged, so the log says what changed rather than every detection. */
+let lastLoggedAttempt: { key: string; atMs: number } | undefined;
+/** Even an unchanged miss is logged this often, so a long search still shows in the log. */
+const ATTEMPT_RELOG_MS = 5000;
+
+/**
+ * Why recognition did or did not lock, from the tracker's last detection
+ * (`DetectAttempt`): every pass, what it saw, where it stopped. Logged when
+ * the story changes, and at most every few seconds while it does not, so a
+ * device session that never locks says why instead of saying nothing.
+ */
+export function logDetectAttempt(attempt: DetectAttempt | undefined): void {
+  if (!attempt) return;
+  const key = `${attempt.outcome}|${attempt.passes.map((p) => `${p.pass}:${p.saw}:${p.matched}`).join(',')}`;
+  const now = attempt.atMs;
+  if (lastLoggedAttempt && lastLoggedAttempt.key === key && now - lastLoggedAttempt.atMs < ATTEMPT_RELOG_MS) return;
+  if (lastLoggedAttempt && lastLoggedAttempt.atMs === now) return;
+  lastLoggedAttempt = { key, atMs: now };
+  logEvent('place', `recognition ${attempt.outcome === 'locked' ? 'locked' : 'attempt'}`, {
+    outcome: attempt.outcome,
+    ...(attempt.tiltDeg !== undefined ? { tiltDeg: attempt.tiltDeg } : {}),
+    passes: attempt.passes.map((p) => `${p.pass}:${p.saw}${p.aspectError !== undefined ? `@${p.aspectError}` : ''}${p.matched ? '✓' : ''}`).join(' '),
+    ...(attempt.reprojectionPx !== undefined ? { reprojectionPx: attempt.reprojectionPx } : {}),
+    ...(attempt.rowShift ? { rowShift: attempt.rowShift } : {}),
+    ...(attempt.streak !== undefined ? { streak: attempt.streak } : {}),
+    ...(attempt.driftM !== undefined ? { driftM: attempt.driftM } : {}),
+  });
+}
+
 /** The floor correction last applied, so the log says when it changes rather than every frame. */
 let lastFloorShift = 0;
 /** And when an off-the-floor pose was last logged: they come in bursts. */
@@ -1239,6 +1268,7 @@ export function applyObjectAnchor(
     manager.frameIntrinsics(image).fovDeg,
     (pose) => manager.cameraToWorld(pose),
   );
+  logDetectAttempt(tracker.lastAttempt);
   if (!obs) return false;
 
   // Reported, not enforced, as a gate on the lock as a whole: the threshold
