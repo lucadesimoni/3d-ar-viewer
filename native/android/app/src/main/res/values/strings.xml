@@ -2,4 +2,5 @@
 <resources>
     <string name="app_name">Spatial AR</string>
     <string name="camera_needed">The camera is needed for AR. The 3D view still works without it.</string>
+    <string name="page_crashed">The page stopped working twice in a row. Open the app again to retry.</string>
 </resources>

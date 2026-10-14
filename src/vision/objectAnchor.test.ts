@@ -252,3 +252,18 @@ describe('a lattice read a row off', () => {
   });
 });
 
+
+describe('why a detection did or did not lock', () => {
+  it('records each pass, what it saw, and where it stopped', async () => {
+    const { ObjectAnchorTracker: Tracker } = await import('./objectAnchor');
+    const target = { kind: 'grid' as const, cols: 4, rows: 2, widthM: 1.47, heightM: 0.75,
+      poseInAssembly: { position: [0, 0.4, 0.2] as [number, number, number], rotation: [0, 1, 0, 0] as [number, number, number, number] } };
+    const tracker = new Tracker(target, { detectIntervalMs: 0 });
+    // A blank frame: no lattice anywhere.
+    const blank = new ImageData(new Uint8ClampedArray(320 * 240 * 4).fill(128), 320, 240);
+    tracker.update(blank, 0);
+    expect(tracker.lastAttempt?.outcome).toBe('no-lattice');
+    expect(tracker.lastAttempt?.passes.length).toBeGreaterThan(0);
+    expect(tracker.lastAttempt?.passes.every((p) => p.saw === 'none' && !p.matched)).toBe(true);
+  });
+});

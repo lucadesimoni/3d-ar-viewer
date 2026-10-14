@@ -122,12 +122,19 @@ export function findPeaks(profile: Float32Array, sigma = 0.8, minSeparation = 3)
   let variance = 0;
   for (let i = 0; i < n; i++) variance += (profile[i] - mean) ** 2;
   const std = Math.sqrt(variance / n);
+  // A profile with no contrast has no boards in it. Without this, a flat
+  // profile's every sample equalled the threshold and its neighbours, so every
+  // sample was a "peak": a blank frame came back as an evenly spaced 8 x 7
+  // lattice at full confidence, and so could any flat stretch of wall.
+  if (!(std > 1e-6 * Math.max(1, mean))) return [];
   const threshold = mean + sigma * std;
 
   const peaks: number[] = [];
   for (let i = 1; i < n - 1; i++) {
-    if (profile[i] < threshold) continue;
+    if (profile[i] <= threshold) continue;
+    // A maximum, and not the inside of a plateau: above at least one neighbour.
     if (profile[i] < profile[i - 1] || profile[i] < profile[i + 1]) continue;
+    if (profile[i] === profile[i - 1] && profile[i] === profile[i + 1]) continue;
     // Sub-pixel refinement by the parabola through the three samples: board
     // lines are a couple of pixels wide, and half a pixel of line position is
     // millimetres of range at arm's length.

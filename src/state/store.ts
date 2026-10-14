@@ -76,6 +76,12 @@ export interface ArSettings {
   /** Let recognition of the object re-anchor the overlay automatically. */
   autoRecognize: boolean;
   /**
+   * Every few seconds, check the overlay's edges against the camera image and
+   * move it onto the real object when the fit is clear. Any assembly: it uses
+   * the parts' shapes, not a recognition target.
+   */
+  alignToObject: boolean;
+  /**
    * Ask for a placement every time AR starts.
    *
    * Off means AR opens with the assembly where it was left, and repositioning
@@ -370,6 +376,7 @@ export const useStore = create<AppState>((set, get) => {
       eyeHeightM: 1.45,
       surfaceHeightM: assembly.workSurfaceM ?? 0,
       autoRecognize: true,
+      alignToObject: true,
       placeOnEntry: true,
     } as ArSettings,
     arMode: 'preview' as ArMode,

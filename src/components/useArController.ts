@@ -5,13 +5,17 @@ import { MarkerTracker, estimateIntrinsics } from '../engine/tracking/markerTrac
 import { RecognitionPipeline, type PipelineConfig, type PipelineStatus } from '../vision/pipeline';
 import { envModelConfig } from '../vision/defaultModels';
 import { classifyRecognition, type LabelInfo } from '../vision/verdict';
-import { ObjectAnchorTracker } from '../vision/objectAnchor';
+import { ObjectAnchorTracker, type DetectAttempt } from '../vision/objectAnchor';
 import { detectPerfProfile } from '../render/perf';
 import { getActiveManager, withActiveManager } from '../render/babylon/managerRegistry';
 import { measureSharpness, toImageData } from '../vision/opencv';
 import { isUniform } from '../render/babylon/cameraFrame';
 import { watchXrCamera } from './xrCameraWatch';
 import { edgeField } from '../perception/edges';
+import {
+  cameraPositionOf, displacementPx, edgeModel, gradientPyramid, MIN_AGREEMENT, registerPose,
+  type EdgeModel, type ModelEdge,
+} from '../perception/register';
 import { readPresence } from '../perception/presence';
 import { foldEvidence, initEvidence, type EvidenceState } from '../perception/evidence';
 import { presenceCrop, type PresenceCrop } from '../perception/presenceInput';
@@ -419,6 +423,7 @@ export function useArController(
     void presence.model?.load().then((ok) => logEvent('place', ok ? 'presence model loaded' : 'presence model unavailable', {
       ...(ok ? {} : { error: presence.model?.error }),
     }));
+    const align = newAlignMemory();
     let busyPipeline: RecognitionPipeline | undefined;
     /** A camera readback in flight — never ask for a second one behind it. */
     let busyFrame = false;
@@ -450,7 +455,8 @@ export function useArController(
     ): void => {
       if (anchorDue) {
         lastTrack = now;
-        if (useStore.getState().arSettings.autoRecognize) {
+        // While registration holds the object, it alone moves the overlay.
+        if (useStore.getState().arSettings.autoRecognize && !align.holding) {
           const target = frameState.assembly.recognition;
           const anchored = target && applyObjectAnchor(objectAnchor.current!, image, now, manager, target);
           if (anchored) {
@@ -467,6 +473,8 @@ export function useArController(
           lastPresence = now;
           updatePresence(manager, image, presence);
         }
+        // Then the overlay is lined up with the object, every second or two.
+        alignAnchor(manager, image, now, align);
       }
 
       if (pipelineDue) {
@@ -1215,6 +1223,141 @@ function foldPresence(memo: PresenceMemory, looks: PresenceLook[], scores: Map<s
   state.setPartPresence(next);
 }
 
+/**
+ * Registration's memory between looks (`alignAnchor`): when it last looked,
+ * whether it holds the anchor, and the edge model it built.
+ */
+export interface AlignMemory {
+  lastMs: number;
+  /**
+   * A clear fit was found, and has not been lost since. While it holds, the
+   * shape detector does not move the overlay: registration is the finer of
+   * the two, and two hands on one anchor make it flicker between them.
+   */
+  holding: boolean;
+  /** Looks in a row that did not find the object since the last clear fit. */
+  misses: number;
+  model?: { key: string; model: EdgeModel; parts: number };
+  logged?: { key: string; atMs: number };
+}
+
+export const newAlignMemory = (): AlignMemory => ({ lastMs: Number.NEGATIVE_INFINITY, holding: false, misses: 0 });
+
+/** How often registration looks: searching, and once it holds the object, only to check it still does. */
+const ALIGN_INTERVAL_MS = 1500;
+const ALIGN_HOLDING_INTERVAL_MS = 3000;
+/** Looks in a row without the object before the hold is let go. */
+const ALIGN_MISSES_TO_RELEASE = 3;
+/** A correction smaller than this, in pixels, is not worth a jump of the overlay. */
+const ALIGN_MIN_MOVE_PX = 1;
+/** An unchanged outcome is still logged this often. */
+const ALIGN_RELOG_MS = 10_000;
+
+/**
+ * Line the overlay up with the object in the camera picture: for any
+ * assembly, from the parts' own shapes (`perception/register.ts`).
+ *
+ * Starts from wherever the overlay is drawn (a tap, a WebXR anchor, the shelf
+ * detector) and moves it only when the fit is clear: most of the model's edges
+ * on edges in the picture, all round the outline, and no other pose nearby
+ * fitting nearly as well. The parts matched are the ones already built (the
+ * ticked steps'); with nothing ticked yet, all of them, for a finished object
+ * being checked. Every look is logged with its outcome.
+ *
+ * Returns whether it moved the overlay.
+ */
+export function alignAnchor(manager: SceneManager | undefined, image: ImageData, nowMs: number, memo: AlignMemory): boolean {
+  const state = useStore.getState();
+  if (!manager || !state.arSettings.alignToObject || !state.anchor) return false;
+  if (state.arPlacement === 'awaiting' || state.explodeFactor > 0 || state.animationTimeline) return false;
+  if (!(state.arTracking?.ready ?? true)) return false;
+  if (nowMs - memo.lastMs < (memo.holding ? ALIGN_HOLDING_INTERVAL_MS : ALIGN_INTERVAL_MS)) return false;
+  memo.lastMs = nowMs;
+  const start = manager.assemblyPose();
+  if (!start || !measureSharpness(image, 90).sharp) return false;
+
+  const { assembly } = state;
+  const built = new Set<string>();
+  for (const step of assembly.steps) if (state.completedStepIds.has(step.id)) step.partIds.forEach((p) => built.add(p));
+  const partIds = built.size ? built : new Set(assembly.parts.map((p) => p.id));
+  const edges = new Map<string, ModelEdge[]>();
+  for (const part of assembly.parts) {
+    if (part.mesh.type !== 'url' || !partIds.has(part.id)) continue;
+    const e = manager.partEdges(part.id);
+    if (e?.length) edges.set(part.id, e);
+  }
+  const key = `${assembly.id}|${[...partIds].sort().join(',')}|${[...edges.keys()].join(',')}`;
+  if (memo.model?.key !== key) {
+    const model = edgeModel(assembly, { partIds, edges });
+    memo.model = { key, model, parts: model.boxes.length };
+  }
+  const { model, parts } = memo.model;
+  if (model.samples.length === 0) return false;
+
+  const viewMatrix = manager.viewMatrix();
+  const t0 = performance.now();
+  const input = {
+    field: gradientPyramid(image), model, start, viewMatrix,
+    cameraPosition: cameraPositionOf(viewMatrix), k: manager.frameIntrinsics(image),
+  };
+  const result = registerPose(input);
+  const ms = Math.round(performance.now() - t0);
+  const px = result.accepted ? displacementPx(start, result.pose, input) : 0;
+  const moved = result.accepted && px >= ALIGN_MIN_MOVE_PX;
+
+  // Holding: a clear fit, or a look that found the overlay already on the object.
+  const onIt = result.accepted || (result.reason === 'no-improvement' && result.after >= MIN_AGREEMENT);
+  if (onIt) { memo.holding = true; memo.misses = 0; } else if (++memo.misses >= ALIGN_MISSES_TO_RELEASE) memo.holding = false;
+
+  const outcome = moved ? 'moved' : onIt ? 'on the object' : result.reason ?? 'unchanged';
+  // Logged when something changed (the outcome, or letting go of the object), and now and then regardless.
+  const logKey = `${outcome}|${memo.holding}`;
+  if (moved || !memo.logged || memo.logged.key !== logKey || nowMs - memo.logged.atMs > ALIGN_RELOG_MS) {
+    memo.logged = { key: logKey, atMs: nowMs };
+    const dx = result.pose.position[0] - start.position[0];
+    const dz = result.pose.position[2] - start.position[2];
+    logEvent('place', moved ? 'alignment moved the overlay' : 'alignment look', {
+      outcome,
+      before: Number(result.before.toFixed(2)), after: Number(result.after.toFixed(2)),
+      weakest: Number(result.weakest.toFixed(2)), rival: Number(result.rival.toFixed(2)),
+      visible: result.visible, parts, ms, holding: memo.holding,
+      ...(moved ? { px: Number(px.toFixed(1)), cm: Number((100 * Math.hypot(dx, dz)).toFixed(1)), placement: state.arPlacement } : {}),
+    });
+  }
+  if (!moved) return false;
+  state.setAnchor(result.pose, Math.max(state.anchorQuality, 0.9), state.arPlacement === 'idle' ? 'manual' : state.arPlacement);
+  return true;
+}
+
+/** The last recognition attempt logged, so the log says what changed rather than every detection. */
+let lastLoggedAttempt: { key: string; atMs: number } | undefined;
+/** Even an unchanged miss is logged this often, so a long search still shows in the log. */
+const ATTEMPT_RELOG_MS = 5000;
+
+/**
+ * Why recognition did or did not lock, from the tracker's last detection
+ * (`DetectAttempt`): every pass, what it saw, where it stopped. Logged when
+ * the story changes, and at most every few seconds while it does not, so a
+ * device session that never locks says why instead of saying nothing.
+ */
+export function logDetectAttempt(attempt: DetectAttempt | undefined): void {
+  if (!attempt) return;
+  const key = `${attempt.outcome}|${attempt.passes.map((p) => `${p.pass}:${p.saw}:${p.matched}`).join(',')}`;
+  const now = attempt.atMs;
+  if (lastLoggedAttempt && lastLoggedAttempt.key === key && now - lastLoggedAttempt.atMs < ATTEMPT_RELOG_MS) return;
+  if (lastLoggedAttempt && lastLoggedAttempt.atMs === now) return;
+  lastLoggedAttempt = { key, atMs: now };
+  logEvent('place', `recognition ${attempt.outcome === 'locked' ? 'locked' : 'attempt'}`, {
+    outcome: attempt.outcome,
+    ...(attempt.tiltDeg !== undefined ? { tiltDeg: attempt.tiltDeg } : {}),
+    passes: attempt.passes.map((p) => `${p.pass}:${p.saw}${p.aspectError !== undefined ? `@${p.aspectError}` : ''}${p.matched ? '✓' : ''}`).join(' '),
+    ...(attempt.reprojectionPx !== undefined ? { reprojectionPx: attempt.reprojectionPx } : {}),
+    ...(attempt.rowShift ? { rowShift: attempt.rowShift } : {}),
+    ...(attempt.streak !== undefined ? { streak: attempt.streak } : {}),
+    ...(attempt.driftM !== undefined ? { driftM: attempt.driftM } : {}),
+  });
+}
+
 /** The floor correction last applied, so the log says when it changes rather than every frame. */
 let lastFloorShift = 0;
 /** And when an off-the-floor pose was last logged: they come in bursts. */
@@ -1239,6 +1382,7 @@ export function applyObjectAnchor(
     manager.frameIntrinsics(image).fovDeg,
     (pose) => manager.cameraToWorld(pose),
   );
+  logDetectAttempt(tracker.lastAttempt);
   if (!obs) return false;
 
   // Reported, not enforced, as a gate on the lock as a whole: the threshold

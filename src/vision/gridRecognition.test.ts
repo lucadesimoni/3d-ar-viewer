@@ -173,3 +173,20 @@ describe('grid facade recognition', () => {
     });
   });
 });
+
+describe('a frame with nothing in it', () => {
+  it('has no peaks in a flat profile, and no lattice in a blank frame', async () => {
+    const { findPeaks, detectGridFacade } = await import('./gridRecognition');
+    expect(findPeaks(new Float32Array(200).fill(7))).toEqual([]);
+    // A blank frame used to come back as an evenly spaced 8 x 7 lattice at full confidence.
+    const blank = new ImageData(new Uint8ClampedArray(320 * 240 * 4).fill(128), 320, 240);
+    expect(detectGridFacade(blank)).toBeUndefined();
+  });
+
+  it('still finds the peaks of a real profile', async () => {
+    const { findPeaks } = await import('./gridRecognition');
+    const p = new Float32Array(100).fill(1);
+    for (const at of [10, 40, 70]) { p[at - 1] = 3; p[at] = 9; p[at + 1] = 3; }
+    expect(findPeaks(p).map(Math.round)).toEqual([10, 40, 70]);
+  });
+});

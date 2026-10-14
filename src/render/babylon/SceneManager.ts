@@ -25,6 +25,7 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import type { Material } from '@babylonjs/core/Materials/material';
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 
 import type { AssemblyDef, BackgroundRole, PartDef, PlacementState, Pose } from '../../engine/types';
 import type { Severity } from '../../engine/diagnostics';
@@ -57,6 +58,7 @@ import {
   type RawIntrinsics,
 } from '../../perception/intrinsics';
 import { roiForBox, type PartRoi } from '../../perception/roi';
+import { edgesFromTriangles, type ModelEdge } from '../../perception/register';
 import { partContour } from '../../perception/contour';
 import { nativeCameraToBabylon } from '../../native/pose';
 import { Quaternion as ThreeQuaternion, Vector3 as ThreeVector3 } from 'three';
@@ -1154,6 +1156,41 @@ export class SceneManager {
     };
   }
 
+  /**
+   * A part loaded from a file, as edges in the part's own frame, from its
+   * triangles: what registration matches against the camera image, for a
+   * shape no primitive describes. Undefined for a primitive (registration
+   * knows those exactly) and until the file has loaded. Worked out once per
+   * load: a thousand-triangle model is a few milliseconds.
+   */
+  partEdges(partId: string): ModelEdge[] | undefined {
+    const visual = this.parts.get(partId);
+    if (!visual?.loadedMeshes?.length) return undefined;
+    const cached = this.edgeCache.get(partId);
+    if (cached && cached.meshes === visual.loadedMeshes) return cached.edges;
+    const toPart = visual.root.computeWorldMatrix(true).clone().invert();
+    const positions: number[] = []; const normals: number[] = []; const indices: number[] = [];
+    for (const m of visual.loadedMeshes) {
+      const p = m.getVerticesData?.(VertexBuffer.PositionKind);
+      const n = m.getVerticesData?.(VertexBuffer.NormalKind);
+      const idx = m.getIndices?.();
+      if (!p || !idx || !n) continue;
+      const rel = m.computeWorldMatrix(true).multiply(toPart);
+      const base = positions.length / 3;
+      for (let i = 0; i < p.length; i += 3) {
+        const v = Vector3.TransformCoordinates(new Vector3(p[i], p[i + 1], p[i + 2]), rel);
+        const w = Vector3.TransformNormal(new Vector3(n[i], n[i + 1], n[i + 2]), rel).normalize();
+        positions.push(v.x, v.y, v.z); normals.push(w.x, w.y, w.z);
+      }
+      for (let i = 0; i < idx.length; i++) indices.push(idx[i] + base);
+    }
+    const edges = indices.length ? edgesFromTriangles(positions, indices, { normals }) : [];
+    this.edgeCache.set(partId, { meshes: visual.loadedMeshes, edges });
+    return edges;
+  }
+
+  private edgeCache = new Map<string, { meshes: AbstractMesh[]; edges: ModelEdge[] }>();
+
   /** The active camera's view matrix, as the renderer computed it. */
   viewMatrix(): number[] {
     return Array.from(this.scene.getViewMatrix().asArray());
@@ -1483,6 +1520,18 @@ export class SceneManager {
         at: pose.position.map((v) => Number(v.toFixed(3))),
       });
     }
+  }
+
+  /**
+   * Where the assembly is drawn right now, as it is drawn: what the camera
+   * picture is compared against. Not the store's anchor, which a platform
+   * anchor's corrections may have moved it from. Undefined when unanchored.
+   */
+  assemblyPose(): Pose | undefined {
+    if (!this.storeAnchor) return undefined;
+    const p = this.assemblyRoot.position;
+    const q = this.assemblyRoot.rotationQuaternion ?? Quaternion.Identity();
+    return { position: [p.x, p.y, p.z], rotation: [q.x, q.y, q.z, q.w] };
   }
 
   /** Where the assembly is drawn right now, upright. */

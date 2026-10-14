@@ -10,6 +10,7 @@ import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.WindowManager
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -98,6 +99,21 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                     startActivity(Intent(Intent.ACTION_VIEW, request.url))
                     return true
                 }
+
+                // The page's renderer died: out of memory, or a crash in it. Left
+                // unhandled, Android takes the whole app down with it. Instead the
+                // page starts again; twice in a row, and the app says so and closes.
+                override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastPageLossMs < PAGE_LOSS_WINDOW_MS) {
+                        Toast.makeText(this@MainActivity, R.string.page_crashed, Toast.LENGTH_LONG).show()
+                        finish()
+                    } else {
+                        lastPageLossMs = now
+                        recreate()
+                    }
+                    return true
+                }
             }
             webChromeClient = object : WebChromeClient() {
                 // Without ARCore the page falls back to its own camera path, which
@@ -171,7 +187,13 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             when (ArCoreApk.getInstance().requestInstall(this, !installRequested)) {
                 ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {
                     installRequested = true
-                    return "installing ARCore"   // onResume tries again
+                    // The page is told, so it falls back rather than waiting on
+                    // an install that may never finish (a phone without Play,
+                    // or the operator saying no). Once installed, Enter AR
+                    // again starts the app's session.
+                    val reason = "ARCore (Google Play Services for AR) is being installed; enter AR again once it is"
+                    send(Protocol.session("failed", reason))
+                    return reason
                 }
                 else -> Unit
             }
@@ -206,7 +228,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         super.onResume()
         surface.onResume()
         web.onResume()
-        if (wanted.get() || installRequested) {
+        // Only a session the page still wants: after an install it was told
+        // no, and has stopped listening.
+        if (wanted.get()) {
             if (ensureSession() == null) {
                 try { session?.resume() } catch (e: Exception) { send(Protocol.session("failed", e.javaClass.simpleName)) }
                 wanted.set(true)
@@ -294,5 +318,8 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     private companion object {
         const val CAMERA_REQUEST = 1
+        const val PAGE_LOSS_WINDOW_MS = 30_000L
+        /** When the page's renderer last died, across the activity being recreated for it. */
+        var lastPageLossMs = Long.MIN_VALUE / 2
     }
 }

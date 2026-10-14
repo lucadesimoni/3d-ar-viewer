@@ -210,6 +210,19 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
       </label>
 
       <label className="ar-toggle">
+        <input
+          type="checkbox" checked={settings.alignToObject}
+          onChange={(e) => setArSettings({ alignToObject: e.target.checked })}
+        />
+        <span>
+          Line the overlay up with the real object
+          <em className="ar-set-help">
+            Every few seconds, matches the parts' edges to the camera picture, and moves the overlay only when the fit is clear.
+          </em>
+        </span>
+      </label>
+
+      <label className="ar-toggle">
         <input type="checkbox" checked={snapEnabled} onChange={(e) => setSnapEnabled(e.target.checked)} />
         <span>Snap parts to their mates when placed</span>
       </label>

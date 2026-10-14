@@ -89,6 +89,36 @@ const PLAIN_MAX_TILT_DEG = 10;
 /** Directions to try when a facade is too far to the side to be found square-on. */
 const YAW_GUESSES_DEG = [-20, 20, -32, 32];
 
+/** One way of looking for the target in a frame, and what it saw. */
+export interface DetectPass {
+  /** `leveled`, `plain`, `yaw-20`…, or `square-on`. */
+  pass: string;
+  /** The lattice found, as `colsxrows`, or `none`. */
+  saw: string;
+  /** How far its width:height is from the target's, as a fraction; only when the bay count matched. */
+  aspectError?: number;
+  /** It was taken as the target. */
+  matched: boolean;
+}
+
+/**
+ * Why the last detection did or did not lock: every pass it tried and what
+ * each saw, then where it stopped. A recognition that never locks on a device
+ * was a silent failure; this is what the diagnostics log records instead.
+ */
+export interface DetectAttempt {
+  atMs: number;
+  /** The camera's tilt from level, degrees, when it was known. */
+  tiltDeg?: number;
+  passes: DetectPass[];
+  outcome: 'no-lattice' | 'wrong-grid' | 'outline-off-frame' | 'pose-fit' | 'unconfirmed' | 'locked';
+  reprojectionPx?: number;
+  rowShift?: number;
+  /** Detections in a row that agreed, and how far this one was from the last. */
+  streak?: number;
+  driftM?: number;
+}
+
 /**
  * When the lattice found is one row off the real facade, and how sure the
  * image has to be before that is acted on.
@@ -166,6 +196,11 @@ export class ObjectAnchorTracker {
   private locked = false;
   /** The row shift the current lock was taken with; the tracker follows the lattice as found. */
   private rowShift = 0;
+  private tiltDeg: number | undefined;
+  /** What the last detection tried and why it stopped: see `DetectAttempt`. */
+  lastAttempt: DetectAttempt | undefined;
+  /** Passes of the detection in progress. */
+  private passes: DetectPass[] = [];
 
   constructor(
     private readonly target: GridTargetDef,
@@ -233,12 +268,27 @@ export class ObjectAnchorTracker {
   ): { obs: GridObservation; toImage?: (p: Point2) => Point2 | undefined } | undefined {
     const rotation = cameraToWorld({ position: [0, 0, 0], rotation: [0, 0, 0, 1] }).rotation;
     const level = levelingHomography(rotation, K);
+    this.passes = [];
+    this.tiltDeg = level?.tiltDeg;
+    /** Whether `obs` is the target, noting what this pass saw either way. */
+    const take = (pass: string, obs: GridObservation | undefined): boolean => {
+      const matched = obs !== undefined && matchesGridTarget(obs, this.target);
+      const sameCount = obs !== undefined && obs.cols === this.target.cols && obs.rows === this.target.rows;
+      let aspectError: number | undefined;
+      if (obs && sameCount) {
+        const observed = (obs.quad[1].x - obs.quad[0].x) / (obs.quad[2].y - obs.quad[1].y);
+        const expected = this.target.widthM / this.target.heightM;
+        if (Number.isFinite(observed)) aspectError = Number((Math.abs(observed - expected) / expected).toFixed(3));
+      }
+      this.passes.push({ pass, saw: obs ? `${obs.cols}x${obs.rows}` : 'none', ...(aspectError !== undefined ? { aspectError } : {}), matched });
+      return matched;
+    };
     let found: { obs: GridObservation; toImage?: (p: Point2) => Point2 | undefined } | undefined;
     const tipped = level !== undefined && level.tiltDeg >= LEVEL_MIN_TILT_DEG;
     let used: Leveling = tipped ? level : IDENTITY_LEVELING;
     if (level && tipped) {
       const leveled = detectLeveledGridFacade(image, level, K, { target: this.target });
-      if (leveled && matchesGridTarget(leveled.obs, this.target)) found = leveled;
+      if (take('leveled', leveled?.obs)) found = leveled;
     }
     // A tilted camera turns the facade into a trapezoid, and the plain
     // detector's rectangle around it is a wrong pose, not an approximate one:
@@ -247,7 +297,7 @@ export class ObjectAnchorTracker {
     // slight tilt may fall back to it.
     if (!found && (!tipped || level!.tiltDeg <= PLAIN_MAX_TILT_DEG)) {
       const plain = detectGridFacade(image, { target: this.target });
-      if (plain && matchesGridTarget(plain, this.target)) found = { obs: plain };
+      if (take('plain', plain)) found = { obs: plain! };
     }
     if (!found) {
       // Seen from much more than 15 degrees to the side, the bays shrink so
@@ -257,7 +307,7 @@ export class ObjectAnchorTracker {
       for (const yaw of YAW_GUESSES_DEG) {
         const turned = turnAboutVertical(used, yaw, K);
         const guess = detectLeveledGridFacade(image, turned, K, { target: this.target });
-        if (guess && matchesGridTarget(guess.obs, this.target)) {
+        if (take(`yaw${yaw > 0 ? '+' : ''}${yaw}`, guess?.obs)) {
           found = guess;
           used = turned;
           break;
@@ -272,7 +322,7 @@ export class ObjectAnchorTracker {
     const square = rows && faceSquareOn(used, rows, K);
     if (square) {
       const again = detectLeveledGridFacade(image, square, K, { target: this.target });
-      if (again && matchesGridTarget(again.obs, this.target)) return again;
+      if (take('square-on', again?.obs)) return again;
     }
     return found;
   }
@@ -342,20 +392,31 @@ export class ObjectAnchorTracker {
     this.lastDetectMs = nowMs;
 
     const found = this.detect(image, K, cameraToWorld);
+    const attempt = (outcome: DetectAttempt['outcome'], extra: Partial<DetectAttempt> = {}): void => {
+      this.lastAttempt = {
+        atMs: nowMs, ...(this.tiltDeg !== undefined ? { tiltDeg: Number(this.tiltDeg.toFixed(1)) } : {}),
+        passes: this.passes, outcome, ...extra,
+      };
+    };
     if (!found) {
       this.pending = undefined;
+      attempt(this.passes.some((p) => p.saw !== 'none') ? 'wrong-grid' : 'no-lattice');
       return undefined;
     }
     const { obs, toImage } = found;
     const quad = toImage ? obs.quad.map(toImage) : obs.quad;
     if (quad.some((p) => p === undefined)) {
       this.pending = undefined;
+      attempt('outline-off-frame');
       return undefined;
     }
     const rowShift = rowShiftFor(edgeField(image, this.opts.workingSize), quad as Point2[], this.target);
     const corners = rowShift === 0 ? quad as Point2[] : shiftQuad(quad as Point2[], this.target, rowShift);
     const solved = corners && rectPoseFromCorners(corners, this.target.widthM, this.target.heightM, K);
-    if (!solved || solved.reprojectionPx > 6) return undefined;
+    if (!solved || solved.reprojectionPx > 6) {
+      attempt('pose-fit', { rowShift, ...(solved ? { reprojectionPx: Number(solved.reprojectionPx.toFixed(1)) } : {}) });
+      return undefined;
+    }
 
     // A detection that agrees with the one before it extends the run; one that
     // does not — or one that arrives after the previous has gone stale — starts
@@ -378,7 +439,15 @@ export class ObjectAnchorTracker {
     ) : Infinity;
     const streak = drift <= (this.opts.agreementM ?? AGREEMENT_M) ? previous!.streak + 1 : 1;
     this.pending = { pose: worldPose, atMs: nowMs, streak };
-    if (streak < (this.opts.agreeFrames ?? AGREE_FRAMES)) return undefined;
+    const evidence = {
+      reprojectionPx: Number(solved.reprojectionPx.toFixed(1)), rowShift, streak,
+      ...(Number.isFinite(drift) ? { driftM: Number(drift.toFixed(3)) } : {}),
+    };
+    if (streak < (this.opts.agreeFrames ?? AGREE_FRAMES)) {
+      attempt('unconfirmed', evidence);
+      return undefined;
+    }
+    attempt('locked', evidence);
 
     // Enough frames agree: commit, and hand the detection to the tracker so the
     // next frames are followed rather than searched for.

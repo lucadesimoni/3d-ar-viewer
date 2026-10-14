@@ -163,6 +163,16 @@ class ShellTest {
         waitFor(s, "document.title", "\"second\"")
     }
 
+    @Test fun aCrashedPageStartsAgainAndTheAppStaysUp() {
+        val s = launch("$TEST/bridge.html")
+        waitFor(s, "document.title", "\"bridge\"")
+        // Kills the web view's renderer, as running out of memory would.
+        s.onActivity { a -> a.web.loadUrl("chrome://crash") }
+        Thread.sleep(2000)
+        // Unhandled, that takes the app's process down and this test with it.
+        waitFor(s, "document.title", "\"bridge\"")
+    }
+
     private companion object {
         const val TEST = "https://appassets.androidplatform.net/assets"
     }
