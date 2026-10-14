@@ -4,7 +4,11 @@
 <html><head><meta charset="utf-8"><title>bridge</title></head>
 <body>
 <a id="away" href="https://example.com/">another site</a>
-<iframe id="frame" srcdoc="<script>parent.postMessage({frameSeesHost: typeof window.SpatialNativeHost}, '*')</script>"></iframe>
+<!-- A sandboxed frame has an opaque origin: another site, as far as the bridge is concerned. -->
+<iframe id="foreign" sandbox="allow-scripts" srcdoc="<script>parent.postMessage({frameSeesHost: typeof window.SpatialNativeHost}, '*')</script>"></iframe>
+<!-- A srcdoc frame without a sandbox shares this page's origin; it may see the
+     bridge object, but the app answers the main frame only. -->
+<iframe id="sub" srcdoc="<script>window.sendFromFrame = (m) => window.SpatialNativeHost && window.SpatialNativeHost.postMessage(JSON.stringify(m))</script>"></iframe>
 <script>
   window.received = [];
   window.frameSeesHost = 'not yet';

@@ -87,8 +87,18 @@ class ShellTest {
     @Test fun theBridgeIsThereForTheAppsSiteAndNotForAFrameFromAnywhereElse() {
         val s = launch("$TEST/bridge.html")
         waitFor(s, "typeof window.SpatialNativeHost", "\"object\"")
-        // A frame of another origin (srcdoc's is opaque) gets no bridge.
+        // A sandboxed frame has an opaque origin: no bridge for it.
         waitFor(s, "window.frameSeesHost", "\"undefined\"")
+    }
+
+    @Test fun aSubFrameOfTheSameSiteIsNotAnswered() {
+        val s = launch("$TEST/bridge.html")
+        waitFor(s, "typeof window.SpatialNativeHost", "\"object\"")
+        waitFor(s, "typeof document.getElementById('sub').contentWindow.sendFromFrame", "\"function\"")
+        // The app answers the main frame only: a start from a sub-frame does nothing.
+        js(s, "document.getElementById('sub').contentWindow.sendFromFrame({type: 'start'})")
+        Thread.sleep(1500)
+        assertEquals(emptyList<String>(), received(s))
     }
 
     @Test fun startAnswersWithHelloAndOnAPhoneWithoutArcoreSaysWhyItFailed() {
