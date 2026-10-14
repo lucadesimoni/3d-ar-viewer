@@ -11,6 +11,7 @@ import { BomPanel } from './components/BomPanel';
 import { useArController } from './components/useArController';
 import { QuickLookButton } from './components/QuickLookButton';
 import { AppClipLink } from './components/AppClipLink';
+import { NativeAppLink } from './components/NativeAppLink';
 import { RecognitionOverlay } from './components/RecognitionOverlay';
 import { PlacementHint } from './components/PlacementHint';
 import { StepAnnotations } from './components/StepAnnotations';
@@ -89,11 +90,14 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
   // depends on Babylon's session observer firing and on my CSS being right;
   // this one is React state, and in a WebXR session there is no camera video at
   // all — the compositor supplies the image.
-  const xrSource = useStore((st) => st.arSource) === 'webxr';
+  const arSource = useStore((st) => st.arSource);
+  const xrSource = arSource === 'webxr';
   const rootClass = [
     'app',
     arActive ? 'ar' : '',
     arActive && xrSource ? 'xr' : '',
+    // In the native shell the camera is drawn by the app, behind this page.
+    arActive && arSource === 'native' ? 'native' : '',
     ui.embedded ? 'embedded' : '',
     `density-${ui.density}`,
     `preset-${ui.preset}`,
@@ -119,6 +123,7 @@ export function App({ config, recognitionConfig }: { config?: Partial<UiConfig>;
         {/* On iOS this is the only route to positional tracking; it belongs
             next to the way into AR, not buried in a settings sheet. */}
         {!arActive && <AppClipLink capabilities={capabilities} />}
+        {!arActive && <NativeAppLink capabilities={capabilities} />}
 
         {/* AR refused to start: say so, on every screen size. */}
         {arError && (

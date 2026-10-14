@@ -15,6 +15,8 @@ import { edgeField } from '../perception/edges';
 import { readPresence } from '../perception/presence';
 import { foldEvidence, initEvidence, type EvidenceState } from '../perception/evidence';
 import { presenceCrop, type PresenceCrop } from '../perception/presenceInput';
+import { nativeBridge, type NativeBridge, type NativePose, type NativeSession } from '../native/bridge';
+import { requestCameraImage } from '../native/frames';
 import { combineVotes, modelVote, sharedPresenceModel, type PresenceModel } from '../perception/presenceModel';
 import { alignToMarker } from '../engine/alignment';
 import { floorFit } from '../engine/floorEstimate';
@@ -50,6 +52,8 @@ import { logEvent } from '../diagnostics/log';
 
 /** Fall back to a floating preview if nothing has been placed by then, ms. */
 const PREVIEW_FALLBACK_MS = 6000;
+/** How long the native shell has to report its first pose before the browser's own AR is tried. */
+const NATIVE_START_TIMEOUT_MS = 6000;
 /** Width the camera frame is sampled at for recognition and tracking. */
 const FRAME_WIDTH = 480;
 /** Margin around a projected region, as a share of its own size. */
@@ -120,6 +124,8 @@ export function useArController(
   const previewTimer = useRef<number | undefined>(undefined);
   const stopPlacement = useRef<(() => void) | undefined>(undefined);
   const xrSession = useRef<{ end: () => Promise<void> } | undefined>(undefined);
+  /** The native shell's AR session (`native/bridge.ts`), while it is ours. */
+  const nativeSession = useRef<{ bridge: NativeBridge; cameraImages: boolean; end: () => void } | undefined>(undefined);
   const rafRef = useRef<number | undefined>(undefined);
   const wakeLock = useRef<WakeLock | undefined>(undefined);
   const cameraSuspended = useRef(false);
@@ -266,6 +272,7 @@ export function useArController(
     safely('placement', () => { stopPlacement.current?.(); stopPlacement.current = undefined; });
     safely('video geometry', () => { videoGeometryCleanup.current?.(); videoGeometryCleanup.current = undefined; });
     safely('xr session', () => { void xrSession.current?.end(); xrSession.current = undefined; });
+    safely('native session', () => { nativeSession.current?.end(); nativeSession.current = undefined; });
     safely('wake lock', () => { void wakeLock.current?.release().catch(() => undefined); wakeLock.current = undefined; });
     safely('marker tracker', () => markerRef.current?.stop());
     safely('camera tracker', () => trackerRef.current?.stop());
@@ -386,7 +393,7 @@ export function useArController(
     manager: SceneManager | undefined,
     video: HTMLVideoElement | undefined,
     assembly: AssemblyDef,
-    source: 'video' | 'xr',
+    source: 'video' | 'xr' | 'native',
   ): void => {
     // Frame loop. Two jobs at two very different rates, driven off one capture:
     // the object anchor runs as fast as the device can take it, because that is
@@ -497,6 +504,7 @@ export function useArController(
     };
 
     const inXr = source === 'xr';
+    const inNative = source === 'native';
 
     const loop = (now: number): void => {
       rafRef.current = requestAnimationFrame(loop);
@@ -506,8 +514,9 @@ export function useArController(
       // frame in it; a session needs neither — it has the platform's pose and
       // its own camera texture. Requiring the tracker in both is what a
       // single shared guard would do, and in a session it is never there.
-      if (inXr ? xrSession.current === undefined
-        : (!trackerRef.current || !video || video.readyState < 2)) return;
+      if (inNative ? nativeSession.current === undefined
+        : inXr ? xrSession.current === undefined
+          : (!trackerRef.current || !video || video.readyState < 2)) return;
       if (restartInterval) {
         restartInterval = false;
         lastTrack = now;
@@ -521,7 +530,8 @@ export function useArController(
       // and recognition only has to re-register when the object comes into
       // view. That is a once-a-second job, and every frame in a session costs
       // a multi-megabyte readback — so it runs on the slow interval there.
-      const frameIntervalMs = inXr ? perf.recognitionIntervalMs : trackIntervalMs;
+      // The native shell's world tracking holds the overlay the way a session's does.
+      const frameIntervalMs = inXr || inNative ? perf.recognitionIntervalMs : trackIntervalMs;
       // And only when something will use the frame. Until the object is
       // locked the tracker looks at one frame per detection interval and
       // drops the rest — and each of those was a full video copy first.
@@ -539,6 +549,21 @@ export function useArController(
       const pipelineDue = canRecognize && busyPipeline !== pipeline
         && now - lastPipeline >= perf.recognitionIntervalMs;
       if (!anchorDue && !pipelineDue) return;
+
+      if (inNative) {
+        // A frame from the shell is a JPEG across the bridge: one at a time.
+        const native = nativeSession.current;
+        if (busyFrame || !native?.cameraImages) return;
+        busyFrame = true;
+        void requestCameraImage(native.bridge, FRAME_WIDTH)
+          .then((got) => {
+            if (!got || nativeSession.current !== native) return;
+            useFrame(got.image, now, frameState, anchorDue, pipeline, pipelineDue);
+          })
+          .catch(() => {})
+          .finally(() => { busyFrame = false; restartInterval = true; });
+        return;
+      }
 
       if (inXr) {
         // A readback is several megabytes off the GPU; queueing a second one
@@ -563,6 +588,76 @@ export function useArController(
     };
     rafRef.current = requestAnimationFrame(loop);
   }, []);
+
+  /**
+   * AR from the native shell: ask it to start, take its first pose as the
+   * sign that tracking is running, then let every pose drive the AR camera.
+   * False, with the shell told to stop, if no pose comes: the caller falls
+   * back to the browser's own paths.
+   */
+  const startNative = useCallback(async (
+    manager: SceneManager, bridge: NativeBridge, current: () => boolean,
+  ): Promise<boolean> => {
+    logEvent('ar', 'native host', { hello: bridge.hello() ?? null });
+    bridge.send({ type: 'start' });
+    const first = await new Promise<NativePose | NativeSession | undefined>((resolve) => {
+      const timer = window.setTimeout(() => { off(); resolve(undefined); }, NATIVE_START_TIMEOUT_MS);
+      const off = bridge.subscribe((m) => {
+        if (m.type === 'pose' || (m.type === 'session' && m.state === 'failed')) {
+          window.clearTimeout(timer); off(); resolve(m);
+        }
+      });
+    });
+    if (!first || first.type === 'session' || !current()) {
+      bridge.send({ type: 'stop' });
+      logEvent('ar', 'native session did not start', {
+        reason: first?.type === 'session' ? first.reason ?? 'failed' : current() ? 'no pose in time' : 'superseded',
+      });
+      if (first?.type === 'session' && current()) {
+        useStore.getState().setArError(`The app's AR could not start: ${first.reason ?? 'unknown reason'}.`);
+      }
+      return false;
+    }
+
+    const follow = (m: NativePose) => {
+      manager.setNativeCameraPose(m.pose, m.fovDeg);
+      if (m.floorY !== undefined) manager.setNativeFloorY(m.floorY);
+    };
+    follow(first);
+    let tracking = first.tracking;
+    const off = bridge.subscribe((m) => {
+      if (m.type === 'pose') {
+        follow(m);
+        if (m.tracking !== tracking) {
+          tracking = m.tracking;
+          logEvent('ar', 'native tracking', { tracking });
+        }
+      } else if (m.type === 'session' && m.state === 'failed') {
+        useStore.getState().setArError(`The app's AR stopped: ${m.reason ?? 'unknown reason'}.`);
+        stop();
+      }
+    });
+    nativeSession.current = {
+      bridge,
+      cameraImages: bridge.hello()?.cameraImages ?? false,
+      end: () => { off(); bridge.send({ type: 'stop' }); manager.setNativeFloorY(undefined); },
+    };
+    logEvent('ar', 'native session running', { platform: bridge.hello()?.platform ?? null, fovDeg: first.fovDeg });
+    useStore.getState().setArSource('native');
+    setArActive(true);
+    manager.setArMode(true);
+    if (armPlacement(manager, 'native')) {
+      stopPlacement.current = manager.startGroundPlacement(
+        surfaceDrop(useStore.getState().arSettings),
+        (pose) => {
+          useStore.getState().setAnchor(pose, 0.8, 'floor');
+          stopPlacement.current = undefined;
+        },
+      );
+    }
+    startVisionLoop(manager, undefined, useStore.getState().assembly, 'native');
+    return true;
+  }, [startVisionLoop, stop]);
 
   const startXr = useCallback(async (
     manager: SceneManager, current: () => boolean,
@@ -681,6 +776,15 @@ export function useArController(
     // phone that could do real six-degree tracking silently gets an overlay
     // that walks along with the operator. The attempt costs a moment and falls
     // through on failure, which the camera path handles anyway.
+    // 0. Inside the Spatial AR app: the platform's own world tracking, ARCore
+    // or ARKit, through the native bridge. Before WebXR, which the shell's
+    // web view does not offer, and before the camera, which the shell owns.
+    const bridge = nativeBridge();
+    if (bridge && manager) {
+      if (await startNative(manager, bridge, current)) return;
+      if (!current()) return;
+    }
+
     const xrDenied = capabilities.permissionsPolicy?.['xr-spatial-tracking'] === 'denied';
     if ((capabilities.immersiveAr || capabilities.webxrSupported) && !xrDenied && manager) {
       if (await startXr(manager, current)) return;
@@ -761,7 +865,7 @@ export function useArController(
     } finally {
       if (generation === sessionGeneration.current) entryPending.current = false;
     }
-  }, [arActive, capabilities, assembly, startVisionLoop, stop, startCamera, videoRef]);
+  }, [arActive, capabilities, assembly, startVisionLoop, stop, startCamera, startNative, videoRef]);
 
   /**
    * Ask for a real AR session again, from this tap.
@@ -923,7 +1027,7 @@ export function useArController(
  *
  * Returns whether placement was armed.
  */
-function armPlacement(manager: SceneManager, source: 'webxr' | 'camera'): boolean {
+function armPlacement(manager: SceneManager, source: 'webxr' | 'camera' | 'native'): boolean {
   const state = useStore.getState();
   const wanted = state.arSettings.placeOnEntry || !state.anchor;
   if (!wanted) {

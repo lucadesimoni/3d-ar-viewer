@@ -1,6 +1,7 @@
 import { useStore } from '../state/store';
 import { getActiveManager } from '../render/babylon/managerRegistry';
 import { AppClipLink } from './AppClipLink';
+import { NativeAppLink } from './NativeAppLink';
 import { MODE_LABELS, type Capabilities } from '../engine/tracking/capabilities';
 import type { PipelineStatus } from '../vision/pipeline';
 import { detectGpu, gpuLabel } from '../render/perf';
@@ -323,6 +324,7 @@ export function ArSettings({ capabilities, pipeline, onRetryWebXr }: {
           iOS Safari has no WebXR, so the overlay turns with you but does not stay put
           when you walk.
           <AppClipLink capabilities={capabilities} compact />
+          <NativeAppLink capabilities={capabilities} compact />
         </p>
       )}
 

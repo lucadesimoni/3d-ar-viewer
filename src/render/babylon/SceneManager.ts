@@ -58,6 +58,7 @@ import {
 } from '../../perception/intrinsics';
 import { roiForBox, type PartRoi } from '../../perception/roi';
 import { partContour } from '../../perception/contour';
+import { nativeCameraToBabylon } from '../../native/pose';
 import { Quaternion as ThreeQuaternion, Vector3 as ThreeVector3 } from 'three';
 import { readCameraFrame } from './cameraFrame';
 import type { BaseTexture as XrCameraTexture } from '@babylonjs/core/Materials/Textures/baseTexture';
@@ -374,6 +375,8 @@ export class SceneManager {
    * floor when the phone is held at chest height, ~0.7 m for a work table.
    */
   private surfaceDropM = 1.45;
+  /** The floor a native shell (`native/bridge.ts`) has found, world y. */
+  private nativeFloorY: number | undefined;
   /** Vertical FOV actually visible on screen, degrees — see `applyPassthroughFov`. */
   private visibleFovDeg = ASSUMED_CAMERA_FOV_DEG;
   /** Hardware scaling the device should render at when it can keep up. */
@@ -734,6 +737,31 @@ export class SceneManager {
   }
 
   /**
+   * Drive the AR camera from a native shell's world tracking (`native/bridge.ts`):
+   * a full pose, position included, in the native convention, converted here
+   * by `nativeCameraToBabylon`. Unlike the device-orientation path, walking
+   * moves the camera, so the overlay stays where it was put.
+   */
+  setNativeCameraPose(pose: Pose, fovDeg: number): void {
+    if (!this.arCamera) return;
+    const cam = nativeCameraToBabylon(pose);
+    this.arCamera.position.set(cam.position[0], cam.position[1], cam.position[2]);
+    if (!this.arCamera.rotationQuaternion) this.arCamera.rotationQuaternion = new Quaternion();
+    this.arCamera.rotationQuaternion.set(cam.rotation[0], cam.rotation[1], cam.rotation[2], cam.rotation[3]);
+    // The platform's own number, as a WebXR session's is: measured, not assumed.
+    if (fovDeg > 5 && fovDeg < 170 && Math.abs(fovDeg - this.measuredFovDeg) > 0.05) {
+      this.measuredFovDeg = fovDeg;
+      this.arCamera.fov = (fovDeg * Math.PI) / 180;
+    }
+    this.invalidate();
+  }
+
+  /** The floor a native shell found, world y; undefined until it has found one. */
+  setNativeFloorY(y: number | undefined): void {
+    this.nativeFloorY = y;
+  }
+
+  /**
    * A pose `distanceM` in front of the operator and `dropM` below eye level —
    * roughly a workbench — so the assembly is inside the field of view the moment
    * AR starts, without any registration step. (A floor-height default would sit
@@ -763,7 +791,7 @@ export class SceneManager {
     // *underground* four times running: looking down at the floor, the view
     // ray at the auto-framed distance (5 m) ends well below it.
     if (opts.centreInView && (this.inXrSession || this.arMode) && (this.assembly.workSurfaceM ?? 0) === 0) {
-      const floorY = this.xrFloorY() ?? (this.inXrSession ? 0 : cam.position.y - this.surfaceDropM);
+      const floorY = this.xrFloorY() ?? this.nativeFloorY ?? (this.inXrSession ? 0 : cam.position.y - this.surfaceDropM);
       return this.placementPose(floorSpotInView(cam.position, view, floorY, radius, distance));
     }
     // Sitting it below the horizon reads as "on a bench" rather than floating at
@@ -1502,8 +1530,9 @@ export class SceneManager {
     const maxDistanceM = opts.maxDistanceM ?? this.placementRange();
     this.surfaceDropM = surfaceDropM;
     this.setPlacementActive(true);
-    const groundY = (): number =>
-      (this.scene.activeCamera ?? this.camera).position.y - this.surfaceDropM;
+    // A native shell's measured floor when there is one; else eye height below the camera.
+    const groundY = (): number => this.nativeFloorY
+      ?? (this.scene.activeCamera ?? this.camera).position.y - this.surfaceDropM;
     // Aim down the screen until the ray meets the floor. With the phone held
     // level the centre of the screen is the horizon and picks nothing, which
     // left the operator staring at an empty view with no ring to aim; walking

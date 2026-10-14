@@ -65,13 +65,20 @@ print(f'{len(x_all)} crops, {y_all.mean():.1%} present; {held.sum()} held out')
 
 
 def to_tensor(x):
-    t = torch.from_numpy(x).permute(0, 3, 1, 2).float() / 255.0
+    """Bytes, channels first. Kept as bytes: 40,000 crops as float32 are 6 GB."""
+    return torch.from_numpy(np.ascontiguousarray(x)).permute(0, 3, 1, 2)
+
+
+def as_input(b):
+    """A batch of byte crops as the model's input: RGB 0..1, outline 0 or 1."""
+    t = b.float() / 255.0
     t[:, 3] = (t[:, 3] > 0.5).float()
     return t
 
 
 x_train, y_train = to_tensor(x_all[~held]), torch.from_numpy(y_all[~held])
 x_val, y_val = to_tensor(x_all[held]), torch.from_numpy(y_all[held])
+del x_all
 val_meta = [m for m, h in zip(metas, held) if h]
 
 
@@ -148,7 +155,7 @@ def predict(x):
     out = []
     with torch.no_grad():
         for i in range(0, len(x), 512):
-            out.append(torch.sigmoid(net(x[i:i + 512])).flatten())
+            out.append(torch.sigmoid(net(as_input(x[i:i + 512]))).flatten())
     return torch.cat(out).numpy()
 
 
@@ -159,7 +166,7 @@ for epoch in range(args.epochs):
     total = 0.0
     for i in range(0, len(order), args.batch):
         idx = order[i:i + args.batch]
-        b = augment(x_train[idx].clone())
+        b = augment(as_input(x_train[idx]))
         loss = F.binary_cross_entropy_with_logits(net(b).flatten(), y_train[idx])
         opt.zero_grad(); loss.backward(); opt.step(); sched.step()
         total += loss.item() * len(idx)

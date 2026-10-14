@@ -126,7 +126,7 @@ export interface AppState {
    */
   arError: string | undefined;
   /** Which path AR actually took — the honest answer to "is this real AR?". */
-  arSource: 'webxr' | 'camera' | undefined;
+  arSource: 'webxr' | 'camera' | 'native' | undefined;
   /**
    * Whether the device is actually reporting its orientation.
    *
@@ -199,7 +199,7 @@ export interface AppState {
   setArPlacement(placement: ArPlacement): void;
   setArSettings(patch: Partial<ArSettings>): void;
   setArError(message: string | undefined): void;
-  setArSource(source: 'webxr' | 'camera' | undefined): void;
+  setArSource(source: 'webxr' | 'camera' | 'native' | undefined): void;
   setArMotion(receiving: boolean): void;
   setArTracking(state: TrackingState | undefined): void;
   setArMode(mode: ArMode): void;

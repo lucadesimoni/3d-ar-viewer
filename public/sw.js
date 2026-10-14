@@ -19,7 +19,7 @@
  * are left to the network.
  */
 const CACHE = 'spatial-ar-v3';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
+const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
 /** How long a navigation waits for the network before using the cached shell. */
 const NETWORK_TIMEOUT_MS = 3000;
 
