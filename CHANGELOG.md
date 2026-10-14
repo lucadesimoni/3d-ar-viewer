@@ -6,7 +6,7 @@ Sections are written automatically from what was merged (see
 [docs/RELEASING.md](./docs/RELEASING.md)). Newest first. Versions follow
 [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.5.0] — 2026-10-14
 
 ### The overlay lines itself up with the real object, for any assembly
 
