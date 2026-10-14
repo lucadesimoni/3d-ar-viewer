@@ -24,6 +24,13 @@ const context = await browser.newContext({
   acceptDownloads: true,
 });
 const page = await context.newPage();
+// The error reports the app sends home (src/diagnostics/errorReport.ts),
+// answered here whatever is serving the app.
+const reports = [];
+await page.route('**/api/errors', async (route) => {
+  try { reports.push(JSON.parse(route.request().postData() ?? '')); } catch { reports.push(null); }
+  await route.fulfill({ status: 204 });
+});
 await page.goto(`${URL}?assembly=bench-gearbox`, { waitUntil: 'networkidle' });
 await page.waitForSelector('canvas.viewer-canvas');
 await page.waitForTimeout(1500);
@@ -32,6 +39,21 @@ await page.waitForTimeout(1500);
 await page.evaluate(() => window.dispatchEvent(new ErrorEvent('error', {
   message: 'boom inside a render loop', filename: 'bundle.js', lineno: 42, colno: 7,
 })));
+
+// It is reported home, once, without the page's query string.
+await page.waitForTimeout(500);
+const sent = reports.filter((r) => r?.message === 'boom inside a render loop');
+check('an uncaught error is reported to /api/errors', sent.length === 1,
+  `${reports.length} report(s): ${reports.map((r) => r?.message).join(' | ') || 'none'}`);
+check('with its build and source, and the page path without its query',
+  sent[0]?.build?.commit && sent[0].build.commit !== 'dev' && sent[0].source === 'bundle.js:42:7' && sent[0].page === '/',
+  JSON.stringify({ build: sent[0]?.build, source: sent[0]?.source, page: sent[0]?.page }));
+await page.evaluate(() => window.dispatchEvent(new ErrorEvent('error', {
+  message: 'boom inside a render loop', filename: 'bundle.js', lineno: 42, colno: 7,
+})));
+await page.waitForTimeout(300);
+check('and the same error again is not sent again',
+  reports.filter((r) => r?.message === 'boom inside a render loop').length === 1);
 
 // First, without entering AR at all.
 //
@@ -110,6 +132,26 @@ check('it says which build produced it',
 check('and the build is on screen too, without exporting anything',
   (await page.locator('.ar-build').textContent()).includes(report.build.commit),
   await page.locator('.ar-build').textContent());
+// The privacy notice and the licence, one tap from the log, and both there.
+{
+  const links = await page.locator('.ar-build a').evaluateAll((as) => as.map((a) => ({ text: a.textContent, href: a.href })));
+  const fetched = await Promise.all(links.map((l) => page.request.get(l.href).then(async (r) => ({
+    ...l, status: r.status(), body: await r.text(),
+  }))));
+  const privacy = fetched.find((l) => l.text === 'Privacy');
+  const licence = fetched.find((l) => l.text === 'Licence');
+  check('the privacy notice and the licence are linked beside the build',
+    privacy?.status === 200 && /Privacy notice/.test(privacy.body) && licence?.status === 200 && /PolyForm Noncommercial/.test(licence.body),
+    fetched.map((l) => `${l.text} ${l.status}`).join(', ') || 'no links');
+  // It describes the error reports this very check saw being sent.
+  check('and the notice describes the error reports the app sends',
+    /\/api\/errors/.test(privacy?.body ?? '') && /at most five per visit/.test(privacy?.body ?? ''));
+  const notice = await context.newPage();
+  await notice.goto(privacy?.href ?? `${URL}privacy.html`);
+  const fits = await notice.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+  check('and it reads on a phone, without scrolling sideways', fits);
+  await notice.close();
+}
 check('it says whether the field of view was measured or assumed',
   ['xr-camera', 'operator', 'assumed'].includes(report.render?.fovSource),
   `${report.render?.fovDeg}° (${report.render?.fovSource})`);

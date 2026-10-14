@@ -120,6 +120,14 @@ async function serve(command, args, env = {}) {
       const script = html.match(/src="\/?(assets\/index-[^"]+\.js)"/)?.[1];
       const js = script ? await fetch(`${base}${script}`) : undefined;
       check('with its scripts', Boolean(js?.ok), script ?? 'no entry script in index.html');
+      // The app's error reports (server/errorReport.mjs).
+      const post = (body) => fetch(`${base}api/errors`, { method: 'POST', body, headers: { 'Content-Type': 'application/json' } })
+        .then((r) => r.status, () => 0);
+      const good = await post(JSON.stringify({ v: 1, kind: 'error', message: 'release check', page: '/', ua: 'check', t: 1, build: { commit: 'x', at: 'y' } }));
+      const bad = await post('{"not":"a report"}');
+      const huge = await post('x'.repeat(64 * 1024));
+      check('and takes the app\'s error reports, refusing anything else', good === 204 && bad === 400 && huge === 413,
+        `report ${good}, junk ${bad}, oversized ${huge}`);
     } finally {
       child.kill();
     }

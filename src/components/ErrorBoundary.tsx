@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { reportRenderError } from '../diagnostics/errorReport';
 import { logEvent } from '../diagnostics/log';
 
 /**
@@ -21,6 +22,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: 
       stack: error.stack?.slice(0, 800),
       component: info.componentStack?.slice(0, 400),
     });
+    reportRenderError(error);
   }
 
   render(): ReactNode {

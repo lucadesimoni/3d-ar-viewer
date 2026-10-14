@@ -16,6 +16,7 @@
 
 import type { InferenceSession, Tensor } from 'onnxruntime-web';
 import { bilinearResize, letterbox, unletterboxBox, type LetterboxResult } from './preprocess';
+import { RUNTIME_URLS } from './runtimeUrls';
 
 export type ExecutionProvider = 'webgpu' | 'wasm';
 
@@ -75,12 +76,9 @@ export function loadOrt(): Promise<typeof import('onnxruntime-web') | undefined>
       const isolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
       ort.env.wasm.numThreads = isolated ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
       ort.env.wasm.simd = true;
-      // ORT fetches its own .wasm binaries at runtime. Rather than bundle and
-      // serve them, point at a pinned CDN matching the installed version so a
-      // deployment needs no extra asset wiring. Override env.wasm.wasmPaths at
-      // startup if you prefer to self-host them.
-      const version = (ort.env as { versions?: { common?: string } }).versions?.common ?? '1.19.2';
-      ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${version}/dist/`;
+      // ORT fetches its .wasm at runtime: the app's own copy, unless this
+      // build says otherwise (see `runtimeUrls.ts`).
+      if (RUNTIME_URLS.ortWasmPaths) ort.env.wasm.wasmPaths = RUNTIME_URLS.ortWasmPaths;
       return ort;
     })
     .catch(() => undefined);

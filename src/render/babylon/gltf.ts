@@ -5,6 +5,7 @@ import type { AssetContainer } from '@babylonjs/core/assetContainer';
 import type { Scene } from '@babylonjs/core/scene';
 import type { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { Vec3 } from '../../engine/types';
+import { RUNTIME_URLS } from '../../vision/runtimeUrls';
 
 // The loader alone, with every extension registered as an on-demand import.
 // `glTF/2.0` registers all of them eagerly — FlowGraph, the audio engine,
@@ -20,20 +21,17 @@ registerBuiltInGLTFExtensions();
 let dracoConfigured = false;
 
 /**
- * Point Babylon's Draco decoder at a pinned CDN so compressed glTF loads with no
- * extra asset wiring in a deployment. Called lazily the first time a Draco model
- * is requested; override `DracoCompression.Configuration` at startup to
- * self-host the decoder instead.
+ * Point Babylon's Draco decoder at this build's own copy (see
+ * `runtimeUrls.ts`). Called lazily the first time a Draco model is requested.
+ *
+ * It pointed at a CDN before, with the wasm binary as its script and a
+ * fallback the package does not contain: Draco models never decoded at all.
  */
 function ensureDraco(): void {
   if (dracoConfigured) return;
   dracoConfigured = true;
   DracoCompression.Configuration = {
-    decoder: {
-      wasmUrl: 'https://cdn.jsdelivr.net/npm/draco3dgltf@1.5.7/draco_decoder_gltf.wasm',
-      wasmBinaryUrl: 'https://cdn.jsdelivr.net/npm/draco3dgltf@1.5.7/draco_decoder_gltf.wasm',
-      fallbackUrl: 'https://cdn.jsdelivr.net/npm/draco3dgltf@1.5.7/draco_decoder_gltf.js',
-    },
+    decoder: { ...RUNTIME_URLS.draco },
   };
 }
 

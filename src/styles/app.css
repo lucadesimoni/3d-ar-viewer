@@ -830,6 +830,7 @@ input[type="range"] { accent-color: var(--accent); min-width: 160px; }
 .ar-set-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; font-weight: 600; }
 .ar-set-label em { font-style: normal; color: var(--accent); font-variant-numeric: tabular-nums; }
 .ar-set-help { font-size: 11.5px; color: var(--muted); }
+.ar-build a { color: inherit; text-decoration: underline; }
 /* Full-width sliders with a thumb big enough to hit while holding a tablet. */
 .ar-set input[type="range"] { width: 100%; min-width: 0; height: 32px; }
 .ar-toggle { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.35; }

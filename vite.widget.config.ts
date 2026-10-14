@@ -1,3 +1,5 @@
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import config from './vite.config';
@@ -42,8 +44,26 @@ function leaveOrtWasmOut(): Plugin {
 
 const EXTERNAL = [/^mendix($|\/)/, 'react', 'react-dom', 'react/jsx-runtime', 'big.js'];
 
+/**
+ * The widget's runtimes come from the CDN: a library build would otherwise
+ * inline OpenCV and the Draco decoder (`?url` imports) as base64 into each
+ * file, and a widget has no origin to serve them from. See `runtimeUrls.ts`.
+ */
+const RUNTIMES_FROM_CDN = {
+  find: /^(\.\/|.*\/vision\/)runtimeUrls$/,
+  replacement: resolve(dirname(fileURLToPath(import.meta.url)), 'src/vision/runtimeUrls.cdn.ts'),
+};
+/** Inside a Mendix app, that app's privacy notice applies: see `legal.ts`. */
+const NO_LEGAL_LINKS = {
+  find: /^(\.\.\/)+legal$|^\.\/legal$/,
+  replacement: resolve(dirname(fileURLToPath(import.meta.url)), 'src/legal.widget.ts'),
+};
+
 export default defineConfig({
   define: (config as { define?: Record<string, string> }).define,
+  resolve: {
+    alias: [RUNTIMES_FROM_CDN, NO_LEGAL_LINKS],
+  },
   plugins: [leaveOrtWasmOut(), react()],
   publicDir: false,
   build: {

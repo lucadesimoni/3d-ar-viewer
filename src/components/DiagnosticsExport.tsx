@@ -3,6 +3,7 @@ import { getActiveManager } from '../render/babylon/managerRegistry';
 import { buildReport, capturedFrames } from '../diagnostics/report';
 import { copyReport, exportReport } from '../diagnostics/export';
 import { buildStamp } from '../diagnostics/build';
+import { LEGAL_LINKS } from '../legal';
 import { captureFrame } from '../diagnostics/capture';
 import type { Capabilities } from '../engine/tracking/capabilities';
 
@@ -95,6 +96,12 @@ export function DiagnosticsExport({ capabilities, inAr }: {
           was no way to tell that from the file. */}
       <p className="ar-set-help ar-build" role="status">
         Build {buildStamp().commit} · {buildStamp().at.slice(0, 16).replace('T', ' ')}
+        {LEGAL_LINKS && (
+          <>
+            {' · '}<a href={LEGAL_LINKS.privacy} target="_blank" rel="noopener">Privacy</a>
+            {' · '}<a href={LEGAL_LINKS.licence} target="_blank" rel="noopener">Licence</a>
+          </>
+        )}
       </p>
     </>
   );

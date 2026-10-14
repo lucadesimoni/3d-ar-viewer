@@ -58,8 +58,8 @@ jobs:
             curl -sf http://localhost:8080/healthz > /dev/null && break
             sleep 1
           done
-      # One step for all seven suites, not one each: a failing step stops the
-      # job, so a red ar-verify used to keep the other six from running at
+      # One step for all eight suites, not one each: a failing step stops the
+      # job, so a red ar-verify used to keep the others from running at
       # all. Every suite runs; failures become annotations (readable through
       # the checks API, unlike the job log) and a table in the job summary;
       # and a check that stops being reported fails against the baseline.
@@ -112,4 +112,4 @@ jobs:
           # Override with a repository variable if the deployment moves.
           PREVIEW_URL: ${{ vars.PREVIEW_URL || 'https://3d-ar-viewer-ten.vercel.app/' }}
         # deploy-check builds its own static host; the live site is the host here.
-        run: node scripts/check-all.mjs --only=ar-verify,steps-check,layout-check,place-check,notes-check,log-check --no-baseline
+        run: node scripts/check-all.mjs --only=ar-verify,steps-check,layout-check,place-check,notes-check,log-check,runtime-check --no-baseline

@@ -302,8 +302,10 @@
   ],
   "log-check": [
     "a camera frame can be attached",
+    "an uncaught error is reported to /api/errors",
     "and it carries the pose it was taken from",
     "and it holds no images unless one was attached",
+    "and it reads on a phone, without scrolling sideways",
     "and no capability field claims a device cannot do what a session granted",
     "and on the camera path that is the video, not a session it is not in",
     "and reports the camera model, with its own provenance",
@@ -311,7 +313,9 @@
     "and the build is on screen too, without exporting anything",
     "and the camera model follows the operator, which nothing used to",
     "and the frame says which mode it came from",
+    "and the notice describes the error reports the app sends",
     "and the region the geometry says each part occupies",
+    "and the same error again is not sent again",
     "and what AR was actually doing",
     "and where the app expected every part to be, as numbers",
     "and which renderer, at what rate",
@@ -326,7 +330,17 @@
     "it says which build produced it",
     "the app says how much of the assembly the frame caught",
     "the log can be saved without entering AR",
-    "the log saves as a file the operator can send"
+    "the log saves as a file the operator can send",
+    "the privacy notice and the licence are linked beside the build",
+    "with its build and source, and the page path without its query"
+  ],
+  "runtime-check": [
+    "ONNX Runtime loads its wasm and runs a model",
+    "OpenCV loads and runs",
+    "a Draco-compressed model decodes into the scene",
+    "and nothing was fetched from anywhere else",
+    "from this origin",
+    "with the decoder from this origin"
   ],
   "deploy-check": [
     "AR entry waits for the 3D view, and says it is loading",

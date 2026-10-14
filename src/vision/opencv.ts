@@ -14,6 +14,7 @@
  * illumination have pure-canvas fallbacks, and the geometric ops simply report
  * unavailable rather than throwing.
  */
+import { RUNTIME_URLS } from './runtimeUrls';
 
 /** The sliver of the OpenCV.js API this module actually uses. */
 interface CvMat {
@@ -57,7 +58,8 @@ export interface Point2 {
   y: number;
 }
 
-export const DEFAULT_OPENCV_URL = 'https://docs.opencv.org/4.10.0/opencv.js';
+/** This build's own copy (see `runtimeUrls.ts`). */
+export const DEFAULT_OPENCV_URL = RUNTIME_URLS.openCv;
 
 let loadPromise: Promise<CvModule | undefined> | undefined;
 
@@ -72,13 +74,22 @@ let loadPromise: Promise<CvModule | undefined> | undefined;
 export function loadOpenCV(url: string = DEFAULT_OPENCV_URL): Promise<CvModule | undefined> {
   if (loadPromise) return loadPromise;
   loadPromise = new Promise<CvModule | undefined>((resolve) => {
+    // OpenCV.js is an Emscripten module, and the module object has its own
+    // `then`, which calls back with the module itself. Resolving a promise with
+    // it makes the promise adopt it, get it back, adopt it again: a microtask
+    // loop that froze the page for good the first time OpenCV loaded. So the
+    // module is resolved without its `then`.
+    const ready = (cv: CvModule) => {
+      if (typeof (cv as { then?: unknown }).then === 'function') delete (cv as { then?: unknown }).then;
+      resolve(cv);
+    };
     if (typeof window === 'undefined' || typeof document === 'undefined') {
       resolve(undefined);
       return;
     }
     const existing = window.cv;
     if (existing && !(existing instanceof Promise) && 'Mat' in existing) {
-      resolve(existing);
+      ready(existing);
       return;
     }
 
@@ -89,9 +100,13 @@ export function loadOpenCV(url: string = DEFAULT_OPENCV_URL): Promise<CvModule |
       try {
         const cv = window.cv;
         if (cv instanceof Promise) {
-          resolve(await cv);
+          ready(await cv);
         } else if (cv && 'Mat' in cv) {
-          resolve(cv);
+          ready(cv);
+        } else if (cv && typeof (cv as { then?: unknown }).then === 'function') {
+          // Not initialised yet: its own `then` fires once it is, or at once
+          // if that already happened.
+          (cv as unknown as { then(f: (m: CvModule) => void): void }).then((m) => ready(m));
         } else {
           // Older builds expose a module that fires a callback when ready.
           const mod = cv as unknown as { onRuntimeInitialized?: () => void };
