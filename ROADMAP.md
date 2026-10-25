@@ -52,11 +52,11 @@ from breaking one of them:
    absence removes a capability and breaks nothing. The geometry-driven app
    runs on a laptop with no hardware at all.
 4. **Claims are measured, not asserted.** Anything that can only be seen in a
-   running browser has a check script that asserts it in numbers — 153 checks
-   on AR anchoring, tracking and the HUD, 64 on layout, 26 on the diagnostics
-   log, 20 on the step guidance, 14 on placing and snapping, 14 on what a
-   static host has to satisfy, 11 on operator notes — alongside 572 unit
-   tests.
+   running browser has a check script that asserts it in numbers — 160 checks
+   on AR anchoring, tracking and the HUD, 84 on layout, 32 on the diagnostics
+   log, 24 on the step guidance, 24 on the native-app bridge, 14 on placing
+   and snapping, 14 on what a static host has to satisfy, 11 on operator
+   notes, 7 on the self-hosted runtimes — alongside 725 unit tests.
 
 ---
 
@@ -64,35 +64,55 @@ from breaking one of them:
 
 | Area | State |
 | --- | --- |
-| Assembly model, mates, tolerances, sequence DAG | Done; three sample assemblies, invariant-tested at nominal |
+| Assembly model, mates, tolerances, sequence DAG | Done; five sample assemblies, invariant-tested at nominal |
 | Snapping and fit verification | Done; drag a part, it seats on the joint or reports why not |
 | Diagnostics | Fit, seating, sequence, interference (OBB SAT), keep-out, handed swap, missing part |
 | Markerless object anchoring | Grid facade → metric pose, then frame-by-frame tracking |
 | Lining up with the real object | Any assembly: edge registration refines a placement within ~20–30 px ([docs/RECOGNITION.md](./docs/RECOGNITION.md)) |
 | AR on Android/Quest/visionOS | WebXR `immersive-ar` with hit-test and DOM overlay |
 | AR on iOS Safari | Camera passthrough, gravity-derived floor, aim-and-tap, object tracking |
+| Native apps (optional) | Android (ARCore) and iOS (ARKit) shells around the same web app, bridge protocol v1; built and tested in CI, **not yet run on a phone** ([native/README.md](./native/README.md)) |
+| Camera step check | Edge check plus a small trained model per part of the active step ([docs/PRESENCE_MODEL.md](./docs/PRESENCE_MODEL.md)); not yet measured on a real build in progress |
 | Marker re-registration | Planar homography from a QR of known size |
 | Guidance | Step highlighting, on-part labels, per-step fly-in, exploded view |
 | Co-presence | Protocol, session, annotations — over a loopback transport only |
-| Delivery | PWA, service worker, `vercel.json`, offline app shell; tagged releases of every component (web archive, npm package, GHCR image, Mendix `.mpk`) |
+| Delivery | PWA, service worker, `vercel.json`, offline app shell; tagged releases of every component (web archive, npm package, GHCR image, Mendix `.mpk`, Android APK, unsigned iOS IPA) |
 
 ---
 
 ## Stage 1 — next, in the order it is worth doing
 
-### 1. World tracking on iOS
-The one structural gap. Safari exposes no WebXR, so the overlay holds only while
-the recognised object is in shot; look away and nothing anchors it. Closing it
-means a thin native shell — WKWebView plus an ARKit plugin that feeds poses into
-the same store — which changes distribution (App Store, MDM) and so is a product
-decision, not only a technical one. Everything above the anchor already works
-against an injected pose, so the surface area is small.
+### 1. The first session on a real phone
+The native shells are built (`native/`): ARKit gives iPhone the world
+tracking Safari lacks, and the Android app adds ARCore camera frames. Both pass
+their unit tests, CI builds and, for Android, instrumented tests on an
+emulator — but no phone has run either, and neither has the step check's
+model or the alignment on a real build. One session answers the most:
+
+1. install the APK (or the IPA, signed with a free Apple ID: SideStore,
+   Sideloadly or Xcode);
+2. enter AR, tap the floor, walk round the object, tick a step or two;
+3. attach camera frames in AR settings and send the diagnostics log.
+
+The log records the native session and tracking, every recognition and
+alignment attempt with its reason, and each part's presence reading. What it
+is expected to settle: why real frames do not line up (the reported camera
+pose or field of view, see [docs/RECOGNITION.md](./docs/RECOGNITION.md)),
+whether alignment's 30–180 ms on the main thread is a visible hitch (a worker
+would remove it), and real crops to retrain the step check on.
+
+Distribution beyond sideloading is a product decision, not a technical one:
+TestFlight and the App Store need the paid Apple Developer Program, and the
+Play Store a private signing key (the build already reads one from CI secrets).
 
 ### 2. Recognition backed by a model
-`vision/pipeline` speaks ONNX Runtime Web and nothing ships a model, so out of
-the box recognition is geometric. Shipping one verified detector (with its
-labels and a licence that permits redistribution), self-hosted rather than CDN,
-turns "wrong part in your hand" from a demo into a feature.
+The step check now ships a model (`perception/models/presence-v1.onnx`): it
+says whether a part is where it should be. What is still missing is the other
+question, *which* part is in the operator's hand: `vision/pipeline` speaks ONNX
+Runtime Web and ships no detector, so a wrong board in the right slot reads as
+present. Shipping one verified detector (with its labels and a licence that
+permits redistribution), self-hosted rather than CDN, turns "wrong part in your
+hand" from a demo into a feature.
 
 ### 3. A real transport for co-presence
 `collab/session` is transport-agnostic and only a loopback exists. A WebSocket
